@@ -27,8 +27,14 @@ var (
 	linkWriteWait = 5 * time.Second
 )
 
-// launchRun abre la sesión; se sustituye en los tests.
-var launchRun = launch.Run
+// launchRun abre la sesión sin herdr; launchHerdr, con herdr. Se sustituyen en los tests.
+var (
+	launchRun   = launch.Run
+	launchHerdr = launch.RunHerdrCause
+)
+
+// capsEvery: cada cuánto se recalculan las capacidades; variable para tests.
+var capsEvery = 30 * time.Second
 
 const linkReadLimit = 8 << 20
 
@@ -54,11 +60,11 @@ func machineEnv() string {
 // RunHubLink mantiene la conexión con el hub hasta ctx.Done, reconectando con
 // backoff. Mientras no hay conexión sigue vaciando reg.Out(): el hello de la
 // próxima conexión restituye el estado de las sesiones.
-func RunHubLink(ctx context.Context, cfg Config, reg *Registry) {
+func RunHubLink(ctx context.Context, cfg Config, reg *Registry, host *Host) {
 	backoff := backoffMin
 	for ctx.Err() == nil {
 		start := time.Now()
-		err := linkOnce(ctx, cfg, reg)
+		err := linkOnce(ctx, cfg, reg, host)
 		if ctx.Err() != nil {
 			return
 		}
@@ -87,7 +93,7 @@ func drainFor(ctx context.Context, reg *Registry, d time.Duration) {
 	}
 }
 
-func linkOnce(ctx context.Context, cfg Config, reg *Registry) error {
+func linkOnce(ctx context.Context, cfg Config, reg *Registry, host *Host) error {
 	dctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	ws, _, err := websocket.Dial(dctx, wsURL(cfg.Hub), &websocket.DialOptions{
 		HTTPHeader: http.Header{"Authorization": {"Bearer " + cfg.MachineToken}},
@@ -107,8 +113,9 @@ func linkOnce(ctx context.Context, cfg Config, reg *Registry) error {
 			drained = true
 		}
 	}
+	caps := host.Caps(ctx)
 	hello := proto.MachineHello{Machine: cfg.Machine, OS: runtime.GOOS, Env: machineEnv(),
-		Version: proto.Version, Sessions: reg.Snapshot()}
+		Version: proto.Version, Sessions: reg.Snapshot(), Caps: caps}
 	p, _ := json.Marshal(hello)
 	if err := writeEnv(ctx, ws, proto.Envelope{Type: "hello", Machine: cfg.Machine, Payload: p}); err != nil {
 		return err
@@ -117,10 +124,12 @@ func linkOnce(ctx context.Context, cfg Config, reg *Registry) error {
 	cctx, cancelConn := context.WithCancel(ctx)
 	defer cancelConn()
 	readErr := make(chan error, 1)
-	go func() { readErr <- readLoop(cctx, ws, reg) }()
+	go func() { readErr <- readLoop(cctx, ws, reg, host) }()
 
 	ping := time.NewTicker(pingEvery)
 	defer ping.Stop()
+	capsTick := time.NewTicker(capsEvery)
+	defer capsTick.Stop()
 	for {
 		select {
 		case env := <-reg.Out():
@@ -133,6 +142,14 @@ func linkOnce(ctx context.Context, cfg Config, reg *Registry) error {
 			c()
 			if err != nil {
 				return err
+			}
+		case <-capsTick.C:
+			if now := host.Caps(cctx); now != caps {
+				caps = now
+				p, _ := json.Marshal(caps)
+				if err := writeEnv(cctx, ws, proto.Envelope{Type: "caps", Machine: cfg.Machine, Payload: p}); err != nil {
+					return err
+				}
 			}
 		case err := <-readErr:
 			return err
@@ -149,7 +166,7 @@ func writeEnv(ctx context.Context, ws *websocket.Conn, env proto.Envelope) error
 	return wsjson.Write(ctx, ws, env)
 }
 
-func readLoop(ctx context.Context, ws *websocket.Conn, reg *Registry) error {
+func readLoop(ctx context.Context, ws *websocket.Conn, reg *Registry, host *Host) error {
 	for {
 		var env proto.Envelope
 		if err := wsjson.Read(ctx, ws, &env); err != nil {
@@ -172,10 +189,17 @@ func readLoop(ctx context.Context, ws *websocket.Conn, reg *Registry) error {
 				continue
 			}
 			go func() { // nunca bloquear el bucle de lectura
-				res := launchRun(ctx, req)
+				res := host.launch(ctx, req)
 				p, _ := json.Marshal(res)
 				reg.EmitEnvelope(proto.Envelope{Type: "launch_result", Machine: reg.machine, Payload: p})
 			}()
+		case "rpc":
+			var rq proto.RPC
+			if err := json.Unmarshal(env.Payload, &rq); err != nil {
+				log.Printf("hub: rpc inválido: %v", err)
+				continue
+			}
+			go handleRPC(ctx, host, reg, rq) // nunca bloquear el bucle de lectura
 		case "backfill":
 			go backfill(reg, env.Session) // nunca bloquear el bucle de lectura
 		default:

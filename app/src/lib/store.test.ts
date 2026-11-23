@@ -4,7 +4,7 @@ import type { Envelope, SessionInfo, Event } from '../proto.gen'
 
 const sess = (id: string, o: Partial<SessionInfo> = {}): SessionInfo => ({
   id, recap: '', previousId: '', machine: 'm1', name: id, cwd: '/x', root: '/x', model: '', role: 'work',
-  state: 'idle', contextPct: 0, startedAt: 1, updatedAt: 1, transcriptPath: '', repoUrl: '', branch: '', projectId: '', ...o,
+  state: 'idle', contextPct: 0, startedAt: 1, updatedAt: 1, transcriptPath: '', repoUrl: '', branch: '', projectId: '', launchReq: '', herdrPane: '', herdrWorkspace: '', ...o,
 })
 const up = (s: SessionInfo): Envelope => ({ type: 'session_upsert', machine: s.machine, session: s.id, payload: s })
 const ev = (session: string, seq: number, kind: string, data: any = {}): Envelope => {
@@ -80,7 +80,7 @@ describe('reduce', () => {
     expect(s.order).toEqual(['a', 'b2', 'c'])
   })
   it('seed inserta máquinas faltantes sin pisar', () => {
-    const m = (online: boolean) => ({ name: 'm1', os: '', env: '', version: '', online, lastSeen: 1 })
+    const m = (online: boolean) => ({ name: 'm1', os: '', env: '', version: '', online, lastSeen: 1, caps: { herdr: false, terminal: false, root: false } })
     const s = seed(run([{ type: 'machine_status', machine: 'm1', session: '', payload: m(true) }]), [m(false)], [])
     expect(s.machines['m1'].online).toBe(true)
   })
@@ -127,7 +127,7 @@ describe('revisión final', () => {
   })
   it('replaceSessions pisa, quita lo que ya no está, sigue renombres y conserva eventos', () => {
     let s = run([up(sess('a', { state: 'working' })), up(sess('b')), up(sess('c')), ev('b', 1, 'user', { text: 'hi' }), ev('c', 1, 'user')])
-    const m = { name: 'm1', os: '', env: '', version: '', online: false, lastSeen: 1 }
+    const m = { name: 'm1', os: '', env: '', version: '', online: false, lastSeen: 1, caps: { herdr: false, terminal: false, root: false } }
     s = replaceSessions(s, [m], [sess('a', { state: 'idle' }), sess('b2', { previousId: 'b' })])
     expect(s.order).toEqual(['a', 'b2'])
     expect(s.sessions['a'].state).toBe('idle')

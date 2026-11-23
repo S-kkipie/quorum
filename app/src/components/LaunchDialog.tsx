@@ -1,37 +1,48 @@
 import { useState } from 'react'
 import { launch } from '../lib/api'
+import { loadPrefs, savePrefs } from '../lib/launch'
 import type { AppState } from '../lib/store'
 
-export const MODES: [string, string][] = [
-  ['default', 'Normal (pide permisos)'],
-  ['acceptEdits', 'Aceptar ediciones'],
-  ['plan', 'Plan'],
-  ['bypassPermissions', 'Sin permisos (peligroso)'],
-]
+export const ROOT_REASON = 'Sin permisos no funciona como root'
 
-export default function LaunchDialog({ state, onClose, result }: { state: AppState; onClose: () => void; result?: { reqId: string; ok: boolean; error?: string } | null }) {
+/** Casilla "Sin permisos"; deshabilitada (y apagada) si la máquina corre como root. */
+export function BypassToggle({ checked, root, onChange }: { checked: boolean; root: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <label className="mt-3 flex items-center gap-2 text-sm" title={root ? ROOT_REASON : undefined}>
+      <input type="checkbox" checked={checked && !root} disabled={root} onChange={(e) => onChange(e.target.checked)} /> Sin permisos
+      {root && <span className="text-[11px] text-zinc-500">{ROOT_REASON}</span>}
+    </label>
+  )
+}
+
+export default function LaunchDialog({ state, onClose, onLaunched, projectId = '' }: {
+  state: AppState
+  onClose: () => void
+  /** Se llamó a /api/launch: la app pasa a "Arrancando…". */
+  onLaunched: (p: { reqId: string; machine: string; label: string }) => void
+  projectId?: string
+}) {
   const online = Object.values(state.machines).filter((m) => m.online).map((m) => m.name).sort()
-  const [machine, setMachine] = useState(online[0] ?? '')
+  const prefs = loadPrefs(projectId || '_')
+  const [machine, setMachine] = useState(prefs.machine && online.includes(prefs.machine) ? prefs.machine : online[0] ?? '')
   const [dir, setDir] = useState('')
-  const [cont, setCont] = useState(false)
-  const [mode, setMode] = useState('default')
+  const [bypass, setBypass] = useState(prefs.bypass)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [reqId, setReqId] = useState('')
 
   const dirs = [...new Set(Object.values(state.sessions).filter((s) => s.machine === machine && s.role !== 'service').map((s) => s.cwd))].sort()
-  const fail = reqId && result && result.reqId === reqId && !result.ok ? result.error || 'no se pudo lanzar' : ''
-  const sent = reqId && result && result.reqId === reqId && result.ok
+  const root = !!state.machines[machine]?.caps?.root
 
   async function go() {
     setBusy(true)
     setError('')
     try {
-      const r = await launch({ machine, dir: dir.trim(), continue: cont, permissionMode: mode })
-      setReqId(r.reqId)
+      const useBypass = bypass && !root
+      const r = await launch({ machine, dir: dir.trim(), permissionMode: useBypass ? 'bypass' : 'default', projectId: projectId || undefined })
+      savePrefs(projectId || '_', { machine, bypass })
+      onLaunched({ reqId: r.reqId, machine, label: dir.trim() })
     } catch (e) {
       setError(e instanceof Error ? e.message : 'error')
-    } finally {
       setBusy(false)
     }
   }
@@ -54,22 +65,13 @@ export default function LaunchDialog({ state, onClose, result }: { state: AppSta
               <input list="launch-dirs" value={dir} onChange={(e) => setDir(e.target.value)} placeholder="/ruta/al/proyecto" className={field} />
               <datalist id="launch-dirs">{dirs.map((d) => <option key={d} value={d} />)}</datalist>
             </label>
-            <label className="mt-3 flex items-center gap-2 text-sm">
-              <input type="checkbox" checked={cont} onChange={(e) => setCont(e.target.checked)} /> Continuar la última conversación
-            </label>
-            <label className="mt-3 block text-xs text-zinc-400">Modo de permisos
-              <select value={mode} onChange={(e) => setMode(e.target.value)} className={field}>
-                {MODES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-              </select>
-            </label>
+            <BypassToggle checked={bypass} root={root} onChange={setBypass} />
           </>
         )}
-        {(error || fail) && <p role="alert" className="mt-3 text-xs text-red-400">{error || fail}</p>}
-        {reqId && !fail && !sent && <p className="mt-3 text-xs text-zinc-500">Lanzando…</p>}
-        {sent && <p className="mt-3 text-xs text-emerald-400">Lanzada. Aparecerá en la lista en unos segundos.</p>}
+        {error && <p role="alert" className="mt-3 text-xs text-red-400">{error}</p>}
         <div className="mt-4 flex justify-end gap-2">
-          <button onClick={onClose} className="rounded bg-zinc-800 px-3 py-1.5 text-sm">{sent ? 'Cerrar' : 'Cancelar'}</button>
-          {!sent && <button disabled={busy || !machine || !dir.trim()} onClick={go} className="rounded bg-blue-600 px-3 py-1.5 text-sm text-white disabled:opacity-40">Lanzar</button>}
+          <button onClick={onClose} className="rounded bg-zinc-800 px-3 py-1.5 text-sm">Cancelar</button>
+          <button disabled={busy || !machine || !dir.trim()} onClick={go} className="rounded bg-blue-600 px-3 py-1.5 text-sm text-white disabled:opacity-40">Lanzar</button>
         </div>
       </div>
     </div>

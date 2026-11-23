@@ -49,6 +49,14 @@ CREATE TABLE IF NOT EXISTS tokens (
 	PRIMARY KEY (kind, name)
 );
 CREATE INDEX IF NOT EXISTS tokens_hash ON tokens(kind, hash);
+CREATE TABLE IF NOT EXISTS terminal_audit (
+	id INTEGER PRIMARY KEY,
+	at INTEGER NOT NULL DEFAULT 0,
+	device TEXT NOT NULL DEFAULT '',
+	machine TEXT NOT NULL DEFAULT '',
+	pane TEXT NOT NULL DEFAULT '',
+	action TEXT NOT NULL DEFAULT ''
+);
 CREATE TABLE IF NOT EXISTS away (
 	session TEXT PRIMARY KEY
 );
@@ -71,6 +79,15 @@ func migrate(s *Store) error {
 			return err
 		}
 	}
+	// BDs anteriores: machines sin caps.
+	if err := s.db.QueryRow(`SELECT count(*) FROM pragma_table_info('machines') WHERE name='caps'`).Scan(&n); err != nil {
+		return err
+	}
+	if n == 0 {
+		if _, err := s.db.Exec(`ALTER TABLE machines ADD COLUMN caps TEXT NOT NULL DEFAULT '{}'`); err != nil {
+			return err
+		}
+	}
 	if err := s.db.QueryRow(`SELECT count(*) FROM pragma_table_info('sessions') WHERE name='closed_at'`).Scan(&n); err != nil {
 		return err
 	}
@@ -85,6 +102,17 @@ func migrate(s *Store) error {
 	if n == 0 {
 		if _, err := s.db.Exec(`ALTER TABLE sessions ADD COLUMN recap TEXT NOT NULL DEFAULT ''`); err != nil {
 			return err
+		}
+	}
+	// Plan 3: con qué lanzamiento y en qué panel de herdr corre la sesión.
+	for _, col := range []string{"launch_req", "herdr_pane", "herdr_workspace"} {
+		if err := s.db.QueryRow(`SELECT count(*) FROM pragma_table_info('sessions') WHERE name=?`, col).Scan(&n); err != nil {
+			return err
+		}
+		if n == 0 {
+			if _, err := s.db.Exec(`ALTER TABLE sessions ADD COLUMN ` + col + ` TEXT NOT NULL DEFAULT ''`); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

@@ -231,6 +231,12 @@ func (s *Server) routes() {
 	dev("POST /api/proposals/{id}/approve", s.handleApproveProposal)
 	dev("POST /api/proposals/{id}/reject", s.handleRejectProposal)
 	dev("POST /api/projects/{id}/sync", s.handleSyncProject)
+	dev("GET /api/machines/{m}/conversations", s.handleConversations)
+	dev("POST /api/machines/{m}/terminals", s.handleTermOpen)
+	dev("POST /api/machines/{m}/terminals/{pane}/watch", s.handleTermWatch)
+	dev("POST /api/machines/{m}/terminals/{pane}/input", s.handleTermInput)
+	dev("GET /api/machines/{m}/terminals/{pane}/read", s.handleTermRead)
+	dev("DELETE /api/machines/{m}/terminals/{pane}", s.handleTermClose)
 	s.mux.Handle("/", web.Handler())
 	dev("GET /api/live", s.handleLive)
 }
@@ -407,6 +413,9 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 		Dir            string `json:"dir"`
 		Continue       bool   `json:"continue"`
 		PermissionMode string `json:"permissionMode"`
+		Resume         string `json:"resume"`
+		Label          string `json:"label"`
+		ProjectID      string `json:"projectId"`
 	}
 	if !decode(w, r, &b) {
 		return
@@ -424,9 +433,20 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 500, "error interno")
 		return
 	}
-	req := proto.LaunchRequest{ReqID: hex.EncodeToString(id), Dir: b.Dir, Continue: b.Continue, PermissionMode: b.PermissionMode}
+	// sin label explícito, el workspace nuevo lleva el nombre del proyecto
+	if b.Label == "" && b.ProjectID != "" {
+		if p, err := s.st.GetProject(b.ProjectID); err == nil {
+			b.Label = p.Name
+		}
+	}
+	req := proto.LaunchRequest{ReqID: hex.EncodeToString(id), Dir: b.Dir, Continue: b.Continue, PermissionMode: b.PermissionMode,
+		Resume: b.Resume, Label: b.Label, Trust: true}
 	p, _ := json.Marshal(req)
+	// el pendiente ata la sesión que se registre con este reqId (launch_session). Sin
+	// ticket addPending no deduplica y siempre lo registra: su resultado no importa.
+	s.hub.addPending(req.ReqID, pendingLaunch{machine: b.Machine, root: b.Dir})
 	if !s.hub.SendToMachine(b.Machine, proto.Envelope{Type: "launch", Machine: b.Machine, Payload: p}) {
+		s.hub.dropPending(req.ReqID)
 		apiErr(w, 409, "la máquina está fuera de línea")
 		return
 	}

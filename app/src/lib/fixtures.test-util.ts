@@ -3,7 +3,7 @@ import type { Project, SessionInfo, Ticket } from '../proto.gen'
 // Datos de prueba compartidos por los tests de proyectos.
 export const sess = (id: string, o: Partial<SessionInfo> = {}): SessionInfo => ({
   id, recap: '', previousId: '', machine: 'vps-2', name: id, cwd: '/r', root: '/r', model: '', role: 'work',
-  state: 'idle', contextPct: 0, startedAt: 1, updatedAt: 1, transcriptPath: '', repoUrl: '', branch: '', projectId: 'p1', ...o,
+  state: 'idle', contextPct: 0, startedAt: 1, updatedAt: 1, transcriptPath: '', repoUrl: '', branch: '', projectId: 'p1', launchReq: '', herdrPane: '', herdrWorkspace: '', ...o,
 })
 export const proj = (id: string, o: Partial<Project> = {}): Project => ({
   id, workspaceId: 'w1', name: 'Proyecto ' + id, repoUrl: '', connector: { kind: 'exec', settings: {}, hasToken: false, intervalMin: 5 },

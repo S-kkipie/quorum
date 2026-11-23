@@ -3,17 +3,22 @@ import AskCard from '../components/AskCard'
 import Composer from '../components/Composer'
 import Transcript from '../components/Transcript'
 import { abortSession, closeSession, listEvents } from '../lib/api'
+import { launchIn, loadPrefs } from '../lib/launch'
 import type { AppState } from '../lib/store'
 import { sessionTitle } from '../lib/title'
 import type { Event } from '../proto.gen'
 
 const PAGE = 50
 
-export default function Session({ state, id, onBack, onEvents }: {
+export default function Session({ state, id, onBack, onEvents, onGuard, busy = false, onViewTerminal }: {
   state: AppState
   id: string
   onBack?: () => void
   onEvents: (id: string, evs: Event[]) => void
+  onGuard?: (fn: () => Promise<{ reqId: string; machine: string; label: string }>) => Promise<void>
+  /** Hay un lanzamiento en curso. */
+  busy?: boolean
+  onViewTerminal?: (machine: string, pane: string) => void
 }) {
   const s = state.sessions[id]
   const events = state.events[id] ?? []
@@ -21,6 +26,8 @@ export default function Session({ state, id, onBack, onEvents }: {
   const [dismissed, setDismissed] = useState<Record<string, true>>({})
   const [failed, setFailed] = useState(false)
   const [error, setError] = useState('')
+  const [menu, setMenu] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
   const loading = useRef(false)
   const oldest = useRef<number | undefined>(undefined)
   oldest.current = events[0]?.seq
@@ -47,6 +54,15 @@ export default function Session({ state, id, onBack, onEvents }: {
     load(0)
   }, [id]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    if (!menu) return
+    const down = (e: MouseEvent) => { if (!menuRef.current?.contains(e.target as Node)) setMenu(false) }
+    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenu(false) }
+    document.addEventListener('mousedown', down)
+    document.addEventListener('keydown', key)
+    return () => { document.removeEventListener('mousedown', down); document.removeEventListener('keydown', key) }
+  }, [menu])
+
   const act = async (f: () => Promise<unknown>) => {
     setError('')
     try { await f() } catch (e) { setError(e instanceof Error ? e.message : 'error') }
@@ -67,6 +83,20 @@ export default function Session({ state, id, onBack, onEvents }: {
         </div>
         <button disabled={closed} onClick={() => act(() => abortSession(id))} className={btn}>Interrumpir</button>
         <button disabled={closed} onClick={() => { if (confirm('¿Cerrar esta sesión?')) act(() => closeSession(id)) }} className={btn}>Cerrar</button>
+        <div ref={menuRef} className="relative">
+          <button aria-label="Más acciones" aria-haspopup="menu" aria-expanded={menu} onClick={() => setMenu((v) => !v)} className={btn}>⋯</button>
+          {menu && (
+            <div role="menu" className="absolute right-0 z-20 mt-1 w-48 rounded border border-zinc-800 bg-zinc-900 py-1 text-sm shadow-lg">
+              <button role="menuitem" disabled={busy} onClick={() => { setMenu(false); act(async () => {
+                const dir = s.root || s.cwd
+                await onGuard?.(() => launchIn({ machine: s.machine, dir, bypass: loadPrefs(s.projectId || '_').bypass, root: !!state.machines[s.machine]?.caps?.root, projectId: s.projectId }))
+              }) }} className="block min-h-10 w-full px-3 text-left hover:bg-zinc-800 disabled:opacity-40">Nueva sesión aquí</button>
+              {!closed && s.herdrPane && state.machines[s.machine]?.caps?.terminal && (
+                <button role="menuitem" onClick={() => { setMenu(false); onViewTerminal?.(s.machine, s.herdrPane) }} className="block min-h-10 w-full px-3 text-left hover:bg-zinc-800">Ver en terminal</button>
+              )}
+            </div>
+          )}
+        </div>
       </header>
       {error && <p role="alert" className="bg-red-950/40 px-3 py-1 text-xs text-red-400">{error}</p>}
       <Transcript

@@ -9,7 +9,7 @@ vi.stubGlobal('fetch', fetchMock)
 
 const sess = (o: Partial<SessionInfo>): SessionInfo => ({
   id: 's1', recap: '', previousId: '', machine: 'm', name: 'n', cwd: '/x', root: '/x', model: '', role: 'work' as any,
-  state: 'idle' as any, contextPct: 0, startedAt: 0, updatedAt: 0, transcriptPath: '', repoUrl: '', branch: '', projectId: '', ...o,
+  state: 'idle' as any, contextPct: 0, startedAt: 0, updatedAt: 0, transcriptPath: '', repoUrl: '', branch: '', projectId: '', launchReq: '', herdrPane: '', herdrWorkspace: '', ...o,
 })
 
 async function send(s: SessionInfo, label: string) {

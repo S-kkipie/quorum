@@ -4,22 +4,23 @@ import { SESSION_STATE, STATUSES, STATUS_LABEL, TONE_TEXT, projectCheckouts, tic
 import type { AppState } from '../lib/store'
 import type { Checkout } from '../proto.gen'
 import { sessionTitle } from '../lib/title'
-import { MODES } from './LaunchDialog'
+import { BypassToggle } from './LaunchDialog'
+import { loadPrefs, savePrefs } from '../lib/launch'
 import ProposalCard from './ProposalCard'
 
-type LaunchResult = { reqId: string; ok: boolean; error?: string } | null
+type OnLaunched = (p: { reqId: string; machine: string; label: string }) => void
 
 const field = 'mt-1 w-full rounded border border-zinc-800 bg-zinc-900 p-2 text-sm'
 const h3 = 'mb-1 mt-5 text-xs font-semibold uppercase tracking-wide text-zinc-400'
 
-export default function TicketDetail({ state, ticketId, onBack, onOpenSession, onLoaded, onCheckouts, launchResult }: {
+export default function TicketDetail({ state, ticketId, onBack, onOpenSession, onLoaded, onCheckouts, onLaunched }: {
   state: AppState
   ticketId: string
   onBack?: () => void
   onOpenSession?: (id: string) => void
   onLoaded?: (v: TicketView) => void
   onCheckouts?: (projectId: string, cos: Checkout[]) => void
-  launchResult?: LaunchResult
+  onLaunched?: OnLaunched
 }) {
   const t = Object.values(state.tickets).flat().find((x) => x.id === ticketId)
   const [error, setError] = useState('')
@@ -87,7 +88,7 @@ export default function TicketDetail({ state, ticketId, onBack, onOpenSession, o
               <button onClick={() => onOpenSession?.(working.id)} className="shrink-0 rounded bg-blue-600 px-3 py-1 text-xs text-white">Ir a la sesión</button>
             </div>
           ) : (
-            <OpenSession state={state} ticketId={t.id} projectId={t.projectId} result={launchResult ?? null} onOpenSession={onOpenSession} />
+            <OpenSession state={state} ticketId={t.id} projectId={t.projectId} onLaunched={onLaunched} onOpenSession={onOpenSession} />
           )}
         </section>
 
@@ -161,23 +162,22 @@ function LinkRow({ id, session, confirmed, ticketId, onOpenSession }: { id: stri
   )
 }
 
-function OpenSession({ state, ticketId, projectId, result, onOpenSession }: { state: AppState; ticketId: string; projectId: string; result: LaunchResult; onOpenSession?: (id: string) => void }) {
+function OpenSession({ state, ticketId, projectId, onLaunched, onOpenSession }: { state: AppState; ticketId: string; projectId: string; onLaunched?: OnLaunched; onOpenSession?: (id: string) => void }) {
   const checkouts = projectCheckouts(state, projectId)
   const online = Object.values(state.machines).filter((m) => m.online).map((m) => m.name)
   const withCheckout = [...new Set(checkouts.map((c) => c.machine))].filter((m) => online.includes(m))
   const machines = [...withCheckout, ...online.filter((m) => !withCheckout.includes(m)).sort()]
-  const [picked, setMachine] = useState('')
+  const prefs = loadPrefs(projectId)
+  const [picked, setMachine] = useState(prefs.machine ?? '')
   const machine = machines.includes(picked) ? picked : machines[0] ?? ''
   const roots = checkouts.filter((c) => c.machine === machine).map((c) => c.root)
   // null = sin tocar: sigue al primer checkout conocido de la máquina
   const [typed, setRoot] = useState<string | null>(null)
   const root = typed ?? roots[0] ?? ''
-  const [mode, setMode] = useState('default')
+  const [bypass, setBypass] = useState(prefs.bypass)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [other, setOther] = useState('')
-  const [reqId, setReqId] = useState('')
-  const mine = reqId && result?.reqId === reqId ? result : null
 
   if (machines.length === 0) return <p className="text-sm text-zinc-500">No hay máquinas en línea para abrir una sesión.</p>
 
@@ -186,8 +186,10 @@ function OpenSession({ state, ticketId, projectId, result, onOpenSession }: { st
     setError('')
     setOther('')
     try {
-      const r = await launchTicket(ticketId, { machine, checkoutRoot: root.trim(), permissionMode: mode })
-      setReqId(r.reqId)
+      const useBypass = bypass && !state.machines[machine]?.caps?.root
+      const r = await launchTicket(ticketId, { machine, checkoutRoot: root.trim(), permissionMode: useBypass ? 'bypass' : 'default' })
+      savePrefs(projectId, { machine, bypass })
+      onLaunched?.({ reqId: r.reqId, machine, label: root.trim() })
     } catch (e) {
       if (e instanceof ApiError && e.status === 409 && e.data?.session) setOther(e.data.session)
       setError(e instanceof Error ? e.message : 'error')
@@ -207,11 +209,7 @@ function OpenSession({ state, ticketId, projectId, result, onOpenSession }: { st
             {machines.map((m) => <option key={m}>{m}</option>)}
           </select>
         </label>
-        <label className="block text-xs text-zinc-400">Modo de permisos
-          <select value={mode} onChange={(e) => setMode(e.target.value)} className={field}>
-            {MODES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-          </select>
-        </label>
+        <BypassToggle checked={bypass} root={!!state.machines[machine]?.caps?.root} onChange={setBypass} />
       </div>
       <label className="mt-2 block text-xs text-zinc-400">Checkout
         <input list={`co-${ticketId}`} value={root} onChange={(e) => setRoot(e.target.value)} placeholder="/ruta/al/repo" className={field} />
@@ -224,9 +222,6 @@ function OpenSession({ state, ticketId, projectId, result, onOpenSession }: { st
           {other && <button onClick={() => onOpenSession?.(other)} className="rounded bg-blue-600 px-2 py-0.5 text-white">Ir a la sesión</button>}
         </p>
       )}
-      {mine && !mine.ok && <p role="alert" className="mt-2 text-xs text-red-400">{mine.error || 'no se pudo abrir la sesión'}</p>}
-      {mine?.ok && <p className="mt-2 text-xs text-emerald-400">Sesión abierta: aparecerá en unos segundos.</p>}
-      {reqId && !mine && <p className="mt-2 text-xs text-zinc-500">Abriendo…</p>}
       <div className="mt-2 flex justify-end">
         <button disabled={busy || !machine || !root.trim()} onClick={go} className="rounded bg-blue-600 px-3 py-1.5 text-sm text-white disabled:opacity-40">Abrir sesión</button>
       </div>

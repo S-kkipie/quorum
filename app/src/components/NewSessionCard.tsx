@@ -1,0 +1,101 @@
+import { useEffect, useState } from 'react'
+import { loadPrefs, launchIn, savePrefs } from '../lib/launch'
+import { projectCheckouts } from '../lib/projects'
+import type { AppState } from '../lib/store'
+import LaunchDialog, { BypassToggle } from './LaunchDialog'
+
+const sep = '\u0000'
+
+/** Arriba del proyecto: un toque lanza una sesión nueva; chip de máquina, "Sin permisos" y Terminal. */
+export default function NewSessionCard({ state, projectId, pending, onLaunched, onGuard, onTerminal, onSelect }: {
+  state: AppState
+  projectId: string
+  /** Hay un lanzamiento en curso: no se puede lanzar otra (doble toque = una sesión). */
+  pending: boolean
+  onLaunched: (p: { reqId: string; machine: string; label: string }) => void
+  /** Lanza con la guarda única de la app (síncrona): un lanzamiento a la vez. */
+  onGuard: (fn: () => Promise<{ reqId: string; machine: string; label: string }>) => Promise<void>
+  onTerminal: (machine: string, root: string) => Promise<unknown> | void
+  /** Avisa qué checkout quedó elegido (para listar sus conversaciones). */
+  onSelect?: (machine: string, root: string) => void
+}) {
+  const cos = projectCheckouts(state, projectId)
+  const online = (m: string) => !!state.machines[m]?.online
+  const prefs = loadPrefs(projectId)
+  const dflt = cos.find((c) => c.machine === prefs.machine && online(c.machine)) ?? cos.find((c) => online(c.machine))
+  const [pick, setPick] = useState('')
+  const chosen = cos.find((c) => c.machine + sep + c.root === pick && online(c.machine)) ?? dflt
+  const [bypass, setBypass] = useState(prefs.bypass)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [other, setOther] = useState(false)
+  const [termBusy, setTermBusy] = useState(false)
+  const machine = chosen?.machine ?? ''
+  const root = chosen?.root ?? ''
+  const caps = state.machines[machine]?.caps // sin caps = todo en false (daemons viejos)
+  const isRoot = !!caps?.root
+
+  useEffect(() => { if (machine) onSelect?.(machine, root) }, [machine, root]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function go() {
+    if (busy || pending || !chosen) return
+    setBusy(true)
+    setError('')
+    try {
+      await onGuard(async () => {
+        const p = await launchIn({ machine, dir: root, bypass, root: isRoot, projectId })
+        savePrefs(projectId, { machine, bypass })
+        return p
+      })
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+  async function term() {
+    if (termBusy) return
+    setError('')
+    setTermBusy(true)
+    try { await onTerminal(machine, root) } catch (e) { setError(e instanceof Error ? e.message : 'error') } finally { setTermBusy(false) }
+  }
+
+  if (cos.length === 0) {
+    return (
+      <div className="px-3 pt-3">
+        <p className="text-sm text-zinc-500">Este proyecto todavía no tiene carpeta en ninguna máquina</p>
+        <button onClick={() => setOther(true)} className="mt-1 text-sm text-blue-400 underline">Otra carpeta…</button>
+        {other && <LaunchDialog state={state} projectId={projectId} onClose={() => setOther(false)} onLaunched={(p) => { setOther(false); onLaunched(p) }} />}
+      </div>
+    )
+  }
+  const multi = new Set(cos.map((c) => c.machine)).size < cos.length
+  return (
+    <div className="px-3 pt-3">
+      <button disabled={busy || pending || !chosen} onClick={go} className="min-h-14 w-full rounded-lg bg-blue-600 px-4 text-base font-semibold text-white disabled:opacity-40">
+        {busy || pending ? 'Lanzando…' : 'Nueva sesión'}
+      </button>
+      {!chosen && <p className="mt-2 text-xs text-amber-400">Ninguna máquina de este proyecto está en línea.</p>}
+      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2">
+        <label className="flex items-center gap-1 rounded-full bg-zinc-800 px-3 py-1 text-xs text-zinc-300">
+          <span className={online(machine) ? 'text-emerald-400' : 'text-zinc-600'}>●</span>
+          <select aria-label="Máquina" value={chosen ? chosen.machine + sep + chosen.root : ''} onChange={(e) => setPick(e.target.value)} className="bg-transparent text-xs">
+            {!chosen && <option value="">sin máquina</option>}
+            {cos.map((c) => (
+              <option key={c.machine + sep + c.root} value={c.machine + sep + c.root} disabled={!online(c.machine)}>
+                {c.machine}{multi ? ` · ${c.root}` : ''}{online(c.machine) ? '' : ' (sin conexión)'}
+              </option>
+            ))}
+          </select>
+        </label>
+        <BypassToggle checked={bypass} root={isRoot} onChange={(v) => { setBypass(v); savePrefs(projectId, { ...(machine ? { machine } : {}), bypass: v }) }} />
+        {caps?.terminal ? (
+          <button disabled={!chosen || termBusy} onClick={term} className="ml-auto min-h-10 rounded bg-zinc-800 px-4 text-sm disabled:opacity-40">Terminal</button>
+        ) : (
+          chosen && <span className="text-xs text-zinc-500">Terminal no disponible en esta máquina (falta herdr)</span>
+        )}
+      </div>
+      {error && <p role="alert" className="mt-2 text-xs text-red-400">{error}</p>}
+    </div>
+  )
+}

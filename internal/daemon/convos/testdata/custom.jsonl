@@ -1,0 +1,5 @@
+{"type":"ai-title","aiTitle":"Título automático","sessionId":"custom"}
+{"type":"user","message":{"role":"user","content":"hola"}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Hola."}]}}
+{"type":"custom-title","customTitle":"Mi título","sessionId":"custom"}
+{"type":"summary","summary":"Un resumen"}

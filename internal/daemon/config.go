@@ -22,7 +22,14 @@ type Config struct {
 	MachineToken string `json:"machineToken"`
 	Port         int    `json:"port"`
 	LocalToken   string `json:"localToken"`
+	// HerdrSocket cambia la ruta del socket de herdr (por defecto ~/.config/herdr/herdr.sock).
+	HerdrSocket string `json:"herdrSocket,omitempty"`
+	// Terminal apaga la terminal remota si es false; nil equivale a true.
+	Terminal *bool `json:"terminal,omitempty"`
 }
+
+// TerminalOn dice si la terminal remota está permitida por la config.
+func (c Config) TerminalOn() bool { return c.Terminal == nil || *c.Terminal }
 
 // ConfigDir devuelve QUORUM_CONFIG_DIR o ~/.config/quorum.
 func ConfigDir() (string, error) {

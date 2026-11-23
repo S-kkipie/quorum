@@ -1,7 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import Conversations from '../components/Conversations'
+import NewSessionCard from '../components/NewSessionCard'
 import { Progress } from '../components/ProjectCard'
 import TicketRow from '../components/TicketRow'
 import { confirmTicketLink, listCheckouts, listTickets, syncProject, unlinkTicket, type TicketView } from '../lib/api'
+import { launchIn, loadPrefs } from '../lib/launch'
 import { SESSION_STATE, STATUSES, STATUS_LABEL, projectCheckouts, projectSessions, since } from '../lib/projects'
 import type { AppState } from '../lib/store'
 import type { Checkout } from '../proto.gen'
@@ -9,7 +12,7 @@ import { sessionTitle } from '../lib/title'
 
 const h3 = 'mb-1 mt-5 px-3 text-xs font-semibold uppercase tracking-wide text-zinc-400'
 
-export default function Project({ state, id, selectedTicket, onBack, onOpenTicket, onOpenSession, onEdit, onTickets, onCheckouts }: {
+export default function Project({ state, id, selectedTicket, onBack, onOpenTicket, onOpenSession, onEdit, onTickets, onCheckouts, pending = false, onLaunched, onGuard, onTerminal }: {
   state: AppState
   id: string
   selectedTicket?: string | null
@@ -19,10 +22,17 @@ export default function Project({ state, id, selectedTicket, onBack, onOpenTicke
   onEdit?: (id: string) => void
   onTickets?: (projectId: string, views: TicketView[]) => void
   onCheckouts?: (projectId: string, cos: Checkout[]) => void
+  /** Hay un lanzamiento en curso (esperando que la sesión se registre). */
+  pending?: boolean
+  onLaunched?: (p: { reqId: string; machine: string; label: string }) => void
+  onGuard?: (fn: () => Promise<{ reqId: string; machine: string; label: string }>) => Promise<void>
+  onTerminal?: (machine: string, root: string) => Promise<unknown> | void
 }) {
   const p = state.projects[id]
   const [error, setError] = useState('')
   const [syncing, setSyncing] = useState(false)
+  const [sel, setSel] = useState<{ machine: string; root: string } | null>(null)
+  const onSelect = useCallback((machine: string, root: string) => setSel((c) => (c && c.machine === machine && c.root === root ? c : { machine, root })), [])
 
   useEffect(() => {
     let off = false
@@ -43,6 +53,16 @@ export default function Project({ state, id, selectedTicket, onBack, onOpenTicke
   for (const x of Object.values(state.proposals)) if (x.status === 'pendiente') pendingByTicket[x.ticketId] = (pendingByTicket[x.ticketId] ?? 0) + 1
   const suggestions = tickets.flatMap((t) =>
     Object.entries(state.links[t.id] ?? {}).filter(([sid, c]) => !c && state.sessions[sid]).map(([sid]) => ({ t, s: state.sessions[sid] })))
+
+  async function resume(convId: string) {
+    if (!sel || pending) return
+    setError('')
+    try {
+      const prefs = loadPrefs(id)
+      await onGuard?.(() => launchIn({ machine: sel.machine, dir: sel.root, bypass: prefs.bypass, root: !!state.machines[sel.machine]?.caps?.root, resume: convId, projectId: id }))
+    } catch (e) { setError(e instanceof Error ? e.message : 'error') }
+  }
+  const liveIds = new Set(sessions.map((s) => s.id))
 
   async function sync() {
     setSyncing(true)
@@ -72,9 +92,11 @@ export default function Project({ state, id, selectedTicket, onBack, onOpenTicke
         {error && <p role="alert" className="mt-2 text-xs text-red-400">{error}</p>}
       </div>
 
+      <NewSessionCard state={state} projectId={id} pending={pending} onLaunched={(p) => onLaunched?.(p)} onGuard={(f) => onGuard?.(f) ?? Promise.resolve()} onTerminal={(m, r) => onTerminal?.(m, r)} onSelect={onSelect} />
+
       {sessions.length > 0 && (
         <section>
-          <h3 className={h3}>Sesiones vivas</h3>
+          <h3 className={h3}>Sesiones abiertas</h3>
           <ul className="divide-y divide-zinc-900 border-y border-zinc-900">
             {sessions.map((s) => {
               const st = SESSION_STATE[s.state] ?? SESSION_STATE.idle
@@ -90,6 +112,13 @@ export default function Project({ state, id, selectedTicket, onBack, onOpenTicke
               )
             })}
           </ul>
+        </section>
+      )}
+
+      {sel && (
+        <section>
+          <h3 className={h3}>Conversaciones</h3>
+          <Conversations machine={sel.machine} root={sel.root} liveIds={liveIds} busy={pending} outdated={!state.machines[sel.machine]?.caps} onOpen={(sid) => onOpenSession?.(sid)} onResume={resume} />
         </section>
       )}
 

@@ -10,6 +10,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -37,7 +38,22 @@ var (
 	runTimeout = 15 * time.Second
 	// execFn ejecuta el lanzador y espera a que termine; se inyecta en los tests.
 	execFn = runDetached
+	// geteuid se inyecta en los tests (Sin permisos no se permite como root).
+	geteuid  = os.Geteuid
+	resumeRe = regexp.MustCompile(`^[0-9a-fA-F-]{8,64}$`)
+	hexRe    = regexp.MustCompile(`[0-9a-fA-F]`)
+	notAlnum = regexp.MustCompile(`[^A-Za-z0-9]`)
 )
+
+// LaunchReqEnv es la variable de entorno que ata la sesión lanzada a su reqId.
+const LaunchReqEnv = "QUORUM_LAUNCH_REQ"
+
+// validResume: id de conversación de 8 a 64 caracteres hex o '-', con al menos un dígito hex
+// (así nunca es algo como "--------", que claude leería como opción).
+func validResume(id string) bool { return resumeRe.MatchString(id) && hexRe.MatchString(id) }
+
+// launchReqValue es el reqId saneado para el entorno ([A-Za-z0-9]); vacío si no queda nada.
+func launchReqValue(reqID string) string { return notAlnum.ReplaceAllString(reqID, "") }
 
 // graceWait es lo que se espera a un lanzador gráfico (wt.exe, osascript) antes
 // de darlo por lanzado: pueden quedar vivos reteniendo handles heredados. Variable para tests.
@@ -134,6 +150,9 @@ func claudeArgs(req proto.LaunchRequest) (parts []string, promptIdx int) {
 	if f, ok := modeFlags(req.PermissionMode); ok { // Run ya rechazó los inválidos
 		parts = append(parts, f...)
 	}
+	if req.Resume != "" && validResume(req.Resume) { // validate ya rechazó los inválidos
+		parts = append(parts, "--resume", req.Resume)
+	}
 	if req.Prompt != "" {
 		parts = append(parts, "--", req.Prompt)
 		promptIdx = len(parts) - 1
@@ -141,10 +160,15 @@ func claudeArgs(req proto.LaunchRequest) (parts []string, promptIdx int) {
 	return parts, promptIdx
 }
 
-// claudeLine es la línea de shell POSIX; solo el prompt necesita cita (los flags son seguros).
+// claudeLine es la línea de shell POSIX; solo el prompt necesita cita (los flags y
+// el id de --resume son seguros). Lleva delante QUORUM_LAUNCH_REQ=<reqId saneado>.
 func claudeLine(req proto.LaunchRequest) string {
 	args, pi := claudeArgs(req)
-	parts := []string{"claude"}
+	var parts []string
+	if v := launchReqValue(req.ReqID); v != "" {
+		parts = append(parts, LaunchReqEnv+"="+v)
+	}
+	parts = append(parts, "claude")
 	for i, a := range args {
 		if i == pi {
 			a = shellQuote(a)
@@ -208,22 +232,60 @@ func Argv(env Env, req proto.LaunchRequest, hasDisplay bool) (bin string, args [
 	}
 }
 
+// rootBypassMsg es el motivo por el que "Sin permisos" no se ofrece como root.
+const rootBypassMsg = "Sin permisos no funciona como root"
+
+// validate comprueba la petición; devuelve el mensaje de error o "".
+func validate(env Env, req proto.LaunchRequest) string {
+	if _, ok := modeFlags(req.PermissionMode); !ok {
+		return "modo de permisos inválido"
+	}
+	if req.PermissionMode == "bypass" && geteuid() == 0 {
+		return rootBypassMsg
+	}
+	if req.Resume != "" && !validResume(req.Resume) {
+		return "id de conversación inválido"
+	}
+	if !isAbs(env, req.Dir) {
+		return "la carpeta debe ser una ruta absoluta"
+	}
+	if st, err := os.Stat(req.Dir); err != nil || !st.IsDir() {
+		return "la carpeta no existe: " + req.Dir
+	}
+	return ""
+}
+
+// trust marca la carpeta como de confianza si se pidió; un fallo solo se registra.
+func trust(req proto.LaunchRequest) {
+	if !req.Trust {
+		return
+	}
+	home, err := os.UserHomeDir()
+	if err == nil {
+		err = TrustDir(home, req.Dir)
+	}
+	if err != nil {
+		log.Printf("launch: no se pudo confiar en %s: %v", req.Dir, err)
+	}
+}
+
+// via es el nombre del lanzador para LaunchResult.Via.
+func via(bin string) string {
+	if bin == "wt.exe" {
+		return "wt"
+	}
+	return bin
+}
+
 // Run valida la petición y lanza el terminal. No espera a que Claude termine.
 func Run(ctx context.Context, req proto.LaunchRequest) proto.LaunchResult {
 	res := proto.LaunchResult{ReqID: req.ReqID}
-	if _, ok := modeFlags(req.PermissionMode); !ok {
-		res.Error = "modo de permisos inválido"
-		return res
-	}
 	env := DetectEnv()
-	if !isAbs(env, req.Dir) {
-		res.Error = "la carpeta debe ser una ruta absoluta"
+	if msg := validate(env, req); msg != "" {
+		res.Error = msg
 		return res
 	}
-	if st, err := os.Stat(req.Dir); err != nil || !st.IsDir() {
-		res.Error = "la carpeta no existe: " + req.Dir
-		return res
-	}
+	trust(req)
 	req, err := collapsePrompt(env, req)
 	if err != nil {
 		res.Error = "no se pudo preparar el prompt: " + err.Error()
@@ -240,7 +302,7 @@ func Run(ctx context.Context, req proto.LaunchRequest) proto.LaunchResult {
 		res.Error = "no se pudo abrir el terminal: " + msg
 		return res
 	}
-	res.OK = true
+	res.OK, res.Via = true, via(bin)
 	return res
 }
 
@@ -270,6 +332,14 @@ func collapsePrompt(env Env, req proto.LaunchRequest) (proto.LaunchRequest, erro
 	if req.Prompt == "" || (!wt && !strings.ContainsAny(req.Prompt, "\r\n") && len(req.Prompt) <= promptMaxInline) {
 		return req, nil
 	}
+	return promptToFile(req, false)
+}
+
+// promptToFile escribe el prompt en <dir>/.claude/quorum/ticket-<reqId>.md y lo
+// cambia por uno corto que apunta al fichero. Con rel, la ruta del prompt es relativa
+// a <dir> (el cwd de la sesión): así la carpeta del proyecto, que puede llevar
+// comillas, ';' o '$(', nunca llega a la línea que se escribe en un shell.
+func promptToFile(req proto.LaunchRequest, rel bool) (proto.LaunchRequest, error) {
 	cleanPromptFiles(os.TempDir(), legacyPromptPre)
 	dir := PromptDir(req.Dir)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -293,7 +363,11 @@ func collapsePrompt(env Env, req proto.LaunchRequest) (proto.LaunchRequest, erro
 		os.Remove(path)
 		return req, err
 	}
-	req.Prompt = "Lee el archivo " + path + " y trabaja en ese ticket."
+	shown := path
+	if rel {
+		shown = ".claude/quorum/" + promptFilePre + id + ".md"
+	}
+	req.Prompt = "Lee el archivo " + shown + " y trabaja en ese ticket."
 	return req, nil
 }
 

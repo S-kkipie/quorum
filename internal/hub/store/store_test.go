@@ -124,8 +124,8 @@ func TestSessionsClosed(t *testing.T) {
 
 func TestMachines(t *testing.T) {
 	s := openMem(t)
-	require.NoError(t, s.UpsertMachine("m", "linux", "wsl", "1", true))
-	require.NoError(t, s.UpsertMachine("m", "linux", "wsl", "2", false))
+	require.NoError(t, s.UpsertMachine("m", "linux", "wsl", "1", true, proto.MachineCaps{}))
+	require.NoError(t, s.UpsertMachine("m", "linux", "wsl", "2", false, proto.MachineCaps{}))
 	ms, err := s.ListMachines()
 	require.NoError(t, err)
 	require.Len(t, ms, 1)
@@ -357,6 +357,10 @@ func TestMigratesOldSessionsTable(t *testing.T) {
 	si, err := s.Session("b")
 	require.NoError(t, err)
 	require.Equal(t, "a", si.PreviousID)
+	require.NoError(t, s.UpsertSession(proto.SessionInfo{ID: "c", Machine: "m1", State: proto.StateIdle, HerdrPane: "p_9"}))
+	si, err = s.Session("c")
+	require.NoError(t, err)
+	require.Equal(t, "p_9", si.HerdrPane)
 }
 
 // Ruling Q: tras /clear A→B, `claude --resume A` revive A mientras B vive. El
@@ -473,7 +477,7 @@ func TestOpenPathWithURIChars(t *testing.T) {
 	p := filepath.Join(dir, "hub.db")
 	s, err := Open(p)
 	require.NoError(t, err)
-	require.NoError(t, s.UpsertMachine("m", "", "", "", true))
+	require.NoError(t, s.UpsertMachine("m", "", "", "", true, proto.MachineCaps{}))
 	s.Close()
 	_, err = os.Stat(p)
 	require.NoError(t, err)
@@ -519,4 +523,53 @@ func TestSessionRecapNotClearedByEmptyUpsert(t *testing.T) {
 	require.NoError(t, s.UpsertSession(proto.SessionInfo{ID: "c", Machine: "m", State: proto.StateIdle}))
 	si, _ = s.Session("c")
 	require.Equal(t, "", si.Recap)
+}
+
+func TestMachineCapsRoundTrip(t *testing.T) {
+	s := openMem(t)
+	require.NoError(t, s.UpsertMachine("m", "linux", "wsl", "1", true, proto.MachineCaps{Herdr: true, Terminal: true}))
+	ms, err := s.ListMachines()
+	require.NoError(t, err)
+	require.True(t, ms[0].Caps.Herdr)
+	require.True(t, ms[0].Caps.Terminal)
+	require.False(t, ms[0].Caps.Root)
+	require.NoError(t, s.SetMachineCaps("m", proto.MachineCaps{Root: true}))
+	ms, _ = s.ListMachines()
+	require.False(t, ms[0].Caps.Herdr)
+	require.True(t, ms[0].Caps.Root)
+}
+
+func TestMachineCapsMigratesOldDB(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "old.db")
+	db, err := sql.Open("sqlite", "file:"+p)
+	require.NoError(t, err)
+	_, err = db.Exec(`CREATE TABLE machines (name TEXT PRIMARY KEY, os TEXT NOT NULL DEFAULT '', env TEXT NOT NULL DEFAULT '',
+		version TEXT NOT NULL DEFAULT '', online INTEGER NOT NULL DEFAULT 0, last_seen INTEGER NOT NULL DEFAULT 0);
+		INSERT INTO machines(name) VALUES('viejo')`)
+	require.NoError(t, err)
+	db.Close()
+	s, err := Open(p)
+	require.NoError(t, err)
+	defer s.Close()
+	ms, err := s.ListMachines()
+	require.NoError(t, err)
+	require.Len(t, ms, 1)
+	require.Equal(t, proto.MachineCaps{}, ms[0].Caps)
+}
+
+// Plan 3: launchReq y el panel de herdr se guardan, sobreviven a un renombre y se leen.
+func TestSessionLaunchAndHerdrPersist(t *testing.T) {
+	s := openMem(t)
+	require.NoError(t, s.UpsertSession(proto.SessionInfo{ID: "a", Machine: "m", State: proto.StateIdle,
+		LaunchReq: "r1", HerdrPane: "p_1", HerdrWorkspace: "w_1"}))
+	si, err := s.Session("a")
+	require.NoError(t, err)
+	require.Equal(t, [3]string{"r1", "p_1", "w_1"}, [3]string{si.LaunchReq, si.HerdrPane, si.HerdrWorkspace})
+	// /clear: el id nuevo llega con los mismos datos del proceso
+	require.NoError(t, s.UpsertSession(proto.SessionInfo{ID: "b", PreviousID: "a", Machine: "m", State: proto.StateIdle,
+		LaunchReq: "r1", HerdrPane: "p_1", HerdrWorkspace: "w_1"}))
+	ss, err := s.ListSessions(false)
+	require.NoError(t, err)
+	require.Len(t, ss, 1)
+	require.Equal(t, [4]string{"b", "r1", "p_1", "w_1"}, [4]string{ss[0].ID, ss[0].LaunchReq, ss[0].HerdrPane, ss[0].HerdrWorkspace})
 }

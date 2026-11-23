@@ -73,3 +73,22 @@ describe('propuestas', () => {
     expect(urls).toContain('http://h:1/api/proposals?limit=50')
   })
 })
+
+describe('terminal api', () => {
+  it('codifica el panel (lleva ":") y usa los verbos correctos', async () => {
+    const calls: [string, any][] = []
+    vi.stubGlobal('fetch', async (u: string, i?: RequestInit) => { calls.push([u, i]); return new Response('', { status: 202 }) })
+    vi.stubGlobal('localStorage', { getItem: () => '', setItem() {}, removeItem() {} })
+    const a = await import('./api')
+    await a.watchTerminal('m 1', 'w1:2')
+    await a.sendTerminal('m 1', 'w1:2', { keys: ['esc'] })
+    await a.readTerminal('m 1', 'w1:2', 40)
+    await a.closeTerminal('m 1', 'w1:2')
+    expect(calls.map(([u, i]) => `${i?.method} ${u}`)).toEqual([
+      'POST /api/machines/m%201/terminals/w1%3A2/watch',
+      'POST /api/machines/m%201/terminals/w1%3A2/input',
+      'GET /api/machines/m%201/terminals/w1%3A2/read?lines=40',
+      'DELETE /api/machines/m%201/terminals/w1%3A2',
+    ].map((x) => x.replace('GET', 'undefined')))
+  })
+})

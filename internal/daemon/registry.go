@@ -47,6 +47,10 @@ func (r *Registry) Out() <-chan proto.Envelope { return r.out }
 // EmitEnvelope encola un envelope genérico (p. ej. launch_result) hacia el hub.
 func (r *Registry) EmitEnvelope(e proto.Envelope) { r.emit(e, false, time.Now().Add(outBlockMax)) }
 
+// EmitDroppable encola un envelope que se puede perder (p. ej. term_frame):
+// si la cola está llena se descarta sin esperar.
+func (r *Registry) EmitDroppable(e proto.Envelope) { r.emit(e, true, time.Time{}) }
+
 func (r *Registry) emit(e proto.Envelope, droppable bool, deadline time.Time) {
 	select {
 	case r.out <- e:

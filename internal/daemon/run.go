@@ -175,7 +175,7 @@ func (l *linker) start(cfg Config) {
 	go func() {
 		defer close(done)
 		if cfg.Hub != "" && cfg.MachineToken != "" {
-			RunHubLink(ctx, cfg, l.reg)
+			RunHubLink(ctx, cfg, l.reg, NewHost(cfg))
 			return
 		}
 		for {

@@ -32,3 +32,38 @@ test('disabled solo con QUORUM_DISABLE=1', () => {
   expect(disabled(undefined)).toBe(false)
   expect(disabled('0')).toBe(false)
 })
+
+// Task 5 (Plan 3): la sesión informa con qué lanzamiento y en qué panel de herdr corre.
+// El kit no tiene quorumd: se finge ensure y se captura el cuerpo de /v1/sessions/register.
+async function registered($: never, on: never, env: Record<string, string>): Promise<Record<string, unknown>> {
+  const o = on as (...a: unknown[]) => void
+  mock.env(on as never, env)
+  mock.clock(on as never)
+  o('command.register', async () => ({ value: undefined }))
+  o('session.start', async () => ({ cwd: '/x' }))
+  o('process.run', async () => ({ value: { exitCode: 0, stdout: JSON.stringify({ ok: true, port: 1, token: 't', machine: 'm' }), stderr: '' } }))
+  let body: Record<string, unknown> | undefined
+  let got: () => void = () => {}
+  const done = new Promise<void>(r => { got = r })
+  o('http.fetch', async (_$: unknown, e: { url?: string; init?: { body?: string } }) => {
+    if (String(e.url).endsWith('/v1/sessions/register') && !body) { body = JSON.parse(String(e.init?.body)); got() }
+    return { value: { status: 204 } }
+  })
+  await ($ as { session: { start(x: unknown): Promise<unknown> } }).session.start({ cwd: '/x', surface: null, interactive: false })
+  await done
+  return body!
+}
+
+test('register sends launchReq and herdr pane from env', async ($, on) => {
+  const b = await registered($ as never, on as never, { CCAPI_SERVER: '1', QUORUM_LAUNCH_REQ: 'req-1', HERDR_PANE_ID: 'p_3', HERDR_WORKSPACE_ID: 'w_2' })
+  expect(b.launchReq).toBe('req-1')
+  expect(b.herdrPane).toBe('p_3')
+  expect(b.herdrWorkspace).toBe('w_2')
+})
+
+test('sin las variables de entorno, launchReq y herdrPane van vacíos', async ($, on) => {
+  const b = await registered($ as never, on as never, { CCAPI_SERVER: '1' })
+  expect(b.launchReq).toBe('')
+  expect(b.herdrPane).toBe('')
+  expect(b.herdrWorkspace).toBe('')
+})

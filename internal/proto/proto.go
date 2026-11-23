@@ -45,6 +45,11 @@ type SessionInfo struct {
 	RepoURL   string `json:"repoUrl"`
 	Branch    string `json:"branch"`
 	ProjectID string `json:"projectId"`
+	// LaunchReq es el QUORUM_LAUNCH_REQ con el que se lanzó la sesión (vacío si no fue lanzada por Quorum).
+	LaunchReq string `json:"launchReq"`
+	// HerdrPane y HerdrWorkspace identifican el panel de herdr donde corre (vacíos fuera de herdr).
+	HerdrPane      string `json:"herdrPane"`
+	HerdrWorkspace string `json:"herdrWorkspace"`
 }
 
 type EventKind string
@@ -142,6 +147,10 @@ type Command struct {
 // tickets (hub->app): Payload {projectId, tickets: []Ticket}, tras una sincronización correcta.
 // session_ticket (hub->app): Payload {sessionId, ticketId, confirmed, removed?} al sugerir, confirmar o desasociar un vínculo.
 // events (hub->app): Payload []Event de una sesión (historial rellenado, en un solo envelope).
+// caps (daemon->hub): Payload MachineCaps; el hub la guarda y republica machine_status.
+// rpc / rpc_result (hub<->daemon): Payload RPC / RPCResult; petición y respuesta correlacionadas por reqId.
+// term_frame (daemon->hub->app): Payload TermFrame; pantalla de un panel, solo mientras alguien mira, nunca se guarda.
+// launch_session (hub->app): Payload {reqId, sessionId}; la sesión lanzada ya se registró y la app puede navegar a ella.
 type Envelope struct {
 	Type    string          `json:"type"`
 	Machine string          `json:"machine"`
@@ -155,6 +164,14 @@ type MachineHello struct {
 	Env      string        `json:"env"` // linux|wsl|windows|darwin
 	Version  string        `json:"version"`
 	Sessions []SessionInfo `json:"sessions"`
+	Caps     MachineCaps   `json:"caps"`
+}
+
+// MachineCaps son las capacidades de una máquina que el daemon reporta al hub.
+type MachineCaps struct {
+	Herdr    bool `json:"herdr"`
+	Terminal bool `json:"terminal"`
+	Root     bool `json:"root"`
 }
 
 type LaunchRequest struct {
@@ -165,12 +182,52 @@ type LaunchRequest struct {
 	// Prompt es el primer mensaje de la sesión (opcional); TicketID el ticket de origen (lo usa el hub).
 	Prompt   string `json:"prompt"`
 	TicketID string `json:"ticketId"`
+	// Resume es el id de la sesión de Claude a retomar (--resume).
+	Resume string `json:"resume"`
+	// Label es el nombre del proyecto, para el workspace nuevo.
+	Label string `json:"label"`
+	Trust bool   `json:"trust"`
 }
 
 type LaunchResult struct {
 	ReqID string `json:"reqId"`
 	OK    bool   `json:"ok"`
 	Error string `json:"error"`
+	// Pane es el panel donde quedó la sesión (si lo hay); Via, el lanzador usado: herdr|tmux|wt|osascript.
+	Pane string `json:"pane"`
+	Via  string `json:"via"`
+}
+
+// Conversation es una conversación de Claude guardada en disco que se puede retomar.
+type Conversation struct {
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	FirstPrompt string `json:"firstPrompt"`
+	Messages    int    `json:"messages"`
+	UpdatedAt   int64  `json:"updatedAt"`
+	Open        bool   `json:"open"`
+}
+
+// RPC es una petición hub->daemon; la respuesta vuelve como RPCResult con el mismo ReqID.
+type RPC struct {
+	ReqID  string          `json:"reqId"`
+	Method string          `json:"method"`
+	Params json.RawMessage `json:"params"`
+}
+
+type RPCResult struct {
+	ReqID  string          `json:"reqId"`
+	Result json.RawMessage `json:"result"`
+	Error  string          `json:"error"`
+}
+
+// TermFrame es la pantalla de un panel de terminal.
+type TermFrame struct {
+	Pane   string `json:"pane"`
+	Cols   int    `json:"cols"`
+	Rows   int    `json:"rows"`
+	ANSI   string `json:"ansi"`
+	Closed bool   `json:"closed"`
 }
 
 // Workspace (trabajo) agrupa proyectos; WhoasProfile es el perfil whoas asociado.

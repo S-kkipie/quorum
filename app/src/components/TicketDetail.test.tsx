@@ -17,21 +17,21 @@ afterEach(() => { cleanup(); fetchMock.mockClear() })
 describe('TicketDetail', () => {
   it('Abrir sesión: checkout del proyecto; un 409 ofrece ir a la sesión existente', async () => {
     let s = setTickets(initialState(), 'p1', [{ ...tk('t1'), sessions: [] }])
-    s = { ...s, machines: { 'vps-2': { name: 'vps-2', os: 'linux', env: 'linux', version: '', online: true, lastSeen: 0 } }, sessions: { a: sess('a', { state: 'closed', root: '/srv/repo' }) }, order: ['a'] }
+    s = { ...s, machines: { 'vps-2': { name: 'vps-2', os: 'linux', env: 'linux', version: '', online: true, lastSeen: 0, caps: { herdr: false, terminal: false, root: false } } }, sessions: { a: sess('a', { state: 'closed', root: '/srv/repo' }) }, order: ['a'] }
     const onOpenSession = vi.fn()
     render(<TicketDetail state={s} ticketId="t1" onOpenSession={onOpenSession} />)
     expect((screen.getByPlaceholderText('/ruta/al/repo') as HTMLInputElement).value).toBe('/srv/repo')
     fireEvent.click(screen.getByRole('button', { name: 'Abrir sesión' }))
     const go = await screen.findByRole('button', { name: 'Ir a la sesión' })
     const call = fetchMock.mock.calls.find(([u]) => String(u).endsWith('/launch'))!
-    expect(JSON.parse(String(call[1]?.body))).toEqual({ machine: 'vps-2', checkoutRoot: '/srv/repo', permissionMode: 'default' })
+    expect(JSON.parse(String(call[1]?.body))).toEqual({ machine: 'vps-2', checkoutRoot: '/srv/repo', permissionMode: 'bypass' })
     fireEvent.click(go)
     expect(onOpenSession).toHaveBeenCalledWith('s7')
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('ya hay una sesión'))
   })
   it('pide los checkouts guardados del proyecto y los ofrece en el selector', async () => {
     let s = setTickets(initialState(), 'p1', [{ ...tk('t1'), sessions: [] }])
-    s = { ...s, machines: { mac: { name: 'mac', os: 'darwin', env: 'darwin', version: '', online: true, lastSeen: 0 } } }
+    s = { ...s, machines: { mac: { name: 'mac', os: 'darwin', env: 'darwin', version: '', online: true, lastSeen: 0, caps: { herdr: false, terminal: false, root: false } } } }
     const onCheckouts = vi.fn()
     const { rerender } = render(<TicketDetail state={s} ticketId="t1" onCheckouts={onCheckouts} />)
     await waitFor(() => expect(onCheckouts).toHaveBeenCalled())

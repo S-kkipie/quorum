@@ -18,6 +18,7 @@ vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener() {}, remov
 let restSessions: any[] = []
 const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
   if (String(url).includes('/api/sessions?')) return new Response(JSON.stringify(restSessions))
+  if (String(url).endsWith('/api/launch')) return new Response(JSON.stringify({ reqId: 'r1' }), { status: 202 })
   if (init?.method === 'POST') return new Response('', { status: 202 })
   return new Response('[]')
 })
@@ -137,5 +138,26 @@ describe('App', () => {
     expect(screen.queryByText('Trabajos')).toBeNull()
     expect(spy).not.toHaveBeenCalled()
     spy.mockRestore()
+  })
+
+  it('Lanzar muestra "Arrancando Claude en vps-1…" y launch_session abre la sesión', async () => {
+    render(<App />)
+    const ws = () => FakeWS.all[FakeWS.all.length - 1]
+    await waitFor(() => expect(FakeWS.all.length).toBeGreaterThan(0))
+    const send = (e: any) => act(() => ws().onmessage({ data: JSON.stringify(e) }))
+    send({ type: 'machine_status', payload: { name: 'vps-1', os: 'linux', env: 'linux', version: '', online: true, lastSeen: 0, caps: { herdr: true, terminal: true, root: false } } })
+    fireEvent.click(screen.getByRole('button', { name: 'Lanzar' }))
+    fireEvent.change(await screen.findByPlaceholderText('/ruta/al/proyecto'), { target: { value: '/srv/x' } })
+    fireEvent.click(screen.getAllByRole('button', { name: 'Lanzar' }).pop()!)
+    await screen.findByText('Arrancando Claude en vps-1…')
+    const call = fetchMock.mock.calls.find(([u]) => String(u).endsWith('/api/launch'))!
+    expect(JSON.parse(String(call[1]?.body))).toMatchObject({ machine: 'vps-1', dir: '/srv/x', permissionMode: 'bypass' })
+    // otro reqId: se ignora
+    send({ type: 'launch_session', payload: { reqId: 'otro', sessionId: 'zz' } })
+    expect(screen.getByText('Arrancando Claude en vps-1…')).toBeTruthy()
+    send({ type: 'session_upsert', payload: info('nueva') })
+    send({ type: 'launch_session', payload: { reqId: 'r1', sessionId: 'nueva' } })
+    await waitFor(() => expect(screen.queryByText('Arrancando Claude en vps-1…')).toBeNull())
+    await screen.findByPlaceholderText('Escribe un mensaje…')
   })
 })

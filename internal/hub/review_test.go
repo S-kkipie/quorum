@@ -109,7 +109,7 @@ func TestAsksFollowRename(t *testing.T) {
 // Important 8: al arrancar, ninguna máquina figura en línea hasta su hello.
 func TestStartupMarksMachinesOffline(t *testing.T) {
 	_, st, _ := newTestServer(t)
-	require.NoError(t, st.UpsertMachine("m1", "linux", "linux", "1", true))
+	require.NoError(t, st.UpsertMachine("m1", "linux", "linux", "1", true, proto.MachineCaps{}))
 	NewServer(st)
 	ms, _ := st.ListMachines()
 	require.Len(t, ms, 1)

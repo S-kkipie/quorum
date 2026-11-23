@@ -34,6 +34,8 @@ else
   echo "  claude plugin marketplace add S-kkipie/quorum && claude plugin install quorum@quorum" >&2
 fi
 
+command -v herdr >/dev/null 2>&1 || echo "opcional: scripts/install-herdr.sh para sesiones y terminal en herdr"
+
 cat <<MSG
 
 Siguientes pasos:

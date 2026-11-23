@@ -1,16 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { UNAUTH_EVENT, getToken, listMachines, listProjects, loadProposals, listSessions, listTickets, listWorkspaces, type TicketView } from './lib/api'
+import { UNAUTH_EVENT, getToken, listMachines, openTerminal, listProjects, loadProposals, listSessions, listTickets, listWorkspaces, type TicketView } from './lib/api'
 import { connectLive, type Live } from './lib/live'
+import { EarlyLaunches, pendingReducer, type Pending } from './lib/launch'
 import { addEvents, initialState, reduce, replaceSessions, seed, setCheckouts, setProjectsData, setTicketDetail, setTickets } from './lib/store'
 import LaunchDialog from './components/LaunchDialog'
 import TicketDetail from './components/TicketDetail'
-import type { Checkout, Envelope, Event } from './proto.gen'
+import type { Checkout, Envelope, Event, TermFrame } from './proto.gen'
 import Config from './screens/Config'
 import Project from './screens/Project'
 import Projects from './screens/Projects'
 import Session from './screens/Session'
 import Pair from './screens/Pair'
 import Sessions from './screens/Sessions'
+import Starting from './screens/Starting'
+import Terminal from './screens/Terminal'
+import { frames } from './lib/frames'
 
 export default function App() {
   const [authed, setAuthed] = useState(() => !!getToken())
@@ -25,7 +29,9 @@ export default function App() {
 
 type Tab = 'projects' | 'sessions'
 /** Navegación guardada en history.state (en el celular, "atrás" del navegador vuelve). */
-interface Nav { tab?: Tab; project?: string | null; ticket?: string | null; config?: string | null; session?: string | null; depth?: number }
+/** Terminal abierta; root/label (si vienen de "Terminal") dejan a la pantalla ofrecer "Abrir otra". */
+export interface TermNav { machine: string; pane: string; root?: string; label?: string }
+interface Nav { tab?: Tab; project?: string | null; ticket?: string | null; config?: string | null; session?: string | null; starting?: boolean; terminal?: TermNav | null; depth?: number }
 const navNow = (): Nav => history.state ?? {}
 
 function Main() {
@@ -36,11 +42,33 @@ function Main() {
   // null = cerrada; '' = configuración general; id = editar ese proyecto
   const [config, setConfig] = useState<string | null>(() => navNow().config ?? null)
   const [selected, setSelected] = useState<string | null>(() => navNow().session ?? null)
+  const [starting, setStarting] = useState(() => !!navNow().starting)
+  const [terminal, setTerminal] = useState<TermNav | null>(() => navNow().terminal ?? null)
   const [launching, setLaunching] = useState(false)
-  const [launchResult, setLaunchResult] = useState<{ reqId: string; ok: boolean; error?: string } | null>(null)
+  const [pending, setPending] = useState<Pending | null>(null)
+  const pendingRef = useRef<Pending | null>(null)
+  // resultados que llegan por el WS antes de que el POST /api/launch responda
+  const early = useRef(new EarlyLaunches())
+  const startingRef = useRef(starting)
+  startingRef.current = starting
+  // handler siempre al día para el dispatch (que es estable)
+  const onOpenNew = useRef<(id: string) => void>(() => {})
   const wide = useWide()
   const dispatch = useCallback((e: Envelope) => {
-    if (e.type === 'launch_result') setLaunchResult(e.payload)
+    // las fotos de terminal llegan hasta 8/s: van a su propio almacén, no al reducer
+    if (e.type === 'term_frame') {
+      const f = e.payload as TermFrame
+      if (f) frames.set(e.machine, f.pane, f)
+      return
+    }
+    if (e.type === 'launch_result' || e.type === 'launch_session') {
+      if (!pendingRef.current || pendingRef.current.reqId !== e.payload?.reqId) early.current.remember(e, Date.now())
+      const r = pendingReducer(pendingRef.current, e, Date.now())
+      pendingRef.current = r.pending
+      setPending(r.pending)
+      // incluso pasados los 60 s: solo si el usuario sigue en "Arrancando…" de ese lanzamiento
+      if (r.open && startingRef.current) onOpenNew.current(r.open)
+    }
     setState((s) => reduce(s, e))
   }, [])
   const onEvents = useCallback((id: string, evs: Event[]) => setState((s) => addEvents(s, id, evs)), [])
@@ -56,6 +84,8 @@ function Main() {
     setTicket(n.ticket ?? null)
     setConfig(n.config ?? null)
     setSelected(n.session ?? null)
+    setStarting(!!n.starting)
+    setTerminal(n.terminal ?? null)
     setViewKey(n.session ?? '')
   }
   useEffect(() => {
@@ -63,7 +93,7 @@ function Main() {
     window.addEventListener('popstate', h)
     return () => window.removeEventListener('popstate', h)
   }, [])
-  const cur: Nav = { tab, project, ticket, config, session: selected }
+  const cur: Nav = { tab, project, ticket, config, session: selected, starting, terminal }
   /** Va a otra vista: en el celular apila una entrada en el historial; en escritorio solo cambia. */
   const go = (n: Nav, replace = false) => {
     const depth = history.state?.depth ?? 0
@@ -80,7 +110,9 @@ function Main() {
   /** Atrás: en el celular, la entrada anterior del historial (si la app la apiló); si no, sube un nivel. */
   const back = () => {
     if (!wide && (history.state?.depth ?? 0) > 0) { history.back(); return }
-    if (selected) go({ session: null }, true)
+    if (terminal) go({ terminal: null }, true)
+    else if (starting) go({ starting: false }, true)
+    else if (selected) go({ session: null }, true)
     else if (config !== null) go({ config: null }, true)
     else if (ticket) go({ ticket: null }, true)
     else go({ project: null }, true)
@@ -97,6 +129,17 @@ function Main() {
     else go({ session: id })
     setViewKey(id)
   }
+  onOpenNew.current = (id: string) => {
+    pendingRef.current = null
+    setPending(null)
+    // reemplaza la entrada "Arrancando…" del historial
+    go({ starting: false, terminal: null, session: id, ...(wide ? { tab: 'sessions' as Tab } : {}) }, true)
+    setViewKey(id)
+  }
+  // al salir de "Arrancando…" el lanzamiento deja de esperarse
+  useEffect(() => {
+    if (!starting) { pendingRef.current = null; setPending(null) }
+  }, [starting])
   useEffect(() => {
     if (!selected || !current || current === selected) return
     const c = current
@@ -134,27 +177,61 @@ function Main() {
     return () => l.close()
   }, [load, dispatch])
 
-  const openLaunch = () => { setLaunchResult(null); setLaunching(true) }
-  const dialog = launching && <LaunchDialog state={state} result={launchResult} onClose={() => setLaunching(false)} />
+  const openLaunch = () => setLaunching(true)
+  const onLaunched = (p: { reqId: string; machine: string; label: string }) => {
+    const now = Date.now()
+    const r = early.current.replay({ ...p, startedAt: now }, now)
+    setLaunching(false)
+    if (r.open) { onOpenNew.current(r.open); return }
+    pendingRef.current = r.pending
+    setPending(r.pending)
+    go({ starting: true, terminal: null })
+  }
+  // Guarda única y síncrona de todos los lanzamientos: tarjeta, retomar y menú pasan por aquí.
+  const launchingRef = useRef(false)
+  const [inflight, setInflight] = useState(false)
+  const guardLaunch = async (fn: () => Promise<{ reqId: string; machine: string; label: string }>) => {
+    if (launchingRef.current || pendingRef.current) return
+    launchingRef.current = true
+    setInflight(true)
+    try { onLaunched(await fn()) } finally { launchingRef.current = false; setInflight(false) }
+  }
+  const launchBusy = inflight || !!pending
+  const onTerminal = async (machine: string, root: string) => {
+    const label = root.split('/').filter(Boolean).pop() || root
+    const r = await openTerminal(machine, root, label)
+    go({ terminal: { machine, pane: r.pane, root, label } })
+  }
+  const onViewTerminal = (machine: string, pane: string) => go({ terminal: { machine, pane } })
+  const openConfig = (id: string) => go({ config: id, starting: false })
+  const dialog = launching && <LaunchDialog state={state} onClose={() => setLaunching(false)} onLaunched={onLaunched} />
   const top = (
-    <TopBar tab={tab} connected={connected} onTab={(t) => go({ tab: t, project: null, ticket: null, config: null, session: wide ? selected : null }, true)}
-      onLaunch={openLaunch} onConfig={() => go({ config: '' })} />
+    <TopBar tab={tab} connected={connected} onTab={(t) => go({ tab: t, project: null, ticket: null, config: null, starting: false, terminal: null, session: wide ? selected : null }, true)}
+      onLaunch={openLaunch} onConfig={() => openConfig('')} />
   )
-  const sessionView = current ? <Session key={viewKey} state={state} id={current} onBack={wide ? undefined : back} onEvents={onEvents} /> : null
+  const terminalView = terminal && (
+    <Terminal key={terminal.machine + '\x00' + terminal.pane} machine={terminal.machine} pane={terminal.pane} root={terminal.root} label={terminal.label}
+      onBack={back} onReopen={(pane) => go({ terminal: { ...terminal, pane } }, true)} />
+  )
+  const startingView = starting && <Starting pending={pending} terminal={!!(pending && state.machines[pending.machine]?.caps?.terminal)} onBack={back} onViewTerminal={onViewTerminal} />
+  const sessionView = current ? <Session key={viewKey} state={state} id={current} onBack={wide ? undefined : back} onEvents={onEvents} onGuard={guardLaunch} busy={launchBusy} onViewTerminal={onViewTerminal} /> : null
   const sessionsList = <Sessions state={state} onOpen={openSession} selected={current} />
-  const projectsView = <Projects state={state} wide={wide} selected={project} onOpen={(id) => go({ project: id, ticket: null })} onOpenSession={openSession} onConfig={() => go({ config: '' })} />
+  const projectsView = <Projects state={state} wide={wide} selected={project} onOpen={(id) => go({ project: id, ticket: null })} onOpenSession={openSession} onConfig={() => openConfig('')} />
   const configView = config !== null && <Config key={config} state={state} editProject={config || null} onBack={back} />
   const projectView = project && (
     <Project key={project} state={state} id={project} selectedTicket={ticket} onBack={wide ? () => go({ project: null, ticket: null }) : back}
-      onOpenTicket={(id) => go({ ticket: id })} onOpenSession={openSession} onEdit={(id) => go({ config: id })} onTickets={onTickets} onCheckouts={onCheckouts} />
+      onOpenTicket={(id) => go({ ticket: id })} onOpenSession={openSession} onEdit={openConfig} onTickets={onTickets} onCheckouts={onCheckouts}
+      pending={launchBusy} onLaunched={onLaunched} onGuard={guardLaunch} onTerminal={onTerminal} />
   )
   const ticketView = ticket && (
-    <TicketDetail key={ticket} state={state} ticketId={ticket} onBack={wide ? () => go({ ticket: null }) : back} onOpenSession={openSession} onLoaded={onTicket} onCheckouts={onCheckouts} launchResult={launchResult} />
+    <TicketDetail key={ticket} state={state} ticketId={ticket} onBack={wide ? () => go({ ticket: null }) : back} onOpenSession={openSession} onLoaded={onTicket} onCheckouts={onCheckouts} onLaunched={onLaunched} />
   )
 
   if (wide) {
     let body
-    if (config !== null) body = <main className="min-h-0 flex-1 overflow-y-auto">{configView}</main>
+    if (terminalView) body = <main className="min-h-0 flex-1">{terminalView}</main>
+    else if (starting) body = <main className="min-h-0 flex-1">{startingView}</main>
+    else if (config !== null) body = <main className="min-h-0 flex-1 overflow-y-auto">{configView}</main>
     else if (tab === 'sessions') {
       body = (
         <div className="flex min-h-0 flex-1">
@@ -175,7 +252,9 @@ function Main() {
     return <div className="flex h-dvh flex-col">{top}{body}{dialog}</div>
   }
   let view
-  if (sessionView) view = <div className="h-full">{sessionView}</div>
+  if (terminalView) view = <div className="h-full">{terminalView}</div>
+  else if (startingView) view = <div className="h-full">{startingView}</div>
+  else if (sessionView) view = <div className="h-full">{sessionView}</div>
   else if (configView) view = <div className="h-full overflow-y-auto">{configView}</div>
   else if (ticketView) view = <div className="h-full overflow-y-auto">{ticketView}</div>
   else if (projectView) view = <div className="h-full overflow-y-auto">{projectView}</div>

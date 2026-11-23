@@ -1,4 +1,4 @@
-import type { Checkout, ConnectorConfig, Event, Project, Proposal, SessionInfo, Ticket, Workspace } from '../proto.gen'
+import type { Checkout, Conversation, ConnectorConfig, Event, Project, Proposal, SessionInfo, Ticket, Workspace } from '../proto.gen'
 
 export interface Machine {
   name: string
@@ -7,6 +7,7 @@ export interface Machine {
   version: string
   online: boolean
   lastSeen: number
+  caps: { herdr: boolean; terminal: boolean; root: boolean }
 }
 
 const K_HUB = 'quorum.hub'
@@ -115,8 +116,23 @@ export const decide = (id: string, body: { askId: string; decision: 'allow' | 'd
   apiFetch(`/api/sessions/${encodeURIComponent(id)}/decide`, { method: 'POST', body: JSON.stringify(body) })
 export const abortSession = (id: string) => apiFetch(`/api/sessions/${encodeURIComponent(id)}/abort`, { method: 'POST' })
 export const closeSession = (id: string) => apiFetch(`/api/sessions/${encodeURIComponent(id)}/close`, { method: 'POST' })
-export const launch = (b: { machine: string; dir: string; continue: boolean; permissionMode: string }) =>
+export const launch = (b: { machine: string; dir: string; permissionMode?: string; resume?: string; label?: string; projectId?: string }) =>
   apiFetch<{ reqId: string }>('/api/launch', { method: 'POST', body: JSON.stringify(b) })
+
+// --- Conversaciones y terminal ---
+
+const term = (machine: string, pane?: string) =>
+  `/api/machines/${encodeURIComponent(machine)}/terminals` + (pane === undefined ? '' : '/' + encodeURIComponent(pane))
+export const listConversations = (machine: string, root: string) =>
+  apiFetch<Conversation[]>(`/api/machines/${encodeURIComponent(machine)}/conversations?root=${encodeURIComponent(root)}`)
+export const openTerminal = (machine: string, root: string, label: string, fresh = false) =>
+  apiFetch<{ pane: string; cols: number; rows: number }>(term(machine), { method: 'POST', body: JSON.stringify({ root, label, new: fresh }) })
+export const watchTerminal = (machine: string, pane: string) => apiFetch(term(machine, pane) + '/watch', { method: 'POST' })
+export const sendTerminal = (machine: string, pane: string, b: { text?: string; keys?: string[] }) =>
+  apiFetch(term(machine, pane) + '/input', { method: 'POST', body: JSON.stringify(b) })
+export const readTerminal = (machine: string, pane: string, lines: number) =>
+  apiFetch<{ ansi: string }>(term(machine, pane) + `/read?lines=${lines}`)
+export const closeTerminal = (machine: string, pane: string) => apiFetch(term(machine, pane), { method: 'DELETE' })
 
 // --- Proyectos, tickets y propuestas ---
 
@@ -143,7 +159,7 @@ export const syncProject = (id: string) => apiFetch(`/api/projects/${enc(id)}/sy
 export const listCheckouts = (projectId: string) => apiFetch<Checkout[]>(`/api/projects/${enc(projectId)}/checkouts`)
 export const listTickets = (projectId: string) => apiFetch<TicketView[]>(`/api/projects/${enc(projectId)}/tickets`)
 export const getTicket = (id: string) => apiFetch<TicketView>(`/api/tickets/${enc(id)}`)
-export const launchTicket = (id: string, b: { machine: string; checkoutRoot: string; permissionMode: string }) =>
+export const launchTicket = (id: string, b: { machine: string; checkoutRoot: string; permissionMode?: string }) =>
   apiFetch<{ reqId: string }>(`/api/tickets/${enc(id)}/launch`, json('POST', b))
 export const proposeStatus = (ticketId: string, status: string) => apiFetch<Proposal>(`/api/tickets/${enc(ticketId)}/proposals`, json('POST', { kind: 'status', status }))
 export type ProposalQuery = { ticket?: string; status?: string; limit?: number }

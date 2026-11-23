@@ -21,11 +21,11 @@ func TestArgv(t *testing.T) {
 
 	bin, a := Argv(Linux, r, false)
 	require.Equal(t, "tmux", bin)
-	require.Equal(t, []string{"new-session", "-d", "-s", "quorum-100-abc", "-c", "/home/u/p", "bash -lc 'claude --continue'"}, a)
+	require.Equal(t, []string{"new-session", "-d", "-s", "quorum-100-abc", "-c", "/home/u/p", "bash -lc 'QUORUM_LAUNCH_REQ=abc claude --continue'"}, a)
 
 	bin, a = Argv(WSL, r, false)
 	require.Equal(t, "wt.exe", bin)
-	require.Equal(t, []string{"wsl.exe", "-d", "Ubuntu", "--cd", "/home/u/p", "--", "bash", "-lic", "claude --continue"}, a)
+	require.Equal(t, []string{"wsl.exe", "-d", "Ubuntu", "--cd", "/home/u/p", "--", "bash", "-lic", "QUORUM_LAUNCH_REQ=abc claude --continue"}, a)
 
 	bin, a = Argv(Windows, proto.LaunchRequest{Dir: `C:\a;b`, PermissionMode: "plan"}, false)
 	require.Equal(t, "wt.exe", bin)
@@ -111,10 +111,10 @@ func TestArgvPrompt(t *testing.T) {
 	q := shellQuote(nastyPrompt)
 
 	_, a := Argv(Linux, r, false)
-	require.Equal(t, "bash -lc "+shellQuote("claude --permission-mode plan -- "+q), a[len(a)-1])
+	require.Equal(t, "bash -lc "+shellQuote("QUORUM_LAUNCH_REQ=abc claude --permission-mode plan -- "+q), a[len(a)-1])
 
 	_, a = Argv(WSL, r, false)
-	require.Equal(t, "claude --permission-mode plan -- "+q, a[len(a)-1])
+	require.Equal(t, "QUORUM_LAUNCH_REQ=abc claude --permission-mode plan -- "+q, a[len(a)-1])
 
 	r.Dir = `C:\p`
 	_, a = Argv(Windows, r, false)
@@ -122,7 +122,7 @@ func TestArgvPrompt(t *testing.T) {
 
 	r.Dir = "/p"
 	_, a = Argv(Darwin, r, false)
-	require.Equal(t, `tell app "Terminal" to do script "`+appleScriptEscape("cd '/p' && claude --permission-mode plan -- "+q)+`"`, a[1])
+	require.Equal(t, `tell app "Terminal" to do script "`+appleScriptEscape("cd '/p' && QUORUM_LAUNCH_REQ=abc claude --permission-mode plan -- "+q)+`"`, a[1])
 }
 
 func TestRunCollapsesLongPrompt(t *testing.T) {
@@ -203,4 +203,42 @@ func TestWtNeverSeesSemicolon(t *testing.T) {
 	// fuera de wt.exe un prompt corto con ';' va directo
 	r, _ := collapsePrompt(Linux, proto.LaunchRequest{ReqID: "l", Prompt: "a; b"})
 	require.Equal(t, "a; b", r.Prompt)
+}
+
+func TestClaudeLineCarriesLaunchReq(t *testing.T) {
+	require.Equal(t, "QUORUM_LAUNCH_REQ=r1x claude --continue", claudeLine(proto.LaunchRequest{ReqID: "r1/../x;$(id)"[:7], Continue: true}))
+	require.Equal(t, "QUORUM_LAUNCH_REQ=abcid claude", claudeLine(proto.LaunchRequest{ReqID: "a'b c;$(id)"}))
+	require.Equal(t, "claude", claudeLine(proto.LaunchRequest{ReqID: "';-"}))
+	id := "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0"
+	require.Equal(t, "QUORUM_LAUNCH_REQ=r claude --dangerously-skip-permissions --resume "+id,
+		claudeLine(proto.LaunchRequest{ReqID: "r", PermissionMode: "bypass", Resume: id}))
+	// Windows nativo (wt.exe sin shell): sin prefijo
+	_, a := Argv(Windows, proto.LaunchRequest{ReqID: "r", Dir: `C:\p`, Resume: id}, false)
+	require.Equal(t, []string{"-d", `C:\p`, "claude", "--resume", id}, a)
+}
+
+func TestBypassRejectedAsRoot(t *testing.T) {
+	old, oldExec := geteuid, execFn
+	t.Cleanup(func() { geteuid, execFn = old, oldExec })
+	called := false
+	execFn = func(context.Context, string, ...string) ([]byte, error) { called = true; return nil, nil }
+	geteuid = func() int { return 0 }
+	r := Run(context.Background(), proto.LaunchRequest{ReqID: "r", Dir: t.TempDir(), PermissionMode: "bypass"})
+	require.Equal(t, proto.LaunchResult{ReqID: "r", Error: "Sin permisos no funciona como root"}, r)
+	require.False(t, called)
+	// como root, el modo normal sí se lanza
+	r = Run(context.Background(), proto.LaunchRequest{ReqID: "r", Dir: t.TempDir(), PermissionMode: "default"})
+	require.True(t, r.OK, r.Error)
+	require.NotEmpty(t, r.Via)
+	geteuid = func() int { return 1000 }
+	r = Run(context.Background(), proto.LaunchRequest{ReqID: "r", Dir: t.TempDir(), PermissionMode: "bypass"})
+	require.True(t, r.OK, r.Error)
+}
+
+func TestRunRejectsBadResume(t *testing.T) {
+	for _, bad := range []string{"abc", "--------", "-----------------", "x; rm -rf /", "0f1e2d3c 4b5a", strings.Repeat("a", 65)} {
+		r := Run(context.Background(), proto.LaunchRequest{ReqID: "r", Dir: t.TempDir(), Resume: bad})
+		require.False(t, r.OK, bad)
+		require.Equal(t, "id de conversación inválido", r.Error)
+	}
 }

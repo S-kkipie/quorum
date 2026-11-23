@@ -87,6 +87,7 @@ type Hub struct {
 	// pending: lanzamientos desde un ticket esperando que la sesión se registre (por reqId).
 	pending map[string]pendingLaunch
 	now     func() time.Time
+	rpcState
 }
 
 // Connected indica si la máquina tiene una conexión viva.
@@ -208,6 +209,7 @@ func (h *Hub) serve(ctx context.Context, name string, ws *websocket.Conn) {
 	c := &machineConn{name: name, ws: ws}
 	h.smu.Lock()
 	h.attach(c)
+	defer h.failWaiters(c)
 	defer h.detach(c)
 	ok := h.onHello(name, hello)
 	h.smu.Unlock()
@@ -322,7 +324,7 @@ func (h *Hub) expire(name string, gen uint64) {
 	delete(h.gens, name)
 	h.mu.Unlock()
 	m := h.machine(name)
-	if err := h.st.UpsertMachine(name, m.OS, m.Env, m.Version, false); err != nil {
+	if err := h.st.UpsertMachine(name, m.OS, m.Env, m.Version, false, m.Caps); err != nil {
 		log.Printf("hub: baja de %s: %v", name, err)
 		return
 	}
@@ -371,7 +373,7 @@ func (h *Hub) onHello(name string, hello proto.MachineHello) bool {
 			hello.Sessions[i].PreviousID = ""
 		}
 	}
-	if err := h.st.UpsertMachine(name, hello.OS, hello.Env, hello.Version, true); err != nil {
+	if err := h.st.UpsertMachine(name, hello.OS, hello.Env, hello.Version, true, hello.Caps); err != nil {
 		log.Printf("hub: hello de %s: %v", name, err)
 		return false
 	}
@@ -400,6 +402,9 @@ func (h *Hub) onHello(name string, hello proto.MachineHello) bool {
 		p, _ := json.Marshal(si)
 		h.publish(proto.Envelope{Type: "session_upsert", Machine: name, Session: id, Payload: p})
 		h.suggestFromBranch(si)
+		if si.LaunchReq != "" {
+			h.matchPending(si, false) // la sesión lanzada pudo llegar primero en el hello
+		}
 	}
 	h.publishStatus(name)
 	return true
@@ -444,7 +449,7 @@ func (h *Hub) onMessage(c *machineConn, env proto.Envelope) {
 		if !h.owns(name, si.ID) {
 			return
 		}
-		_, existed, _ := h.st.SessionOwner(si.ID) // solo una sesión nueva puede cumplir un lanzamiento
+		_, existed, _ := h.st.SessionOwner(si.ID) // solo una sesión nueva cumple un lanzamiento por carpeta
 		repo, branch := si.RepoURL, si.Branch
 		// El store decide si el renombre aplica (no lo hace si el id viejo volvió vivo)
 		// y valida que prev sea de esta máquina.
@@ -458,9 +463,10 @@ func (h *Hub) onMessage(c *machineConn, env proto.Envelope) {
 		h.attachCheckout(name, &si)
 		env.Session = si.ID
 		env.Payload, _ = json.Marshal(si)
-		// un renombre (/clear: id nuevo con PreviousID aplicado) sigue la sesión vieja, no es un lanzamiento
-		if !existed && applied == "" {
-			defer h.matchPending(si) // tras publicar y tras suggestFromBranch (LIFO)
+		// Por reqId cumple cualquier sesión (también un retomar con id nuevo); por carpeta solo
+		// una nueva: un renombre (/clear: PreviousID aplicado) sigue la sesión vieja.
+		if fresh := !existed && applied == ""; fresh || si.LaunchReq != "" {
+			defer h.matchPending(si, fresh) // tras publicar y tras suggestFromBranch (LIFO)
 		}
 		defer h.suggestFromBranch(si) // tras publicar el session_upsert
 		if applied != "" {
@@ -530,6 +536,25 @@ func (h *Hub) onMessage(c *machineConn, env proto.Envelope) {
 			defer h.draftFromTurnEnd(ev)
 			defer h.touchSession(ev.Session)
 		}
+	case "caps":
+		var caps proto.MachineCaps
+		if json.Unmarshal(env.Payload, &caps) != nil {
+			return
+		}
+		if err := h.st.SetMachineCaps(name, caps); err != nil {
+			log.Printf("hub: caps de %s: %v", name, err)
+			return
+		}
+		h.publishStatus(name)
+		return
+	case "rpc_result":
+		var res proto.RPCResult
+		if json.Unmarshal(env.Payload, &res) == nil {
+			h.resolveRPC(name, res)
+		}
+		return // no se difunde
+	case "term_frame":
+		// pantalla de un panel: se reenvía a las apps tal cual (Machine ya es el autenticado) y no se guarda
 	case "launch_result":
 		var lr proto.LaunchResult
 		if json.Unmarshal(env.Payload, &lr) == nil && !lr.OK {

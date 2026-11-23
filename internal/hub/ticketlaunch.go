@@ -23,10 +23,12 @@ const (
 	promptCommentMx = 600
 )
 
-// pendingLaunch: un lanzamiento desde un ticket que espera su sesión.
+// pendingLaunch: un lanzamiento (desde la app o desde un ticket) que espera su sesión.
+// La clave del mapa es el reqId, el QUORUM_LAUNCH_REQ con que el daemon lanzó la sesión;
+// ticketID es opcional (solo los lanzamientos desde un ticket lo tienen).
 type pendingLaunch struct {
 	machine, root, ticketID string
-	started                 int64 // ms; una sesión anterior no cumple el lanzamiento
+	started                 int64 // ms; una sesión anterior no cumple el lanzamiento por carpeta
 	expires                 time.Time
 }
 
@@ -57,8 +59,8 @@ func (h *Hub) caseInsensitiveOS(machine string) bool {
 	return false
 }
 
-// addPending registra el lanzamiento salvo que el ticket ya tenga uno vigente
-// (comprobación y alta atómicas); devuelve si lo registró.
+// addPending registra el lanzamiento salvo que su ticket (si lo tiene) ya tenga uno
+// vigente (comprobación y alta atómicas); devuelve si lo registró.
 func (h *Hub) addPending(reqID string, p pendingLaunch) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -66,7 +68,7 @@ func (h *Hub) addPending(reqID string, p pendingLaunch) bool {
 	for k, v := range h.pending {
 		if now.After(v.expires) {
 			delete(h.pending, k)
-		} else if v.ticketID == p.ticketID {
+		} else if p.ticketID != "" && v.ticketID == p.ticketID {
 			return false
 		}
 	}
@@ -82,12 +84,51 @@ func (h *Hub) dropPending(reqID string) {
 	h.mu.Unlock()
 }
 
-// matchPending asocia (confirmado) la sesión recién registrada al ticket del
-// lanzamiento pendiente de su máquina y carpeta, y consume el pendiente.
-func (h *Hub) matchPending(si proto.SessionInfo) {
+// matchPending busca el lanzamiento pendiente que cumple la sesión, lo consume (una
+// sola vez) y publica launch_session para que la app navegue a ella; si venía de un
+// ticket, además asocia (confirmado) la sesión al ticket.
+//   - Primero, coincidencia exacta por reqId (QUORUM_LAUNCH_REQ) en la misma máquina;
+//     vale para cualquier sesión, también renombres y sesiones ya conocidas.
+//   - Si no la hay y la sesión es nueva (fresh) y no trae reqId (mod o lanzador sin él),
+//     la regla por carpeta de siempre, solo para pendientes con ticket. Una sesión con
+//     un reqId ajeno es de otro lanzamiento: no cumple este por carpeta.
+func (h *Hub) matchPending(si proto.SessionInfo, fresh bool) {
 	if si.Role == proto.RoleService {
 		return
 	}
+	var key string
+	var found pendingLaunch
+	h.mu.Lock()
+	for k, v := range h.pending {
+		if h.now().After(v.expires) {
+			delete(h.pending, k)
+		}
+	}
+	if si.LaunchReq != "" {
+		if v, ok := h.pending[si.LaunchReq]; ok && v.machine == si.Machine {
+			key, found = si.LaunchReq, v
+			delete(h.pending, key)
+		}
+	}
+	h.mu.Unlock()
+	if key == "" && fresh && si.LaunchReq == "" {
+		key, found = h.matchByRoot(si)
+	}
+	if key == "" {
+		return
+	}
+	if found.ticketID != "" {
+		if err := h.confirmLink(si, found.ticketID); err != nil {
+			log.Printf("hub: asociar %s al ticket lanzado: %v", si.ID, err)
+		}
+	}
+	p, _ := json.Marshal(map[string]string{"reqId": key, "sessionId": si.ID})
+	h.publish(proto.Envelope{Type: "launch_session", Machine: si.Machine, Session: si.ID, Payload: p})
+}
+
+// matchByRoot: regla por carpeta (solo lanzamientos con ticket). Consume y devuelve el
+// pendiente que vence antes entre los de la máquina y carpeta de la sesión.
+func (h *Hub) matchByRoot(si proto.SessionInfo) (string, pendingLaunch) {
 	// primero lo barato: candidatos de la máquina, antes de consultar la base de datos
 	type cand struct {
 		k string
@@ -96,17 +137,13 @@ func (h *Hub) matchPending(si proto.SessionInfo) {
 	var cands []cand
 	h.mu.Lock()
 	for k, v := range h.pending {
-		if h.now().After(v.expires) {
-			delete(h.pending, k)
-			continue
-		}
-		if v.machine == si.Machine && !(si.StartedAt > 0 && si.StartedAt < v.started-clockSkew.Milliseconds()) {
+		if v.ticketID != "" && v.machine == si.Machine && !(si.StartedAt > 0 && si.StartedAt < v.started-clockSkew.Milliseconds()) {
 			cands = append(cands, cand{k, v})
 		}
 	}
 	h.mu.Unlock()
 	if len(cands) == 0 {
-		return
+		return "", pendingLaunch{}
 	}
 	fold := h.caseInsensitiveOS(si.Machine)
 	roots := map[string]bool{normRoot(si.Root, fold): true, normRoot(si.Cwd, fold): true}
@@ -125,12 +162,7 @@ func (h *Hub) matchPending(si proto.SessionInfo) {
 		delete(h.pending, key)
 	}
 	h.mu.Unlock()
-	if key == "" {
-		return
-	}
-	if err := h.confirmLink(si, found.ticketID); err != nil {
-		log.Printf("hub: asociar %s al ticket lanzado: %v", si.ID, err)
-	}
+	return key, found
 }
 
 func truncRunes(s string, n int) string {
@@ -213,8 +245,12 @@ func (s *Server) handleTicketLaunch(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 500, "error interno")
 		return
 	}
+	label := ""
+	if p, err := s.st.GetProject(t.ProjectID); err == nil {
+		label = p.Name
+	}
 	req := proto.LaunchRequest{ReqID: hex.EncodeToString(id), Dir: b.CheckoutRoot, PermissionMode: b.PermissionMode,
-		Prompt: ticketPrompt(t), TicketID: t.ID}
+		Prompt: ticketPrompt(t), TicketID: t.ID, Label: label, Trust: true}
 	p, _ := json.Marshal(req)
 	if !s.hub.addPending(req.ReqID, pendingLaunch{machine: b.Machine, root: b.CheckoutRoot, ticketID: t.ID}) {
 		apiErr(w, 409, busy)

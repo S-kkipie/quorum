@@ -45,6 +45,15 @@ export interface SessionInfo {
   repoUrl: string;
   branch: string;
   projectId: string;
+  /**
+   * LaunchReq es el QUORUM_LAUNCH_REQ con el que se lanzó la sesión (vacío si no fue lanzada por Quorum).
+   */
+  launchReq: string;
+  /**
+   * HerdrPane y HerdrWorkspace identifican el panel de herdr donde corre (vacíos fuera de herdr).
+   */
+  herdrPane: string;
+  herdrWorkspace: string;
 }
 export type EventKind = string;
 export const KindUser: EventKind = "user";
@@ -133,6 +142,10 @@ export interface Command {
  * tickets (hub->app): Payload {projectId, tickets: []Ticket}, tras una sincronización correcta.
  * session_ticket (hub->app): Payload {sessionId, ticketId, confirmed, removed?} al sugerir, confirmar o desasociar un vínculo.
  * events (hub->app): Payload []Event de una sesión (historial rellenado, en un solo envelope).
+ * caps (daemon->hub): Payload MachineCaps; el hub la guarda y republica machine_status.
+ * rpc / rpc_result (hub<->daemon): Payload RPC / RPCResult; petición y respuesta correlacionadas por reqId.
+ * term_frame (daemon->hub->app): Payload TermFrame; pantalla de un panel, solo mientras alguien mira, nunca se guarda.
+ * launch_session (hub->app): Payload {reqId, sessionId}; la sesión lanzada ya se registró y la app puede navegar a ella.
  */
 export interface Envelope {
   type: string;
@@ -146,6 +159,15 @@ export interface MachineHello {
   env: string; // linux|wsl|windows|darwin
   version: string;
   sessions: SessionInfo[];
+  caps: MachineCaps;
+}
+/**
+ * MachineCaps son las capacidades de una máquina que el daemon reporta al hub.
+ */
+export interface MachineCaps {
+  herdr: boolean;
+  terminal: boolean;
+  root: boolean;
 }
 export interface LaunchRequest {
   reqId: string;
@@ -157,11 +179,59 @@ export interface LaunchRequest {
    */
   prompt: string;
   ticketId: string;
+  /**
+   * Resume es el id de la sesión de Claude a retomar (--resume).
+   */
+  resume: string;
+  /**
+   * Label es el nombre del proyecto, para el workspace nuevo.
+   */
+  label: string;
+  trust: boolean;
 }
 export interface LaunchResult {
   reqId: string;
   ok: boolean;
   error: string;
+  /**
+   * Pane es el panel donde quedó la sesión (si lo hay); Via, el lanzador usado: herdr|tmux|wt|osascript.
+   */
+  pane: string;
+  via: string;
+}
+/**
+ * Conversation es una conversación de Claude guardada en disco que se puede retomar.
+ */
+export interface Conversation {
+  id: string;
+  title: string;
+  firstPrompt: string;
+  messages: number /* int */;
+  updatedAt: number /* int64 */;
+  open: boolean;
+}
+/**
+ * RPC es una petición hub->daemon; la respuesta vuelve como RPCResult con el mismo ReqID.
+ */
+export interface RPC {
+  reqId: string;
+  method: string;
+  params: any /* json.RawMessage */;
+}
+export interface RPCResult {
+  reqId: string;
+  result: any /* json.RawMessage */;
+  error: string;
+}
+/**
+ * TermFrame es la pantalla de un panel de terminal.
+ */
+export interface TermFrame {
+  pane: string;
+  cols: number /* int */;
+  rows: number /* int */;
+  ansi: string;
+  closed: boolean;
 }
 /**
  * Workspace (trabajo) agrupa proyectos; WhoasProfile es el perfil whoas asociado.

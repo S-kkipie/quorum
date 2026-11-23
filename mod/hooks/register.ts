@@ -77,7 +77,7 @@ export const register: Register = on => {
     // recap (nombre de la sesión) con Haiku, solo en sesiones de trabajo; sin $.model.complete no hay recap
     quorum.recap = undefined
     link.onCommand(c => { void control.handle(c).catch(() => {}) })
-    const [id, cwd, root, model, ccapi, sinfo] = await Promise.all([
+    const [id, cwd, root, model, ccapi, sinfo, launchReq, herdrPane, herdrWorkspace] = await Promise.all([
       // optional: una API que falte en esta versión de Claude Code no aborta el registro
       optional(() => $.session.id(), ''),
       optional(() => $.session.cwd(), ''),
@@ -85,6 +85,10 @@ export const register: Register = on => {
       optional(() => $.session.model(), ''),
       optional(() => $.env.get('CCAPI_SERVER'), undefined),
       optional(() => $.session.info(), undefined),
+      // lanzamiento de Quorum (ata la sesión a la petición) y panel de herdr donde corre
+      optional(() => $.env.get('QUORUM_LAUNCH_REQ'), ''),
+      optional(() => $.env.get('HERDR_PANE_ID'), ''),
+      optional(() => $.env.get('HERDR_WORKSPACE_ID'), ''),
     ])
     const r = detectRole(k => (k === 'CCAPI_SERVER' ? ccapi : undefined))
     const now = Date.now()
@@ -111,6 +115,7 @@ export const register: Register = on => {
       id, previousId: '', machine: '', name: '', cwd, root: root || cwd, model: String(model ?? ''),
       role: r.role, state: 'idle', contextPct: 0, startedAt: now, updatedAt: now,
       transcriptPath: String(sinfo?.transcriptPath ?? ''), recap: '', repoUrl: '', branch: '', projectId: '',
+      launchReq: launchReq ?? '', herdrPane: herdrPane ?? '', herdrWorkspace: herdrWorkspace ?? '',
     }).catch(() => {})
     // repo y rama van aparte (git puede tardar): se detectan sin bloquear y se mandan con update
     const repoDeps: RepoDeps = {

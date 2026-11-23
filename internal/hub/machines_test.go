@@ -348,3 +348,32 @@ func TestHelloCannotStealOtherMachinesSession(t *testing.T) {
 	l, _ = f.st.ListSessions(false)
 	require.Len(t, l, 2)
 }
+
+func lastStatusHerdr(f *fixture) (herdr bool, n int) {
+	f.cap.mu.Lock()
+	defer f.cap.mu.Unlock()
+	for _, e := range f.cap.envs {
+		if e.Type != "machine_status" {
+			continue
+		}
+		var m struct {
+			Caps struct {
+				Herdr bool `json:"herdr"`
+			} `json:"caps"`
+		}
+		_ = json.Unmarshal(e.Payload, &m)
+		herdr = m.Caps.Herdr
+		n++
+	}
+	return
+}
+
+func TestHelloAndCapsUpdatePublishStatus(t *testing.T) {
+	f := newFixture(t, "m1")
+	c := f.dial(t)
+	hello := proto.MachineHello{Machine: "m1", OS: "linux", Env: "linux", Version: proto.Version, Caps: proto.MachineCaps{Herdr: true}}
+	require.NoError(t, wsjson.Write(context.Background(), c, proto.Envelope{Type: "hello", Machine: "m1", Payload: mustJSON(hello)}))
+	eventually(t, func() bool { h, n := lastStatusHerdr(f); return n == 1 && h })
+	require.NoError(t, wsjson.Write(context.Background(), c, proto.Envelope{Type: "caps", Machine: "m1", Payload: mustJSON(proto.MachineCaps{Herdr: false})}))
+	eventually(t, func() bool { h, n := lastStatusHerdr(f); return n == 2 && !h })
+}

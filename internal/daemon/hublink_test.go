@@ -40,6 +40,7 @@ type fakeHub struct {
 	hellos []proto.MachineHello
 	auth   []string
 	conns  []*websocket.Conn
+	envs   []proto.Envelope // lo recibido tras el hello
 }
 
 func (f *fakeHub) handler(w http.ResponseWriter, r *http.Request) {
@@ -59,9 +60,13 @@ func (f *fakeHub) handler(w http.ResponseWriter, r *http.Request) {
 	f.conns = append(f.conns, ws)
 	f.mu.Unlock()
 	for {
-		if _, _, err := ws.Read(r.Context()); err != nil {
+		var e proto.Envelope
+		if err := wsjson.Read(r.Context(), ws, &e); err != nil {
 			return
 		}
+		f.mu.Lock()
+		f.envs = append(f.envs, e)
+		f.mu.Unlock()
 	}
 }
 
@@ -81,7 +86,7 @@ func TestReconnectResendsSnapshot(t *testing.T) {
 	reg.Upsert(proto.SessionInfo{ID: "s1", State: proto.StateWorking})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go RunHubLink(ctx, Config{Machine: "m1", Hub: "http://" + addr, MachineToken: "tok"}, reg)
+	go RunHubLink(ctx, Config{Machine: "m1", Hub: "http://" + addr, MachineToken: "tok"}, reg, noHerdrHost(t))
 
 	require.Eventually(t, func() bool { return fh.count() == 1 }, 3*time.Second, 10*time.Millisecond)
 	fh.mu.Lock()
@@ -140,7 +145,7 @@ func TestCommandReachesSession(t *testing.T) {
 	defer cancelSub()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go RunHubLink(ctx, cfg, reg)
+	go RunHubLink(ctx, cfg, reg, noHerdrHost(t))
 
 	require.Eventually(t, func() bool {
 		p, _ := json.Marshal(proto.Command{Type: "prompt", Text: "hola"})
@@ -250,7 +255,7 @@ func TestLaunchHandledWithoutBlocking(t *testing.T) {
 	defer cancelSub()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go RunHubLink(ctx, cfg, reg)
+	go RunHubLink(ctx, cfg, reg, noHerdrHost(t))
 
 	lp, _ := json.Marshal(proto.LaunchRequest{ReqID: "r1", Dir: "/work"})
 	require.Eventually(t, func() bool {

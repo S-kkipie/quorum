@@ -54,6 +54,16 @@ quorumd link <url-del-hub> <código>
 
 El código sale de `quorum-hub link-code` en el hub. El script ejecuta `claude plugin marketplace add S-kkipie/quorum && claude plugin install quorum@quorum`. Para revocar una máquina: `quorum-hub revoke machine <nombre>`.
 
+## herdr
+
+[herdr](https://herdr.dev) da a cada máquina pestañas persistentes para las sesiones de Claude y una vista "Terminal" en la app (ver la pantalla, mandar texto y teclas como Ctrl-C). Quorum solo crea pestañas y paneles propios: nunca renombra ni cierra los tuyos.
+
+```sh
+scripts/install-herdr.sh   # instala herdr (>= 0.9.5), la integración con Claude y, si no hay servidor, un servicio de usuario
+```
+
+Si ya hay un servidor de herdr respondiendo (por ejemplo el tuyo en la PC), el script no toca nada más. En un servidor sin sesión abierta conviene `sudo loginctl enable-linger <usuario>`. Las máquinas sin herdr siguen funcionando: lanzan con tmux (o `wt`/osascript) y sin vista de terminal.
+
 ## Seguridad
 
 Quorum da control remoto total de las máquinas por diseño.

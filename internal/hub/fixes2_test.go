@@ -89,7 +89,7 @@ func TestStartupGraceClosesMachinesThatNeverReturn(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { st.Close() })
 	for _, x := range []struct{ m, s string }{{"m1", "s1"}, {"m2", "s2"}} {
-		require.NoError(t, st.UpsertMachine(x.m, "linux", "linux", "1", true))
+		require.NoError(t, st.UpsertMachine(x.m, "linux", "linux", "1", true, proto.MachineCaps{}))
 		require.NoError(t, st.UpsertSession(proto.SessionInfo{ID: x.s, Machine: x.m, State: proto.StateNeedsYou}))
 		_, err := st.AppendEvent(proto.Event{Session: x.s, Kind: proto.KindAsk, Data: mustJSON(proto.Ask{AskID: "ask-" + x.s})})
 		require.NoError(t, err)

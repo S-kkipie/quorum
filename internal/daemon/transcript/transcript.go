@@ -99,8 +99,8 @@ func clip(s string) string {
 	return s[:cut] + "…"
 }
 
-// skipUserText: texto que Claude Code guarda como "user" pero no escribió una persona.
-func skipUserText(s string) bool {
+// SkipUserText dice si es texto que Claude Code guarda como "user" pero no escribió una persona.
+func SkipUserText(s string) bool {
 	return strings.HasPrefix(s, "<command-") || strings.HasPrefix(s, "<local-command-") ||
 		strings.HasPrefix(s, "[Request interrupted by user")
 }
@@ -123,7 +123,7 @@ func parseLine(raw []byte) []proto.Event {
 	}
 	var text string
 	if json.Unmarshal(l.Message.Content, &text) == nil {
-		if text == "" || (l.Type == "user" && skipUserText(text)) {
+		if text == "" || (l.Type == "user" && SkipUserText(text)) {
 			return nil
 		}
 		if l.Type == "user" {
@@ -141,7 +141,7 @@ func parseLine(raw []byte) []proto.Event {
 		case b.Type == "text" && b.Text != "":
 			kind := proto.KindAssistant
 			if l.Type == "user" {
-				if skipUserText(b.Text) {
+				if SkipUserText(b.Text) {
 					continue
 				}
 				kind = proto.KindUser

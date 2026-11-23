@@ -26,12 +26,13 @@ const (
 var ErrInvalidCode = errors.New("código inválido, usado o vencido")
 
 type Machine struct {
-	Name     string `json:"name"`
-	OS       string `json:"os"`
-	Env      string `json:"env"`
-	Version  string `json:"version"`
-	Online   bool   `json:"online"`
-	LastSeen int64  `json:"lastSeen"`
+	Name     string            `json:"name"`
+	OS       string            `json:"os"`
+	Env      string            `json:"env"`
+	Version  string            `json:"version"`
+	Online   bool              `json:"online"`
+	LastSeen int64             `json:"lastSeen"`
+	Caps     proto.MachineCaps `json:"caps"`
 }
 
 type Device struct {
@@ -94,16 +95,24 @@ func b2i(b bool) int {
 	return 0
 }
 
-func (s *Store) UpsertMachine(name, os, env, version string, online bool) error {
-	_, err := s.db.Exec(`INSERT INTO machines(name,os,env,version,online,last_seen) VALUES(?,?,?,?,?,?)
+func (s *Store) UpsertMachine(name, os, env, version string, online bool, caps proto.MachineCaps) error {
+	cj, _ := json.Marshal(caps)
+	_, err := s.db.Exec(`INSERT INTO machines(name,os,env,version,online,last_seen,caps) VALUES(?,?,?,?,?,?,?)
 		ON CONFLICT(name) DO UPDATE SET os=excluded.os, env=excluded.env, version=excluded.version,
-		online=excluded.online, last_seen=excluded.last_seen`,
-		name, os, env, version, b2i(online), s.now().UnixMilli())
+		online=excluded.online, last_seen=excluded.last_seen, caps=excluded.caps`,
+		name, os, env, version, b2i(online), s.now().UnixMilli(), string(cj))
+	return err
+}
+
+// SetMachineCaps actualiza solo las capacidades de una máquina ya registrada.
+func (s *Store) SetMachineCaps(name string, caps proto.MachineCaps) error {
+	cj, _ := json.Marshal(caps)
+	_, err := s.db.Exec(`UPDATE machines SET caps=? WHERE name=?`, string(cj), name)
 	return err
 }
 
 func (s *Store) ListMachines() ([]Machine, error) {
-	rows, err := s.db.Query(`SELECT name,os,env,version,online,last_seen FROM machines ORDER BY name`)
+	rows, err := s.db.Query(`SELECT name,os,env,version,online,last_seen,caps FROM machines ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -112,9 +121,11 @@ func (s *Store) ListMachines() ([]Machine, error) {
 	for rows.Next() {
 		var m Machine
 		var on int
-		if err := rows.Scan(&m.Name, &m.OS, &m.Env, &m.Version, &on, &m.LastSeen); err != nil {
+		var caps string
+		if err := rows.Scan(&m.Name, &m.OS, &m.Env, &m.Version, &on, &m.LastSeen, &caps); err != nil {
 			return nil, err
 		}
+		_ = json.Unmarshal([]byte(caps), &m.Caps) // vacío o dañado: todo en false
 		m.Online = on != 0
 		out = append(out, m)
 	}
@@ -207,16 +218,19 @@ func (s *Store) SaveSession(si proto.SessionInfo) (applied string, err error) {
 	// estuvo desconectada lo vea en el snapshot o el REST; uno vacío no lo borra.
 	// Un recap vacío tampoco borra el guardado (upsert sin recap aún), salvo en un
 	// renombre (/clear): la fila movida es la de la conversación anterior.
-	res, err = tx.Exec(`INSERT INTO sessions(id,machine,name,cwd,root,model,role,state,context_pct,started_at,updated_at,previous_id,recap)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+	// launch_req y el panel de herdr se reemplazan siempre: los manda el proceso vivo.
+	res, err = tx.Exec(`INSERT INTO sessions(id,machine,name,cwd,root,model,role,state,context_pct,started_at,updated_at,previous_id,recap,
+		launch_req,herdr_pane,herdr_workspace)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET machine=excluded.machine, name=excluded.name, cwd=excluded.cwd,
 		root=excluded.root, model=excluded.model, role=excluded.role, state=excluded.state,
 		context_pct=excluded.context_pct, started_at=excluded.started_at, updated_at=excluded.updated_at,
+		launch_req=excluded.launch_req, herdr_pane=excluded.herdr_pane, herdr_workspace=excluded.herdr_workspace,
 		recap=CASE WHEN excluded.recap<>'' OR ? THEN excluded.recap ELSE sessions.recap END,
 		previous_id=CASE WHEN excluded.previous_id<>'' THEN excluded.previous_id ELSE sessions.previous_id END
 		WHERE sessions.machine=excluded.machine`,
 		si.ID, si.Machine, si.Name, si.Cwd, si.Root, si.Model, string(si.Role), string(si.State),
-		si.ContextPct, si.StartedAt, si.UpdatedAt, prev, si.Recap, prev != "")
+		si.ContextPct, si.StartedAt, si.UpdatedAt, prev, si.Recap, si.LaunchReq, si.HerdrPane, si.HerdrWorkspace, prev != "")
 	if err != nil {
 		return "", err
 	}
@@ -318,7 +332,8 @@ const sessionCols = `s.id,s.machine,s.name,s.cwd,s.root,s.model,s.role,s.state,s
 	CASE WHEN s.previous_id<>'' AND EXISTS(SELECT 1 FROM sessions p WHERE p.id=s.previous_id AND p.state<>'closed') THEN '' ELSE s.previous_id END,s.recap,
 	COALESCE((SELECT c.repo_url FROM checkouts c WHERE c.machine=s.machine AND c.root=s.root),''),
 	COALESCE((SELECT c.branch FROM checkouts c WHERE c.machine=s.machine AND c.root=s.root),''),
-	COALESCE((SELECT c.project_id FROM checkouts c WHERE c.machine=s.machine AND c.root=s.root),'')`
+	COALESCE((SELECT c.project_id FROM checkouts c WHERE c.machine=s.machine AND c.root=s.root),''),
+	s.launch_req,s.herdr_pane,s.herdr_workspace`
 
 func (s *Store) ListSessions(includeClosed bool) ([]proto.SessionInfo, error) {
 	q := `SELECT ` + sessionCols + ` FROM sessions s`
@@ -336,7 +351,8 @@ func (s *Store) ListSessions(includeClosed bool) ([]proto.SessionInfo, error) {
 		var si proto.SessionInfo
 		var role, state string
 		if err := rows.Scan(&si.ID, &si.Machine, &si.Name, &si.Cwd, &si.Root, &si.Model, &role, &state,
-			&si.ContextPct, &si.StartedAt, &si.UpdatedAt, &si.PreviousID, &si.Recap, &si.RepoURL, &si.Branch, &si.ProjectID); err != nil {
+			&si.ContextPct, &si.StartedAt, &si.UpdatedAt, &si.PreviousID, &si.Recap, &si.RepoURL, &si.Branch, &si.ProjectID,
+			&si.LaunchReq, &si.HerdrPane, &si.HerdrWorkspace); err != nil {
 			return nil, err
 		}
 		si.Role, si.State = proto.Role(role), proto.SessionState(state)
@@ -674,7 +690,8 @@ func (s *Store) Session(id string) (proto.SessionInfo, error) {
 	var role, state string
 	err := s.db.QueryRow(`SELECT `+sessionCols+` FROM sessions s WHERE s.id=?`, id).
 		Scan(&si.ID, &si.Machine, &si.Name, &si.Cwd, &si.Root, &si.Model, &role, &state,
-			&si.ContextPct, &si.StartedAt, &si.UpdatedAt, &si.PreviousID, &si.Recap, &si.RepoURL, &si.Branch, &si.ProjectID)
+			&si.ContextPct, &si.StartedAt, &si.UpdatedAt, &si.PreviousID, &si.Recap, &si.RepoURL, &si.Branch, &si.ProjectID,
+			&si.LaunchReq, &si.HerdrPane, &si.HerdrWorkspace)
 	if errors.Is(err, sql.ErrNoRows) {
 		return si, ErrNotFound
 	}
@@ -722,6 +739,37 @@ func scanOpenAsks(rows *sql.Rows) (map[string]string, error) {
 		} else {
 			delete(out, a.AskID)
 		}
+	}
+	return out, rows.Err()
+}
+
+// TerminalAuditRow es una fila de la auditoría de terminales.
+type TerminalAuditRow struct {
+	At                            int64
+	Device, Machine, Pane, Action string
+}
+
+// AuditTerminal anota quién abrió o cerró un panel de terminal.
+func (s *Store) AuditTerminal(device, machine, pane, action string) error {
+	_, err := s.db.Exec(`INSERT INTO terminal_audit(at, device, machine, pane, action) VALUES(?,?,?,?,?)`,
+		time.Now().UnixMilli(), device, machine, pane, action)
+	return err
+}
+
+// ListTerminalAudit devuelve la auditoría en orden de inserción.
+func (s *Store) ListTerminalAudit() ([]TerminalAuditRow, error) {
+	rows, err := s.db.Query(`SELECT at, device, machine, pane, action FROM terminal_audit ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []TerminalAuditRow
+	for rows.Next() {
+		var r TerminalAuditRow
+		if err := rows.Scan(&r.At, &r.Device, &r.Machine, &r.Pane, &r.Action); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
 	}
 	return out, rows.Err()
 }

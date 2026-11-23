@@ -31,6 +31,39 @@ type liveClient struct {
 	// número) y no en send, así un snapshot grande no lo deja por lento.
 	waiting bool
 	pending []queued
+	// frames: la última foto (term_frame) de cada panel, por máquina+"\x00"+panel.
+	// Nunca pasa por send ni pending: una foto nueva pisa la anterior y jamás deja
+	// al cliente por lento. frameSig avisa al escritor (capacidad 1).
+	frames   map[string]proto.Envelope
+	frameSig chan struct{}
+}
+
+func newLiveClient(ws *websocket.Conn) *liveClient {
+	return &liveClient{ws: ws, waiting: true, frameSig: make(chan struct{}, 1)}
+}
+
+// frameKey: máquina y panel de un term_frame.
+func frameKey(env proto.Envelope) string {
+	var tf struct {
+		Pane string `json:"pane"`
+	}
+	_ = json.Unmarshal(env.Payload, &tf)
+	return env.Machine + "\x00" + tf.Pane
+}
+
+// takeFrames entrega y vacía las últimas fotos pendientes del cliente.
+func (l *Live) takeFrames(c *liveClient) []proto.Envelope {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if len(c.frames) == 0 {
+		return nil
+	}
+	out := make([]proto.Envelope, 0, len(c.frames))
+	for _, e := range c.frames {
+		out = append(out, e)
+	}
+	c.frames = nil
+	return out
 }
 
 // Live reparte los envelopes publicados a las apps conectadas por /api/live.
@@ -61,6 +94,25 @@ func (l *Live) Publish(env proto.Envelope) {
 			si.PreviousID = ""
 			env.Payload, _ = json.Marshal(si)
 		}
+	}
+	if env.Type == "term_frame" {
+		// coalescing: solo la última foto por panel; nunca se encola más de una.
+		key := frameKey(env)
+		l.mu.Lock()
+		for c := range l.clients {
+			if c.frames == nil {
+				c.frames = map[string]proto.Envelope{}
+			}
+			c.frames[key] = env
+			if c.frameSig != nil {
+				select {
+				case c.frameSig <- struct{}{}:
+				default:
+				}
+			}
+		}
+		l.mu.Unlock()
+		return
 	}
 	l.srv.asks.observe(env, l.srv.st)
 	l.mu.Lock()
@@ -124,7 +176,7 @@ func (l *Live) snapshot() []proto.Envelope {
 // el snapshot se lee después, fuera del candado (las consultas a la BD no frenan
 // cada Publish); lo publicado entretanto queda en pending.
 func (l *Live) add(ws *websocket.Conn) (*liveClient, []proto.Envelope, uint64) {
-	c := &liveClient{ws: ws, waiting: true}
+	c := newLiveClient(ws)
 	l.mu.Lock()
 	l.clients[c] = struct{}{}
 	l.mu.Unlock()
@@ -197,6 +249,23 @@ func (s *Server) handleLive(w http.ResponseWriter, r *http.Request) {
 			case env := <-send:
 				if !write(env) {
 					return
+				}
+			case <-c.frameSig:
+				// primero lo normal ya encolado (en orden), luego las últimas fotos
+				for drained := false; !drained; {
+					select {
+					case env := <-send:
+						if !write(env) {
+							return
+						}
+					default:
+						drained = true
+					}
+				}
+				for _, env := range s.live.takeFrames(c) {
+					if !write(env) {
+						return
+					}
 				}
 			case <-ctx.Done():
 				return

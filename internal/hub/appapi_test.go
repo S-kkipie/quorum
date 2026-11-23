@@ -3,6 +3,7 @@ package hub
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -386,7 +387,7 @@ func TestReopenDoesNotReviveResolved(t *testing.T) {
 
 func TestMachineJSONKeys(t *testing.T) {
 	b, _ := json.Marshal(store.Machine{Name: "m"})
-	require.JSONEq(t, `{"name":"m","os":"","env":"","version":"","online":false,"lastSeen":0}`, string(b))
+	require.JSONEq(t, `{"name":"m","os":"","env":"","version":"","online":false,"lastSeen":0,"caps":{"herdr":false,"terminal":false,"root":false}}`, string(b))
 }
 
 func TestLaunchRoutedAndResultPublished(t *testing.T) {
@@ -410,7 +411,7 @@ func TestLaunchRoutedAndResultPublished(t *testing.T) {
 	require.NotEmpty(t, out["reqId"])
 	select {
 	case lr := <-f.launches:
-		require.Equal(t, proto.LaunchRequest{ReqID: out["reqId"], Dir: "/work", Continue: true, PermissionMode: "plan"}, lr)
+		require.Equal(t, proto.LaunchRequest{ReqID: out["reqId"], Dir: "/work", Continue: true, PermissionMode: "plan", Trust: true}, lr)
 	case <-time.After(3 * time.Second):
 		t.Fatal("no llegó launch")
 	}
@@ -447,4 +448,36 @@ func TestNoPresenceRouteAndWatchIgnored(t *testing.T) {
 		t.Fatalf("comando inesperado: %+v", cmd)
 	case <-time.After(200 * time.Millisecond):
 	}
+}
+
+// Revisión final: las fotos de la terminal se funden (solo la última por panel) y
+// nunca dejan por lento a un cliente que no lee; lo normal sigue llegando en orden.
+func TestTermFramesCoalescedNeverEvict(t *testing.T) {
+	s, _, _ := newTestServer(t)
+	cl := newLiveClient(nil)
+	cl.waiting, cl.send = false, make(chan proto.Envelope, 4)
+	s.live.clients[cl] = struct{}{}
+	s.live.Publish(proto.Envelope{Type: "launch_result", Session: "1"})
+	for i := 0; i < 1000; i++ {
+		s.live.Publish(proto.Envelope{Type: "term_frame", Machine: "m",
+			Payload: mustJSON(proto.TermFrame{Pane: "w1:p1", ANSI: fmt.Sprint(i)})})
+	}
+	s.live.Publish(proto.Envelope{Type: "term_frame", Machine: "m", Payload: mustJSON(proto.TermFrame{Pane: "w1:p2", ANSI: "otro"})})
+	s.live.Publish(proto.Envelope{Type: "launch_result", Session: "2"})
+	s.live.mu.Lock()
+	_, still := s.live.clients[cl]
+	s.live.mu.Unlock()
+	require.True(t, still)
+	require.Len(t, cl.send, 2)
+	require.Equal(t, "1", (<-cl.send).Session)
+	require.Equal(t, "2", (<-cl.send).Session)
+	require.Len(t, cl.frameSig, 1)
+	got := map[string]string{}
+	for _, e := range s.live.takeFrames(cl) {
+		var tf proto.TermFrame
+		require.NoError(t, json.Unmarshal(e.Payload, &tf))
+		got[tf.Pane] = tf.ANSI
+	}
+	require.Equal(t, map[string]string{"w1:p1": "999", "w1:p2": "otro"}, got)
+	require.Empty(t, s.live.takeFrames(cl))
 }
