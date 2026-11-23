@@ -5,22 +5,32 @@ import (
 	"log"
 	"time"
 
+	"github.com/S-kkipie/quorum/internal/daemon/herdr"
 	"github.com/S-kkipie/quorum/internal/proto"
 )
 
 // Cerrar una sesión desde la app termina Claude pero deja su pestaña de herdr con
-// una shell ociosa. Si Quorum lanzó esa sesión en herdr, el daemon cierra también
-// la pestaña cuando la sesión se va (o tras sessionCloseWait si nunca se va), y
-// solo si el panel sigue siendo el mismo (mismo terminal_id) y no hay un agente
-// trabajando en él. Las sesiones que terminan solas no cierran nada.
+// una shell ociosa. Si Quorum lanzó esa sesión en herdr y la sesión se va tras el
+// pedido de cierre, el daemon cierra también la pestaña, solo si el panel sigue
+// siendo el mismo (mismo terminal_id) y no hay un agente activo en él. Si la
+// sesión no se va en sessionCloseWait, el pedido se olvida sin cerrar nada (el
+// dueño podría estar usando esa shell). Las sesiones que terminan solas no
+// cierran nada.
 
-// sessionCloseWait es el plazo para que la sesión se vaya tras el pedido de
-// cierre; variable para tests.
-var sessionCloseWait = 15 * time.Second
+// Plazos; variables para tests (se leen al pedir el cierre, antes de arrancar
+// goroutines).
+var (
+	sessionCloseWait   = 15 * time.Second // para que la sesión se vaya tras el pedido
+	sessionClosePoll   = time.Second      // sondeo de pane.list tras el Gone
+	sessionCloseWindow = 10 * time.Second // cuánto se sondea antes de rendirse
+)
 
-// pendingClose es un cierre de pestaña pendiente; sus campos van bajo Host.cmu.
+// pendingClose es un cierre de pestaña pendiente; sus campos mutables van bajo Host.cmu.
 type pendingClose struct {
-	pane  string
+	pane         string
+	wait         time.Duration
+	poll, window time.Duration
+
 	tid   string // terminal_id del panel al pedir el cierre
 	ready bool   // tid ya leído
 	gone  bool   // la sesión ya se fue
@@ -51,7 +61,8 @@ func (h *Host) closeRequested(reg *Registry, id string) {
 	if si.HerdrPane == "" || si.LaunchReq == "" {
 		return // no la lanzó Quorum en herdr: su pestaña no es nuestra
 	}
-	p := &pendingClose{pane: si.HerdrPane}
+	p := &pendingClose{pane: si.HerdrPane, wait: sessionCloseWait,
+		poll: sessionClosePoll, window: sessionCloseWindow}
 	h.cmu.Lock()
 	if h.closing == nil {
 		h.closing = map[string]*pendingClose{}
@@ -80,7 +91,7 @@ func (h *Host) closeRequested(reg *Registry, id string) {
 		p.tid, p.ready = tid, true
 		gone := p.gone
 		if !gone {
-			p.timer = time.AfterFunc(sessionCloseWait, func() { h.closeTab(id, p) })
+			p.timer = time.AfterFunc(p.wait, func() { h.dropClose(id, p) })
 		}
 		h.cmu.Unlock()
 		if gone {
@@ -105,8 +116,19 @@ func (h *Host) sessionGone(id string) {
 	}
 }
 
-// closeTab cierra el panel de p (una sola vez) si sigue siendo el mismo terminal
-// y no hay un agente trabajando en él.
+// dropClose olvida el pedido si la sesión no se fue a tiempo.
+func (h *Host) dropClose(id string, p *pendingClose) {
+	h.cmu.Lock()
+	defer h.cmu.Unlock()
+	if h.closing[id] == p && !p.gone {
+		delete(h.closing, id)
+		log.Printf("sesiones: %s no terminó tras el pedido de cierre; su pestaña se queda", id)
+	}
+}
+
+// closeTab (una sola vez por pedido, tras el Gone) sondea pane.list durante la
+// ventana y cierra el panel en cuanto sigue siendo el mismo terminal y no tiene
+// un agente activo. Si el panel desaparece o cambió de terminal, no hace nada.
 func (h *Host) closeTab(id string, p *pendingClose) {
 	h.cmu.Lock()
 	if h.closing[id] != p {
@@ -119,12 +141,41 @@ func (h *Host) closeTab(id string, p *pendingClose) {
 	}
 	h.cmu.Unlock()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*termCallWait)
+	deadline := time.Now().Add(p.window)
+	for {
+		switch h.tabState(p) {
+		case tabClose:
+			ctx, cancel := context.WithTimeout(context.Background(), termCallWait)
+			if err := h.Herdr.ClosePane(ctx, p.pane); err != nil && !herdr.IsNotFound(err) {
+				log.Printf("sesiones: no se pudo cerrar la pestaña de %s: %v", id, err)
+			}
+			cancel()
+			return
+		case tabDrop:
+			return
+		}
+		if time.Now().Add(p.poll).After(deadline) {
+			log.Printf("sesiones: la pestaña de %s sigue ocupada; no se cierra", id)
+			return
+		}
+		time.Sleep(p.poll)
+	}
+}
+
+type tabVerdict int
+
+const (
+	tabWait  tabVerdict = iota // agente activo, estado dudoso o pane.list falló
+	tabClose                   // mismo terminal y sin agente activo
+	tabDrop                    // el panel ya no existe o es otro terminal
+)
+
+func (h *Host) tabState(p *pendingClose) tabVerdict {
+	ctx, cancel := context.WithTimeout(context.Background(), termCallWait)
 	defer cancel()
 	panes, err := h.Herdr.ListPanes(ctx, "")
 	if err != nil {
-		log.Printf("sesiones: no se pudo revisar la pestaña de %s: %v", id, err)
-		return
+		return tabWait
 	}
 	for _, x := range panes {
 		if x.ID != p.pane {
@@ -132,15 +183,12 @@ func (h *Host) closeTab(id string, p *pendingClose) {
 		}
 		switch {
 		case x.TerminalID != p.tid:
-			return // herdr reusó el id: ya es otro panel
-		case x.Agent != "" && (x.AgentStatus == "working" || x.AgentStatus == "blocked"):
-			log.Printf("sesiones: la pestaña de %s sigue con un agente activo; no se cierra", id)
-			return
+			return tabDrop // herdr reusó el id: ya es otro panel
+		case x.Agent == "", x.AgentStatus == "idle", x.AgentStatus == "done":
+			return tabClose
+		default:
+			return tabWait // working, blocked, unknown...
 		}
-		if err := h.Herdr.ClosePane(ctx, p.pane); err != nil {
-			log.Printf("sesiones: no se pudo cerrar la pestaña de %s: %v", id, err)
-		}
-		return
 	}
-	// el panel ya no existe: nada que cerrar
+	return tabDrop
 }

@@ -16,8 +16,9 @@ import (
 // terminado) que anota los pane.close.
 type closeFake struct {
 	*herdrtest.Fake
-	mu   sync.Mutex
-	pane map[string]any
+	mu    sync.Mutex
+	pane  map[string]any
+	fails int // los próximos fails pane.list responden error
 }
 
 func newCloseFake(t *testing.T) *closeFake {
@@ -27,6 +28,10 @@ func newCloseFake(t *testing.T) *closeFake {
 	f.Handle("pane.list", func(json.RawMessage) (any, string) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
+		if f.fails > 0 {
+			f.fails--
+			return nil, "internal_error"
+		}
 		p := map[string]any{}
 		for k, v := range f.pane {
 			p[k] = v
@@ -67,10 +72,15 @@ func (f *closeFake) lists() int {
 	return n
 }
 
+// closeTimes acorta los plazos; se fijan antes de arrancar cualquier goroutine.
+func closeTimes(t *testing.T, wait, poll, window time.Duration) {
+	oW, oP, oX := sessionCloseWait, sessionClosePoll, sessionCloseWindow
+	sessionCloseWait, sessionClosePoll, sessionCloseWindow = wait, poll, window
+	t.Cleanup(func() { sessionCloseWait, sessionClosePoll, sessionCloseWindow = oW, oP, oX })
+}
+
 func closeSetup(t *testing.T, launchReq string) (*closeFake, *Host, *Registry) {
-	old := sessionCloseWait
-	sessionCloseWait = time.Minute
-	t.Cleanup(func() { sessionCloseWait = old })
+	closeTimes(t, time.Minute, 5*time.Millisecond, 100*time.Millisecond)
 	f := newCloseFake(t)
 	h := &Host{Herdr: &herdr.Client{Socket: f.Socket}}
 	reg := NewRegistry("m1")
@@ -88,45 +98,65 @@ func requested(t *testing.T, f *closeFake, h *Host, reg *Registry) {
 	time.Sleep(20 * time.Millisecond)
 }
 
-func TestSessionCloseAfterGone(t *testing.T) {
-	f, h, reg := closeSetup(t, "req1")
-	requested(t, f, h, reg)
-	require.Empty(t, f.closes()) // todavía no: Claude sigue cerrándose
-	reg.Gone("s1")
+// noClose espera más que la ventana de sondeo y comprueba que no se cerró nada.
+func noClose(t *testing.T, f *closeFake) {
+	t.Helper()
+	time.Sleep(3 * sessionCloseWindow / 2)
+	require.Empty(t, f.closes())
+}
+
+func closedOnce(t *testing.T, f *closeFake) {
+	t.Helper()
 	require.Eventually(t, func() bool { return len(f.closes()) == 1 }, 2*time.Second, 2*time.Millisecond)
 	require.Equal(t, []string{"w1:p1"}, f.closes())
 	time.Sleep(30 * time.Millisecond)
 	require.Len(t, f.closes(), 1)
 }
 
+func TestSessionCloseAfterGone(t *testing.T) {
+	f, h, reg := closeSetup(t, "req1")
+	requested(t, f, h, reg)
+	require.Empty(t, f.closes()) // todavía no: Claude sigue cerrándose
+	reg.Gone("s1")
+	closedOnce(t, f)
+}
+
+func TestSessionCloseDoneStatus(t *testing.T) {
+	f, h, reg := closeSetup(t, "req1")
+	f.set("agent_status", "done")
+	requested(t, f, h, reg)
+	reg.Gone("s1")
+	closedOnce(t, f)
+}
+
 func TestSessionCloseGoneBeforeTerminalID(t *testing.T) {
 	f, h, reg := closeSetup(t, "req1")
 	h.closeRequested(reg, "s1")
 	reg.Gone("s1") // puede llegar antes de que se lea el terminal_id
-	require.Eventually(t, func() bool { return len(f.closes()) == 1 }, 2*time.Second, 2*time.Millisecond)
+	closedOnce(t, f)
 }
 
-func TestSessionCloseDeadline(t *testing.T) {
+// Sin Gone, el plazo solo olvida el pedido: el dueño podría estar usando la shell.
+func TestSessionCloseTimeoutWithoutGone(t *testing.T) {
 	f, h, reg := closeSetup(t, "req1")
-	sessionCloseWait = 50 * time.Millisecond
+	sessionCloseWait = 30 * time.Millisecond
 	requested(t, f, h, reg)
-	require.Eventually(t, func() bool { return len(f.closes()) == 1 }, 2*time.Second, 2*time.Millisecond)
+	time.Sleep(60 * time.Millisecond)
+	reg.Gone("s1") // tarde: el pedido ya se olvidó
+	noClose(t, f)
 }
 
 func TestSessionCloseNeedsCloseCommand(t *testing.T) {
 	f, _, reg := closeSetup(t, "req1")
 	reg.Gone("s1") // terminó sola: su pestaña se queda
-	time.Sleep(50 * time.Millisecond)
-	require.Empty(t, f.closes())
+	noClose(t, f)
 }
 
 func TestSessionCloseNotQuorumLaunched(t *testing.T) {
 	f, h, reg := closeSetup(t, "")
-	sessionCloseWait = 30 * time.Millisecond
 	h.closeRequested(reg, "s1")
 	reg.Gone("s1")
-	time.Sleep(80 * time.Millisecond)
-	require.Empty(t, f.closes())
+	noClose(t, f)
 }
 
 func TestSessionCloseTerminalChanged(t *testing.T) {
@@ -134,37 +164,57 @@ func TestSessionCloseTerminalChanged(t *testing.T) {
 	requested(t, f, h, reg)
 	f.set("terminal_id", "term_2") // herdr reusó el id del panel
 	reg.Gone("s1")
-	time.Sleep(50 * time.Millisecond)
-	require.Empty(t, f.closes())
+	noClose(t, f)
 }
 
-func TestSessionCloseAgentStillWorking(t *testing.T) {
-	for _, st := range []string{"working", "blocked"} {
+func TestSessionCloseAgentBusy(t *testing.T) {
+	for _, st := range []string{"working", "blocked", "unknown"} {
 		t.Run(st, func(t *testing.T) {
 			f, h, reg := closeSetup(t, "req1")
 			requested(t, f, h, reg)
 			f.set("agent_status", st)
 			reg.Gone("s1")
-			time.Sleep(50 * time.Millisecond)
-			require.Empty(t, f.closes())
+			noClose(t, f)
 		})
 	}
+}
+
+// Tras el Gone se sondea: primero working, luego idle → cierra.
+func TestSessionCloseRetriesUntilIdle(t *testing.T) {
+	f, h, reg := closeSetup(t, "req1")
+	sessionCloseWindow = 2 * time.Second
+	requested(t, f, h, reg)
+	f.set("agent_status", "working")
+	n := f.lists()
+	reg.Gone("s1")
+	require.Eventually(t, func() bool { return f.lists() >= n+3 }, 2*time.Second, 2*time.Millisecond)
+	require.Empty(t, f.closes())
+	f.set("agent_status", "idle")
+	closedOnce(t, f)
+}
+
+func TestSessionCloseRetriesListErrors(t *testing.T) {
+	f, h, reg := closeSetup(t, "req1")
+	requested(t, f, h, reg)
+	f.mu.Lock()
+	f.fails = 3
+	f.mu.Unlock()
+	reg.Gone("s1")
+	closedOnce(t, f)
 }
 
 func TestSessionCloseNoAgent(t *testing.T) {
 	f, h, reg := closeSetup(t, "req1")
 	requested(t, f, h, reg)
 	f.set("agent", "")
-	f.set("agent_status", "working") // sin agente el estado no cuenta
+	f.set("agent_status", "unknown") // sin agente el estado no cuenta
 	reg.Gone("s1")
-	require.Eventually(t, func() bool { return len(f.closes()) == 1 }, 2*time.Second, 2*time.Millisecond)
+	closedOnce(t, f)
 }
 
 // El comando close que llega del hub arma el cierre; el Gone del registro lo dispara.
 func TestSessionCloseViaHubLink(t *testing.T) {
-	old := sessionCloseWait
-	sessionCloseWait = time.Minute
-	t.Cleanup(func() { sessionCloseWait = old })
+	closeTimes(t, time.Minute, 5*time.Millisecond, 100*time.Millisecond)
 	f := newCloseFake(t)
 	fh, reg := startLink(t, hostFor(t, f.Socket))
 	reg.Upsert(proto.SessionInfo{ID: "s1", HerdrPane: "w1:p1", LaunchReq: "req1"})
@@ -181,5 +231,5 @@ func TestSessionCloseViaHubLink(t *testing.T) {
 	require.Eventually(t, func() bool { return f.lists() > 0 }, 2*time.Second, 2*time.Millisecond)
 	time.Sleep(20 * time.Millisecond)
 	reg.Gone("s1")
-	require.Eventually(t, func() bool { return len(f.closes()) == 1 }, 2*time.Second, 2*time.Millisecond)
+	closedOnce(t, f)
 }
