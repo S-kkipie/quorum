@@ -1,58 +1,58 @@
 import type { Asks, SettleWhy } from './control'
 
 /**
- * Margen respecto al tope de la espera: la espera se corta antes para devolver el
- * veredicto nosotros en vez de que el engine descarte el hook.
+ * Margin below the wait cap: the wait is cut earlier so that we return the
+ * verdict ourselves instead of the engine discarding the hook.
  */
 export const BUDGET_MARGIN_MS = 60_000
 /**
- * Un hook tool.check tiene 10 s de tiempo propio y hasta 20 min de `$` en curso.
- * Mientras el diálogo `$.ui.ask` está abierto ninguno de los dos corre; además
- * `quorumd hold` (un `$` vivo) sostiene la espera por si el diálogo no lo hiciera.
- * La carrera se acota a esos 20 min menos el margen.
+ * A tool.check hook has 10 s of its own time and up to 20 min of in-flight `$`.
+ * While the `$.ui.ask` dialog is open neither of them runs; in addition
+ * `quorumd hold` (a live `$`) sustains the wait in case the dialog does not.
+ * The race is bounded to those 20 min minus the margin.
  */
 export const HOLD_MAX_MS = 20 * 60_000 - BUDGET_MARGIN_MS
 
-export const TERM_ALLOW = 'Permitir'
-export const TERM_DENY = 'Denegar'
+export const TERM_ALLOW = 'Allow'
+export const TERM_DENY = 'Deny'
 export const QUESTION_MAX = 120
 
 export const REASON = {
-  device: 'Permitido desde Quorum',
-  deviceDeny: 'Denegado desde Quorum',
-  terminal: 'Permitido en la terminal',
-  terminalDeny: 'Denegado en la terminal',
-  timeout: 'Sin respuesta en 19 min (Quorum)',
-  interrupted: 'Turno interrumpido',
+  device: 'Allowed from Quorum',
+  deviceDeny: 'Denied from Quorum',
+  terminal: 'Allowed in the terminal',
+  terminalDeny: 'Denied in the terminal',
+  timeout: 'No answer in 19 min (Quorum)',
+  interrupted: 'Turn interrupted',
 } as const
 
-export const LATE_NOTICE = 'Ya decidido desde Quorum'
+export const LATE_NOTICE = 'Already decided from Quorum'
 /**
- * Un rechazo de `$.ui.ask` antes de esto no es un Esc (nadie lee y cierra tan
- * rápido): no hay quien conteste en la terminal (p. ej. una corrida -p).
+ * A `$.ui.ask` rejection sooner than this is not an Esc (nobody reads and closes
+ * that fast): there is nobody to answer in the terminal (e.g. a -p run).
  */
 export const NO_TERMINAL_MS = 500
 
 export type PermissionDeps = {
   /**
-   * El diálogo de la terminal (`$.ui.ask`); rechaza si el dueño lo cierra (Esc).
-   * Sin cancelación. Ausente: sesión sin terminal, solo el dispositivo contesta.
+   * The terminal dialog (`$.ui.ask`); rejects if the owner closes it (Esc).
+   * No cancellation. Absent: session without a terminal, only the device answers.
    */
   termAsk?: (q: string) => Promise<unknown>
   asks: Asks
-  /** Sostiene el hook mientras `until` no se resuelva (`quorumd hold`). */
+  /** Keeps the hook alive until `until` resolves (`quorumd hold`). */
   keepAlive: (until: Promise<unknown>) => void | Promise<void>
-  /** `next.signal`: el turno (o el subagente) se cortó. */
+  /** `next.signal`: the turn (or the subagent) was cut. */
   signal?: AbortSignal
-  /** Línea para el dueño en la terminal (`$.ui.log`). */
+  /** Line for the owner in the terminal (`$.ui.log`). */
   log?: (msg: string) => void
-  /** Reloj en ms (por defecto Date.now), para NO_TERMINAL_MS. */
+  /** Clock in ms (Date.now by default), for NO_TERMINAL_MS. */
   now?: () => number
 }
 
 export type PermissionVerdict = { decision: 'allow' | 'deny'; reason: string }
 
-/** `"<tool>: <summary>"` en una línea, acotado a QUESTION_MAX caracteres. */
+/** `"<tool>: <summary>"` on one line, capped at QUESTION_MAX characters. */
 export function permissionQuestion(tool: string, summary: string): string {
   const flat = summary.replace(/\s+/g, ' ').trim()
   const q = flat ? `${tool}: ${flat}` : tool
@@ -60,16 +60,16 @@ export function permissionQuestion(tool: string, summary: string): string {
 }
 
 /**
- * Carrera de un permiso: el diálogo de la terminal y la tarjeta en los dispositivos
- * a la vez; gana la primera respuesta.
+ * Race of a permission: the terminal dialog and the card on the devices
+ * at once; the first answer wins.
  *
- * - Gana un dispositivo: no se emite ask_resolved (el hub emite el suyo); el diálogo
- *   de la terminal queda abierto y su respuesta tardía solo deja un aviso.
- * - Responde la terminal (Permitir, Denegar, otro texto o Esc, que deniega como el
- *   diálogo nativo): se retira la tarjeta (ask_resolved{by:'terminal'}).
- * - Sin terminal (sin `termAsk`, o `$.ui.ask` rechaza en menos de NO_TERMINAL_MS):
- *   solo el dispositivo, hasta HOLD_MAX_MS.
- * - Vencido HOLD_MAX_MS, o turno cortado, se deniega con motivo.
+ * - A device wins: ask_resolved is not emitted (the hub emits its own); the terminal
+ *   dialog stays open and its late answer only leaves a notice.
+ * - The terminal answers (Allow, Deny, other text or Esc, which denies like the
+ *   native dialog): the card is withdrawn (ask_resolved{by:'terminal'}).
+ * - No terminal (no `termAsk`, or `$.ui.ask` rejects in under NO_TERMINAL_MS):
+ *   only the device, up to HOLD_MAX_MS.
+ * - Once HOLD_MAX_MS expires, or the turn is cut, it is denied with a reason.
  */
 export async function permissionRace(
   deps: PermissionDeps,
@@ -103,7 +103,7 @@ export async function permissionRace(
         : { decision: 'deny', reason: d.reason || REASON.deviceDeny })
       return
     }
-    // vencida, o retirada (fin del turno o del subagente, cierre de la sesión)
+    // expired, or withdrawn (end of the turn or subagent, session closed)
     settle({ decision: 'deny', reason: why === 'timeout' ? REASON.timeout : REASON.interrupted })
   })
 
@@ -113,7 +113,7 @@ export async function permissionRace(
   }
   signal?.addEventListener('abort', onAbort, { once: true })
 
-  try { void Promise.resolve(deps.keepAlive(done)).catch(() => {}) } catch { /* sin sostén: el diálogo abierto sostiene igual */ }
+  try { void Promise.resolve(deps.keepAlive(done)).catch(() => {}) } catch { /* no keep-alive: the open dialog sustains it anyway */ }
 
   const fromTerminal = (v: PermissionVerdict) => {
     settle(v)
@@ -129,17 +129,17 @@ export async function permissionRace(
     void term.then(raw => {
       const answer = typeof raw === 'string' ? raw : ''
       if (settled) {
-        // ganó un dispositivo: la respuesta tardía no cambia nada, solo se avisa
-        if (byDevice) try { deps.log?.(LATE_NOTICE) } catch { /* nunca hacia Claude Code */ }
+        // a device won: the late answer changes nothing, only a notice is shown
+        if (byDevice) try { deps.log?.(LATE_NOTICE) } catch { /* never toward Claude Code */ }
         return
       }
       fromTerminal(answer === TERM_ALLOW
         ? { decision: 'allow', reason: REASON.terminal }
         : { decision: 'deny', reason: answer === TERM_DENY || !answer.trim() ? REASON.terminalDeny : `${REASON.terminalDeny}: ${answer}` })
     }, () => {
-      // tan rápido no es una persona: no hay terminal, sigue solo el dispositivo
+      // too fast to be a person: there is no terminal, only the device continues
       if (now() - opened < NO_TERMINAL_MS) return
-      // Esc: la terminal deniega, como en el diálogo nativo
+      // Esc: the terminal denies, like the native dialog
       if (!settled) fromTerminal({ decision: 'deny', reason: REASON.terminalDeny })
     }).catch(() => {})
   }

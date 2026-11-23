@@ -1,6 +1,6 @@
 import { optional } from './compat'
 
-/** Quita usuario/token de una URL con esquema; nunca se envían credenciales al hub. */
+/** Strips user/token from a URL with a scheme; credentials are never sent to the hub. */
 export function stripUserinfo(u: string): string {
   let v = u.trim()
   const q = v.search(/[?#]/)
@@ -14,7 +14,7 @@ export function stripUserinfo(u: string): string {
 export type RepoInfo = { repoUrl: string; branch: string }
 
 export type RepoDeps = {
-  /** `$.session.repo()`; puede no existir en este build. */
+  /** `$.session.repo()`; may not exist in this build. */
   repo: () => Promise<{ remote: string | null } | null> | { remote: string | null } | null
   /** `$.process.run(argv, { timeoutMs: 3000 })`. */
   run: (argv: string[]) => Promise<{ exitCode: number; stdout: string }>
@@ -29,7 +29,7 @@ export function currentBranch(deps: RepoDeps, root: string): Promise<string> {
   return git(deps, root, ['branch', '--show-current'])
 }
 
-/** Remoto y rama del repo de la sesión; vacíos si no hay o falla. Nunca lanza. */
+/** Remote and branch of the session's repo; empty if there is none or it fails. Never throws. */
 export async function detectRepo(deps: RepoDeps, root: string): Promise<RepoInfo> {
   if (!root) return { repoUrl: '', branch: '' }
   const repo = await optional(() => deps.repo(), undefined)
@@ -38,7 +38,7 @@ export async function detectRepo(deps: RepoDeps, root: string): Promise<RepoInfo
   return { repoUrl: stripUserinfo(repoUrl), branch: await currentBranch(deps, root) }
 }
 
-/** Refresca la rama a lo sumo una vez por `everyMs`; llama a `onChange` solo si cambió. */
+/** Refreshes the branch at most once per `everyMs`; calls `onChange` only if it changed. */
 export function makeBranchRefresher(deps: RepoDeps, root: string, onChange: (branch: string) => void, now: () => number, everyMs = 60_000) {
   let last = -Infinity
   let known: string | undefined

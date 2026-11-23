@@ -53,14 +53,14 @@ func TestPairFlow(t *testing.T) {
 
 	rr = do(h, "POST", "/api/pair", `{"code":"`+code+`","deviceName":"tel"}`, nil)
 	require.Equal(t, 400, rr.Code)
-	require.JSONEq(t, `{"error":"código inválido o vencido"}`, rr.Body.String())
+	require.JSONEq(t, `{"error":"invalid or expired code"}`, rr.Body.String())
 }
 
 func TestSessionsRequiresToken(t *testing.T) {
 	_, _, h := newTestServer(t)
 	rr := do(h, "GET", "/api/sessions", "", nil)
 	require.Equal(t, 401, rr.Code)
-	require.JSONEq(t, `{"error":"no autorizado"}`, rr.Body.String())
+	require.JSONEq(t, `{"error":"unauthorized"}`, rr.Body.String())
 	rr = do(h, "GET", "/api/sessions?token=x", "", nil)
 	require.Equal(t, 401, rr.Code)
 }
@@ -85,7 +85,7 @@ func TestMachineTokenNotDevice(t *testing.T) {
 	require.Equal(t, 200, rr.Code)
 	require.Equal(t, "wsl", got)
 
-	// y al revés: token de dispositivo no sirve como máquina
+	// and the reverse: a device token does not work as a machine
 	pc, _ := st.CreateCode("pair")
 	dt := tokenFrom(t, do(h, "POST", "/api/pair", `{"code":"`+pc+`"}`, nil))
 	require.Equal(t, 401, do(mh, "GET", "/", "", map[string]string{"Authorization": "Bearer " + dt}).Code)
@@ -96,7 +96,7 @@ func TestLinkRequiresMachineName(t *testing.T) {
 	code, _ := st.CreateCode("link")
 	rr := do(h, "POST", "/api/link", `{"code":"`+code+`"}`, nil)
 	require.Equal(t, 400, rr.Code)
-	require.JSONEq(t, `{"error":"falta el nombre de la máquina"}`, rr.Body.String())
+	require.JSONEq(t, `{"error":"missing machine name"}`, rr.Body.String())
 }
 
 func TestPing(t *testing.T) {
@@ -138,5 +138,5 @@ func TestRelinkMachineReplacesToken(t *testing.T) {
 
 func TestRevokeMissingIsNotFound(t *testing.T) {
 	_, st, _ := newTestServer(t)
-	require.ErrorIs(t, st.RevokeToken("device", "nadie"), store.ErrNotFound)
+	require.ErrorIs(t, st.RevokeToken("device", "nobody"), store.ErrNotFound)
 }

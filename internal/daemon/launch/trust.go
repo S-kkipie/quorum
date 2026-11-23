@@ -10,18 +10,18 @@ import (
 	"path/filepath"
 )
 
-// beforeRename se llama justo antes de comprobar el mtime y renombrar; para tests.
+// beforeRename is called right before checking the mtime and renaming; for tests.
 var beforeRename = func() {}
 
-// TrustDir marca dir como de confianza en <home>/.claude.json
-// (projects[dir].hasTrustDialogAccepted = true), para que Claude no abra el diálogo.
-// Si ya lo está, no escribe. Conserva las demás claves y su orden. Escribe con
-// temporal + rename en el mismo directorio y con el mismo modo; si el fichero cambió
-// entre la lectura y el rename, reintenta (hasta 3 veces).
+// TrustDir marks dir as trusted in <home>/.claude.json
+// (projects[dir].hasTrustDialogAccepted = true), so Claude does not open the dialog.
+// If it already is, it does not write. Keeps the other keys and their order. Writes with
+// a temp file + rename in the same directory and with the same mode; if the file changed
+// between the read and the rename, it retries (up to 3 times).
 func TrustDir(home, dir string) error {
 	path := filepath.Join(home, ".claude.json")
 	if p, err := filepath.EvalSymlinks(path); err == nil {
-		path = p // si es un enlace, se escribe el destino
+		path = p // if it is a link, write to the target
 	}
 	for attempt := 0; attempt < 3; attempt++ {
 		var (
@@ -67,7 +67,7 @@ func TrustDir(home, dir string) error {
 			now = st.ModTime().UnixNano()
 		}
 		if now != mt {
-			os.Remove(tmp) // otro proceso lo escribió: se vuelve a leer
+			os.Remove(tmp) // another process wrote it: read again
 			continue
 		}
 		if err := os.Rename(tmp, path); err != nil {
@@ -76,26 +76,26 @@ func TrustDir(home, dir string) error {
 		}
 		return nil
 	}
-	return fmt.Errorf("%s cambia sin parar; no se tocó", path)
+	return fmt.Errorf("%s keeps changing; left untouched", path)
 }
 
-// setTrusted devuelve el JSON con projects[dir].hasTrustDialogAccepted = true,
-// indentado a 2 espacios como lo deja Claude, y si hubo que cambiar algo.
+// setTrusted returns the JSON with projects[dir].hasTrustDialogAccepted = true,
+// indented with 2 spaces as Claude leaves it, and whether anything had to change.
 func setTrusted(raw []byte, dir string) ([]byte, bool, error) {
 	top, err := parseObject(raw)
 	if err != nil {
-		return nil, false, fmt.Errorf(".claude.json inválido: %w", err)
+		return nil, false, fmt.Errorf("invalid .claude.json: %w", err)
 	}
 	projects := &object{}
 	if v, ok := top.get("projects"); ok && string(v) != "null" {
 		if projects, err = parseObject(v); err != nil {
-			return nil, false, fmt.Errorf(".claude.json: projects inválido: %w", err)
+			return nil, false, fmt.Errorf(".claude.json: invalid projects: %w", err)
 		}
 	}
 	entry := &object{}
 	if v, ok := projects.get(dir); ok && string(v) != "null" {
 		if entry, err = parseObject(v); err != nil {
-			return nil, false, fmt.Errorf(".claude.json: projects[%s] inválido: %w", dir, err)
+			return nil, false, fmt.Errorf(".claude.json: invalid projects[%s]: %w", dir, err)
 		}
 	}
 	if v, ok := entry.get("hasTrustDialogAccepted"); ok && string(v) == "true" {
@@ -111,7 +111,7 @@ func setTrusted(raw []byte, dir string) ([]byte, bool, error) {
 	return buf.Bytes(), true, nil
 }
 
-// object es un objeto JSON que conserva el orden de sus claves.
+// object is a JSON object that preserves the order of its keys.
 type object struct {
 	keys []string
 	vals map[string]json.RawMessage
@@ -122,7 +122,7 @@ func parseObject(b []byte) (*object, error) {
 	if t, err := d.Token(); err != nil {
 		return nil, err
 	} else if t != json.Delim('{') {
-		return nil, errors.New("no es un objeto")
+		return nil, errors.New("not an object")
 	}
 	o := &object{vals: map[string]json.RawMessage{}}
 	for d.More() {
@@ -173,10 +173,10 @@ func (o *object) marshal() json.RawMessage {
 	return b.Bytes()
 }
 
-// writeKey escribe k como cadena JSON sin escapar & < > (json.Marshal los cambia por \u00XX).
+// writeKey writes k as a JSON string without escaping & < > (json.Marshal turns them into \u00XX).
 func writeKey(b *bytes.Buffer, k string) {
 	e := json.NewEncoder(b)
 	e.SetEscapeHTML(false)
 	_ = e.Encode(k)
-	b.Truncate(b.Len() - 1) // Encode agrega '\n'
+	b.Truncate(b.Len() - 1) // Encode appends '\n'
 }

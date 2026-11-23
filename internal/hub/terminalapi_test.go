@@ -15,16 +15,27 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// fakeMachine conecta una máquina falsa (reemplaza la conexión de m1) que contesta cada rpc con h.
-// Si h devuelve nil no contesta. Cada rpc recibido se anota en got.
+// fakeMachine connects a fake machine (replaces m1's connection) that answers each rpc with h.
+// If h returns nil it does not answer. Each received rpc is recorded in got.
 func fakeMachine(t *testing.T, f *appFx, tok, name string, h func(proto.RPC) *proto.RPCResult) (*websocket.Conn, chan proto.RPC) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	// The hub attaches the new connection asynchronously after hello and closes the
+	// previous one: wait until the swap happened so no rpc reaches the old connection.
+	f.srv.hub.mu.Lock()
+	prev := f.srv.hub.conns[name]
+	f.srv.hub.mu.Unlock()
 	c, _, err := websocket.Dial(ctx, f.wsURL("/api/machine/ws"), &websocket.DialOptions{HTTPHeader: http.Header{"Authorization": {"Bearer " + tok}}})
 	require.NoError(t, err)
 	t.Cleanup(func() { c.CloseNow() })
 	sendHello(t, c, name)
+	eventually(t, func() bool {
+		f.srv.hub.mu.Lock()
+		defer f.srv.hub.mu.Unlock()
+		cur := f.srv.hub.conns[name]
+		return cur != nil && cur != prev
+	})
 	got := make(chan proto.RPC, 16)
 	go func() {
 		for {
@@ -86,9 +97,9 @@ func TestRPCTimeout504(t *testing.T) {
 	fakeMachine(t, f, f.machTok, "m1", nil)
 	code, body := f.do("POST", "/api/machines/m1/terminals/p:1/watch", "")
 	require.Equal(t, 504, code)
-	require.Contains(t, body, "la máquina no respondió")
+	require.Contains(t, body, "machine did not respond")
 	f.srv.hub.rpcMu.Lock()
-	require.Empty(t, f.srv.hub.waiters) // sin fugas
+	require.Empty(t, f.srv.hub.waiters) // no leaks
 	f.srv.hub.rpcMu.Unlock()
 }
 
@@ -137,16 +148,16 @@ func TestTerminalInputReadWatch(t *testing.T) {
 
 func TestDaemonErrorIs409(t *testing.T) {
 	f := newAppFx(t)
-	fakeMachine(t, f, f.machTok, "m1", func(r proto.RPC) *proto.RPCResult { return &proto.RPCResult{Error: "panel no encontrado"} })
+	fakeMachine(t, f, f.machTok, "m1", func(r proto.RPC) *proto.RPCResult { return &proto.RPCResult{Error: "pane not found"} })
 	code, body := f.do("POST", "/api/machines/m1/terminals/w:1/watch", "")
 	require.Equal(t, 409, code)
-	require.Contains(t, body, "panel no encontrado")
+	require.Contains(t, body, "pane not found")
 }
 
 func TestTermFrameRelayedNotStored(t *testing.T) {
 	f := newAppFx(t, "s1")
 	_, ch := f.live(t)
-	f.machineSend(t, proto.Envelope{Type: "term_frame", Machine: "otra", Payload: mustJSON(proto.TermFrame{Pane: "w:1", ANSI: "x"})})
+	f.machineSend(t, proto.Envelope{Type: "term_frame", Machine: "another", Payload: mustJSON(proto.TermFrame{Pane: "w:1", ANSI: "x"})})
 	e := waitEnv(t, ch, func(e proto.Envelope) bool { return e.Type == "term_frame" })
 	require.Equal(t, "m1", e.Machine)
 	var tf proto.TermFrame
@@ -159,9 +170,9 @@ func TestTermFrameRelayedNotStored(t *testing.T) {
 
 func TestTerminalOffline409(t *testing.T) {
 	f := newAppFx(t)
-	code, body := f.do("POST", "/api/machines/nadie/terminals/w:1/watch", "")
+	code, body := f.do("POST", "/api/machines/nobody/terminals/w:1/watch", "")
 	require.Equal(t, 409, code)
-	require.Contains(t, body, "la máquina está fuera de línea")
+	require.Contains(t, body, "machine is offline")
 	code, _ = f.do("POST", "/api/machines/m1/terminals/w:1/input", `{"keys":["f13"]}`)
 	require.Equal(t, 400, code)
 }
@@ -173,7 +184,7 @@ func TestRPCFailsFastOnDisconnect(t *testing.T) {
 	start := time.Now()
 	code, body := f.do("POST", "/api/machines/m1/terminals/w:1/watch", "")
 	require.Equal(t, 409, code)
-	require.Contains(t, body, "fuera de línea")
+	require.Contains(t, body, "offline")
 	require.Less(t, time.Since(start), 5*time.Second)
 }
 

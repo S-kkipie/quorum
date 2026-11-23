@@ -16,7 +16,7 @@ func TestTrustDirPreservesOtherKeys(t *testing.T) {
   "zeta": 1,
   "numStartups": 42,
   "projects": {
-    "/otro": {
+    "/other": {
       "allowedTools": [],
       "hasTrustDialogAccepted": false
     },
@@ -36,7 +36,7 @@ func TestTrustDirPreservesOtherKeys(t *testing.T) {
   "zeta": 1,
   "numStartups": 42,
   "projects": {
-    "/otro": {
+    "/other": {
       "allowedTools": [],
       "hasTrustDialogAccepted": false
     },
@@ -59,10 +59,10 @@ func TestTrustDirPreservesOtherKeys(t *testing.T) {
 	st, _ := os.Stat(p)
 	require.Equal(t, os.FileMode(0o640), st.Mode().Perm())
 
-	// entrada nueva: se agrega al final de projects
-	require.NoError(t, TrustDir(home, `/nueva "x"`))
+	// new entry: appended at the end of projects
+	require.NoError(t, TrustDir(home, `/new "x"`))
 	b, _ = os.ReadFile(p)
-	require.Contains(t, string(b), `"/nueva \"x\"": {
+	require.Contains(t, string(b), `"/new \"x\"": {
       "hasTrustDialogAccepted": true
     }
   },
@@ -103,7 +103,7 @@ func TestTrustDirRetriesWhenChanged(t *testing.T) {
 	t.Cleanup(func() { beforeRename = old })
 	beforeRename = func() {
 		n++
-		if n == 1 { // otro proceso escribe entre la lectura y el rename
+		if n == 1 { // another process writes between the read and the rename
 			require.NoError(t, os.WriteFile(p, []byte(`{"a":1,"b":2}`), 0o600))
 			future := statMtime(t, p).Add(2e9)
 			require.NoError(t, os.Chtimes(p, future, future))
@@ -114,17 +114,17 @@ func TestTrustDirRetriesWhenChanged(t *testing.T) {
 	b, _ := os.ReadFile(p)
 	require.JSONEq(t, `{"a":1,"b":2,"projects":{"/w":{"hasTrustDialogAccepted":true}}}`, string(b))
 
-	// siempre cambia: se rinde tras 3 intentos sin pisar nada
+	// always changes: gives up after 3 attempts without overwriting anything
 	n = 0
 	beforeRename = func() {
 		n++
 		future := statMtime(t, p).Add(2e9)
 		require.NoError(t, os.Chtimes(p, future, future))
 	}
-	require.Error(t, TrustDir(home, "/otra"))
+	require.Error(t, TrustDir(home, "/another"))
 	require.Equal(t, 3, n)
 	b, _ = os.ReadFile(p)
-	require.NotContains(t, string(b), "/otra")
+	require.NotContains(t, string(b), "/another")
 	left, _ := filepath.Glob(filepath.Join(home, ".claude.json.*"))
 	require.Empty(t, left)
 }

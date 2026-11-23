@@ -5,7 +5,7 @@ import tailwindcss from '@tailwindcss/vite'
 import { writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
-// emptyOutDir borra dist/.keep, que el embed de Go necesita en un clon limpio.
+// emptyOutDir deletes dist/.keep, which the Go embed needs in a clean clone.
 const keep = () => ({
   name: 'quorum-keep',
   closeBundle() { writeFileSync(resolve(import.meta.dirname, '../internal/hub/web/dist/.keep'), '') },

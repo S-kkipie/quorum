@@ -2,20 +2,20 @@ import { expect, mock, test } from 'claude-code/testing'
 
 import { disabled, quorum } from '../hooks/register'
 
-// El kit no tiene procesos ni red: quorumd no existe aquí, así que la sesión queda
-// "sin daemon", pero el rol se decide antes y /quorum lo informa.
-test('/quorum informa el estado tras session.start y no bloquea', async ($, on) => {
+// The kit has no processes or network: quorumd does not exist here, so the session ends up
+// "no daemon", but the role is decided earlier and /quorum reports it.
+test('/quorum reports the status after session.start and does not block', async ($, on) => {
   mock.env(on, { CCAPI_SERVER: '1' })
   mock.clock(on)
   on('command.register', async () => ({ value: undefined }) as never)
   on('session.start', async (_$, e) => ({ cwd: '/x' }) as never)
   await $.session.start({ cwd: '/x', surface: null, interactive: false } as never)
   const r = await $.command.run({ command: 'quorum', args: '' } as never)
-  expect(String((r as { text?: string }).text)).toContain('rol: servicio')
+  expect(String((r as { text?: string }).text)).toContain('role: service')
 })
 
-// QUORUM_DISABLE=1 (el `claude -p` del resumidor del hub): la sesión no se registra.
-test('QUORUM_DISABLE=1 no arranca Link ni registra /quorum', async ($, on) => {
+// QUORUM_DISABLE=1 (the `claude -p` of the hub's summarizer): the session is not registered.
+test('QUORUM_DISABLE=1 starts no Link and does not register /quorum', async ($, on) => {
   mock.env(on, { CCAPI_SERVER: '1', QUORUM_DISABLE: '1' })
   mock.clock(on)
   let registered = 0
@@ -27,14 +27,14 @@ test('QUORUM_DISABLE=1 no arranca Link ni registra /quorum', async ($, on) => {
   expect(quorum.control).toBeUndefined()
 })
 
-test('disabled solo con QUORUM_DISABLE=1', () => {
+test('disabled only with QUORUM_DISABLE=1', () => {
   expect(disabled('1')).toBe(true)
   expect(disabled(undefined)).toBe(false)
   expect(disabled('0')).toBe(false)
 })
 
-// Task 5 (Plan 3): la sesión informa con qué lanzamiento y en qué panel de herdr corre.
-// El kit no tiene quorumd: se finge ensure y se captura el cuerpo de /v1/sessions/register.
+// Task 5 (Plan 3): the session reports which launch and which herdr pane it runs in.
+// The kit has no quorumd: ensure is faked and the body of /v1/sessions/register is captured.
 async function registered($: never, on: never, env: Record<string, string>): Promise<Record<string, unknown>> {
   const o = on as (...a: unknown[]) => void
   mock.env(on as never, env)
@@ -61,7 +61,7 @@ test('register sends launchReq and herdr pane from env', async ($, on) => {
   expect(b.herdrWorkspace).toBe('w_2')
 })
 
-test('sin las variables de entorno, launchReq y herdrPane van vacíos', async ($, on) => {
+test('without the environment variables, launchReq and herdrPane are empty', async ($, on) => {
   const b = await registered($ as never, on as never, { CCAPI_SERVER: '1' })
   expect(b.launchReq).toBe('')
   expect(b.herdrPane).toBe('')

@@ -12,12 +12,12 @@ import (
 
 const maxBody = 4 << 20
 
-// NewLocalAPI construye el handler HTTP loopback usado por el mod.
+// NewLocalAPI builds the loopback HTTP handler used by the mod.
 func NewLocalAPI(reg *Registry, token, version string) http.Handler {
 	return NewLocalAPIWithReload(reg, token, version, nil)
 }
 
-// NewLocalAPIWithReload añade POST /v1/reload, que relee la config y reinicia el enlace al hub.
+// NewLocalAPIWithReload adds POST /v1/reload, which rereads the config and restarts the hub link.
 func NewLocalAPIWithReload(reg *Registry, token, version string, reload func() error) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/reload", auth(token, func(w http.ResponseWriter, r *http.Request) {

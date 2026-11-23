@@ -11,22 +11,22 @@ import { Recap } from '../src/recap'
 import { detectRepo, makeBranchRefresher, type RepoDeps } from '../src/repo'
 import { detectRole } from '../src/role'
 
-// Estado compartido con los hooks de eventos y control (Tasks 9-10): consúltalo
-// con `quorum.link`.
-// `control` (Task 10) también vive aquí: se arma en session.start con closures sobre `$`
-// (el compilador de mods no deja guardar `$` en una variable del módulo).
+// State shared with the event and control hooks (Tasks 9-10): query it
+// via `quorum.link`.
+// `control` (Task 10) also lives here: it is built in session.start with closures over `$`
+// (the mod compiler does not allow storing `$` in a module variable).
 export const quorum: { link?: Link; control?: Control; recap?: Recap } = {}
 
-// una vez por sesión (avisa una sola vez si hold falla): session.start crea uno nuevo
+// once per session (warns only once if hold fails): session.start creates a new one
 let hold: Hold | undefined
 
-// último prompt del hilo principal y si ya se vio el primero (para el recap)
+// last main-thread prompt and whether the first one was seen (for the recap)
 let lastPrompt = ''
 let firstSeen = false
-// refresco de la rama (a lo sumo una vez por minuto) al terminar un turno
+// branch refresh (at most once per minute) when a turn ends
 let branchRefresh: { seed(b: string): void; refresh(): Promise<void> } | undefined
 
-/** `/quorum ticket 41` -> '41'; `/quorum ticket -` -> ''; otro comando -> undefined. */
+/** `/quorum ticket 41` -> '41'; `/quorum ticket -` -> ''; other command -> undefined. */
 export function ticketArg(args: string): string | undefined {
   const m = /^\s*ticket(?:\s+(\S+))?\s*$/i.exec(args)
   if (!m) return undefined
@@ -34,17 +34,17 @@ export function ticketArg(args: string): string | undefined {
   return v === '-' ? '' : v
 }
 
-/** QUORUM_DISABLE=1 apaga Quorum en la sesión (no hay Link ni control). */
+/** QUORUM_DISABLE=1 turns Quorum off in the session (no Link or control). */
 export function disabled(v: string | undefined): boolean {
   return v === '1'
 }
 
-const STATE_TEXT = { connected: 'conectado', reconnecting: 'reconectando', 'no-daemon': 'sin daemon' } as const
+const STATE_TEXT = { connected: 'connected', reconnecting: 'reconnecting', 'no-daemon': 'no daemon' } as const
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
-    // QUORUM_DISABLE=1 (p. ej. el `claude -p` con que el hub resume): la sesión no se registra
+    // QUORUM_DISABLE=1 (e.g. the `claude -p` the hub resumes with): the session is not registered
     if (disabled(await optional(() => $.env.get('QUORUM_DISABLE'), undefined))) {
       quorum.link?.stop()
       quorum.link = undefined
@@ -74,18 +74,18 @@ export const register: Register = on => {
       sleep: ms => $.clock.sleep(ms),
     })
     quorum.control = control
-    // recap (nombre de la sesión) con Haiku, solo en sesiones de trabajo; sin $.model.complete no hay recap
+    // recap (session name) with Haiku, only in work sessions; without $.model.complete there is no recap
     quorum.recap = undefined
     link.onCommand(c => { void control.handle(c).catch(() => {}) })
     const [id, cwd, root, model, ccapi, sinfo, launchReq, herdrPane, herdrWorkspace] = await Promise.all([
-      // optional: una API que falte en esta versión de Claude Code no aborta el registro
+      // optional: an API missing in this Claude Code version does not abort registration
       optional(() => $.session.id(), ''),
       optional(() => $.session.cwd(), ''),
       optional(() => $.session.root(), ''),
       optional(() => $.session.model(), ''),
       optional(() => $.env.get('CCAPI_SERVER'), undefined),
       optional(() => $.session.info(), undefined),
-      // lanzamiento de Quorum (ata la sesión a la petición) y panel de herdr donde corre
+      // Quorum launch (ties the session to the request) and the herdr pane it runs in
       optional(() => $.env.get('QUORUM_LAUNCH_REQ'), ''),
       optional(() => $.env.get('HERDR_PANE_ID'), ''),
       optional(() => $.env.get('HERDR_WORKSPACE_ID'), ''),
@@ -98,26 +98,26 @@ export const register: Register = on => {
         sleep: ms => $.clock.sleep(ms),
         update: recap => link.update({ recap }),
         messages: async () => {
-          // optional: sin $.session.messages (builds viejos) se usa último prompt + respuesta
+          // optional: without $.session.messages (old builds) the last prompt + answer is used
           const rows = await optional(() => $.session.messages({ last: 30 }), undefined)
           return Array.isArray(rows) ? rows.map(m => ({ role: m.role, text: m.text })) : []
         },
         complete: async prompt => {
-          // optional: sin $.model.complete (builds viejos) no hay recap y tampoco error
+          // optional: without $.model.complete (old builds) there is no recap and no error either
           const res = await optional(() => $.model.complete({ model: 'haiku', prompt, maxTokens: 40, timeoutMs: 8000 }), undefined)
           return res?.isAnswered ? res.text : ''
         },
       })
     }
-    await $.command.register({ name: 'quorum', description: 'Estado de la conexión con quorumd' })
-    // no se espera: ensure+register pueden tardar y session.start bloquea el primer prompt
+    await $.command.register({ name: 'quorum', description: 'Connection status with quorumd' })
+    // not awaited: ensure+register can be slow and session.start blocks the first prompt
     void link.start({
       id, previousId: '', machine: '', name: '', cwd, root: root || cwd, model: String(model ?? ''),
       role: r.role, state: 'idle', contextPct: 0, startedAt: now, updatedAt: now,
       transcriptPath: String(sinfo?.transcriptPath ?? ''), recap: '', repoUrl: '', branch: '', projectId: '',
       launchReq: launchReq ?? '', herdrPane: herdrPane ?? '', herdrWorkspace: herdrWorkspace ?? '',
     }).catch(() => {})
-    // repo y rama van aparte (git puede tardar): se detectan sin bloquear y se mandan con update
+    // repo and branch go separately (git can be slow): detected without blocking and sent with update
     const repoDeps: RepoDeps = {
       repo: () => ($.session as unknown as { repo: RepoDeps['repo'] }).repo(),
       run: argv => $.process.run(argv, { timeoutMs: 3000 }) as never,
@@ -148,30 +148,30 @@ export const register: Register = on => {
     return yield* stepHook(h, e, next(e) as never)
   })
 
-  // Un solo hook tool.call: eventos por fuera (tool_start/tool_end ven el resultado
-  // final), control por dentro (AskUserQuestion contra el dispositivo, prompts 'now').
-  // Las llamadas de mods (el diálogo de permiso propio, $.tool.call) pasan sin reflejarse.
+  // A single tool.call hook: events outside (tool_start/tool_end see the final
+  // result), control inside (AskUserQuestion against the device, 'now' prompts).
+  // Mod calls (the own permission dialog, $.tool.call) pass through without being reflected.
   on('tool.call', async ($, e, next) => {
     if (fromPlugin((next as { origin?: { plugin?: string } }).origin, e as never)) return next(e)
     return toolHook(h, e as never, () => (quorum.control ? quorum.control.toolCall(e as never, () => next(e)) : next(e)))
   })
 
-  // Permisos sin modos: cuando el engine pediría permiso, control.permission corre la
-  // carrera entre un diálogo propio en la terminal ($.ui.ask: el nativo no se puede
-  // contestar desde fuera) y la tarjeta en los dispositivos; gana la primera respuesta.
-  // Hilo principal y subagentes. Esc en el diálogo deniega (como el nativo); sin
-  // terminal (-p) contesta solo el dispositivo. Mientras
-  // $.ui.ask está abierto el reloj del hook no corre; además un `quorumd hold` lanzado
-  // con el `$` de este hook sostiene la espera (un `$` en curso no gasta los 10 s
-  // propios). Ante fallo, el veredicto.
+  // Permissions without modes: when the engine would ask for permission, control.permission runs the
+  // race between an own dialog in the terminal ($.ui.ask: the native one cannot be
+  // answered from outside) and the card on the devices; the first answer wins.
+  // Main thread and subagents. Esc in the dialog denies (like the native one); without a
+  // terminal (-p) only the device answers. While
+  // $.ui.ask is open the hook's clock does not run; in addition a `quorumd hold` launched
+  // with this hook's `$` sustains the wait (an in-flight `$` does not spend the 10 s
+  // of its own). On failure, the verdict.
   on('tool.check', async ($, e, next) => {
     const verdict = await next(e)
     const c = quorum.control
     if (!c) return verdict
     const h = hold
     return c.permission(e, verdict, {
-      termAsk: q => $.ui.ask(q, { options: [TERM_ALLOW, TERM_DENY], header: 'Permiso' }),
-      // sin superficies (corrida -p) no hay quien conteste $.ui.ask: solo el dispositivo
+      termAsk: q => $.ui.ask(q, { options: [TERM_ALLOW, TERM_DENY], header: 'Permission' }),
+      // without surfaces (-p run) nobody can answer $.ui.ask: only the device
       hasTerminal: async () => {
         const s = await optional(() => $.session.surfaces(), undefined)
         return !Array.isArray(s) || s.length > 0
@@ -180,8 +180,8 @@ export const register: Register = on => {
       keepAlive: h ? until => h(until, argv => $.process.spawn({ argv })) : undefined,
       log: msg => { void Promise.resolve($.ui.log(msg)).catch(() => {}) },
     }) as typeof verdict | Promise<typeof verdict>
-    // en .catch, `next` es replay-safe (Caught en el d.ts): como el hook ya llamó a
-    // next(e), esto devuelve ese mismo veredicto original sin volver a correr nada.
+    // in .catch, `next` is replay-safe (Caught in the d.ts): since the hook already called
+    // next(e), this returns that same original verdict without running anything again.
   }).catch(($, e, next) => next(e))
 
   on('agent.spawn', async ($, e, next) => {
@@ -202,21 +202,21 @@ export const register: Register = on => {
 
   on('command.run', { command: 'quorum' }, async (_$, e) => {
     const l = quorum.link
-    if (!l) return { text: 'quorum: sin sesión iniciada' }
+    if (!l) return { text: 'quorum: no session started' }
     const t = ticketArg(String((e as { args?: string }).args ?? ''))
     if (t !== undefined) {
-      if (l.role === 'service') return { text: 'quorum: las sesiones de servicio no se asocian a tickets' }
+      if (l.role === 'service') return { text: 'quorum: service sessions are not linked to tickets' }
       l.emit({ kind: 'ticket', data: { ticket: t } })
-      return { text: t ? `quorum: asociando el ticket ${t}` : 'quorum: desasociando el ticket' }
+      return { text: t ? `quorum: linking ticket ${t}` : 'quorum: unlinking ticket' }
     }
-    const role = l.role === 'service' ? 'servicio' : 'trabajo'
-    if (l.state === 'no-daemon') return { text: `quorumd no está disponible: ${l.error}\nrol: ${role}` }
+    const role = l.role === 'service' ? 'service' : 'work'
+    if (l.state === 'no-daemon') return { text: `quorumd is unavailable: ${l.error}\nrole: ${role}` }
     const lines = [
-      `máquina: ${l.machine}`,
-      `conexión: ${STATE_TEXT[l.state]}`,
-      `rol: ${role}`,
+      `machine: ${l.machine}`,
+      `connection: ${STATE_TEXT[l.state]}`,
+      `role: ${role}`,
     ]
-    if (l.versionWarning) lines.push(`aviso: ${l.versionWarning}`)
+    if (l.versionWarning) lines.push(`warning: ${l.versionWarning}`)
     return { text: lines.join('\n') }
   })
 
@@ -225,7 +225,7 @@ export const register: Register = on => {
     const link = quorum.link
     if (!link) return r
     if (e.reason === 'clear' || e.reason === 'resume') {
-      // el proceso sigue con otro id y sin session.start: seguirlo
+      // the process continues with another id and no session.start: follow it
       $.clock.after(300, () => {
         void $.session.id().then(id => { if (id) link.adoptId(id) }, () => {})
       })

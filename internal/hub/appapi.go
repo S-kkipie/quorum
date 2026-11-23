@@ -16,16 +16,16 @@ import (
 	"github.com/S-kkipie/quorum/internal/proto"
 )
 
-// askTracker recuerda los askId abiertos (eventos ask) y los cierra al ver ask_resolved.
-// Gana el primer decide: cerrar es atómico bajo el candado.
+// askTracker remembers the open askIds (ask events) and closes them on seeing ask_resolved.
+// The first decide wins: closing is atomic under the lock.
 type askTracker struct {
 	mu       sync.Mutex
-	open     map[string]string // askId -> sesión
-	resolved map[string]bool   // resueltos recientes (acotado), para que reopen no los reviva
+	open     map[string]string // askId -> session
+	resolved map[string]bool   // recently resolved (bounded), so reopen does not revive them
 	order    []string
-	claimed  map[string]bool // reclamados por un decide en curso (reseed no los reabre)
-	// known: sesiones vivas cuyo estado de asks ya se sembró; un session_upsert de una
-	// de ellas sin previousId no vuelve a consultar el store.
+	claimed  map[string]bool // claimed by a decide in progress (reseed does not reopen them)
+	// known: live sessions whose asks state was already seeded; a session_upsert for one
+	// of them without previousId does not query the store again.
 	known map[string]bool
 }
 
@@ -35,7 +35,7 @@ func newAskTracker() *askTracker {
 	return &askTracker{open: map[string]string{}, resolved: map[string]bool{}, claimed: map[string]bool{}, known: map[string]bool{}}
 }
 
-func (t *askTracker) markResolved(id string) { // con t.mu tomado
+func (t *askTracker) markResolved(id string) { // with t.mu held
 	delete(t.open, id)
 	delete(t.claimed, id)
 	if t.resolved[id] {
@@ -49,24 +49,24 @@ func (t *askTracker) markResolved(id string) { // con t.mu tomado
 	}
 }
 
-// resolve da por resuelto askId (p. ej. si no se pudo guardar su ask_resolved).
+// resolve marks askId as resolved (e.g. if its ask_resolved could not be stored).
 //
-// Caso aceptado: resolved vive solo en memoria. Si el hub se reinicia después de un
-// decide cuyo ask_resolved no se pudo guardar, OpenAsks/reseed reabren ese ask desde
-// el store y la app vuelve a mostrar la tarjeta. Contestarla otra vez manda un decide
-// que el mod ignora (ese askId ya no espera), así que no hay efecto doble; la tarjeta
-// se va con el próximo ask_resolved o al cerrarse la sesión.
+// Accepted case: resolved lives only in memory. If the hub restarts after a
+// decide whose ask_resolved could not be stored, OpenAsks/reseed reopen that ask from
+// the store and the app shows the card again. Answering it again sends a decide
+// that the mod ignores (that askId is no longer waiting), so there is no double effect; the card
+// goes away with the next ask_resolved or when the session closes.
 func (t *askTracker) resolve(askID string) {
 	t.mu.Lock()
 	t.markResolved(askID)
 	t.mu.Unlock()
 }
 
-// prune descarta los asks cuya sesión ya no existe o está cerrada (una sola consulta).
+// prune drops the asks whose session no longer exists or is closed (a single query).
 func (t *askTracker) prune(st *store.Store) {
 	live, err := st.LiveSessionIDs()
 	if err != nil {
-		log.Printf("hub: podar asks: %v", err)
+		log.Printf("hub: prune asks: %v", err)
 		return
 	}
 	t.mu.Lock()
@@ -83,10 +83,10 @@ func (t *askTracker) prune(st *store.Store) {
 	}
 }
 
-// reseed rehace desde el store los asks abiertos de la sesión id (y descarta los de
-// prev, su id anterior: sus eventos ya se movieron a id). Así una sesión que vuelve
-// tras reiniciar el daemon o la máquina recupera sus tarjetas pendientes.
-func (t *askTracker) hasAsksOf(session string) bool { // con t.mu tomado
+// reseed rebuilds from the store the open asks of session id (and drops those of
+// prev, its previous id: its events were already moved to id). So a session that comes back
+// after the daemon or the machine restarts recovers its pending cards.
+func (t *askTracker) hasAsksOf(session string) bool { // with t.mu held
 	for _, s := range t.open {
 		if s == session {
 			return true
@@ -97,9 +97,9 @@ func (t *askTracker) hasAsksOf(session string) bool { // con t.mu tomado
 
 func (t *askTracker) reseed(st *store.Store, id, prev string) {
 	t.mu.Lock()
-	// Sesión viva ya sembrada y un prev que no aporta nada (renombre ya aplicado:
-	// prev no está vivo ni tiene asks a su nombre; p. ej. el previous_id guardado que
-	// repite cada hello): nada nuevo que leer.
+	// Live session already seeded and a prev that adds nothing (rename already applied:
+	// prev is neither alive nor has asks under its name; e.g. the stored previous_id that
+	// repeats on every hello): nothing new to read.
 	skip := t.known[id] && (prev == "" || !t.known[prev] && !t.hasAsksOf(prev))
 	t.mu.Unlock()
 	if skip {
@@ -107,7 +107,7 @@ func (t *askTracker) reseed(st *store.Store, id, prev string) {
 	}
 	open, err := st.SessionOpenAsks(id)
 	if err != nil {
-		log.Printf("hub: asks abiertos de %s: %v", id, err)
+		log.Printf("hub: open asks of %s: %v", id, err)
 		return
 	}
 	t.mu.Lock()
@@ -174,7 +174,7 @@ func (t *askTracker) observe(env proto.Envelope, st *store.Store) {
 	}
 }
 
-// claim cierra askId si está abierto en esa sesión; solo un llamador lo consigue.
+// claim closes askId if it is open in that session; only one caller gets it.
 func (t *askTracker) claim(askID, session string) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -200,7 +200,7 @@ func (s *Server) sendCommand(si proto.SessionInfo, cmd proto.Command) bool {
 	return s.hub.SendToMachine(si.Machine, proto.Envelope{Type: "command", Machine: si.Machine, Session: si.ID, Payload: p})
 }
 
-// sessionLive: la sesión id existe y no está cerrada.
+// sessionLive: session id exists and is not closed.
 func (s *Server) sessionLive(id string) bool {
 	si, err := s.st.Session(id)
 	return err == nil && si.State != proto.StateClosed
@@ -237,6 +237,11 @@ func (s *Server) routes() {
 	dev("POST /api/machines/{m}/terminals/{pane}/input", s.handleTermInput)
 	dev("GET /api/machines/{m}/terminals/{pane}/read", s.handleTermRead)
 	dev("DELETE /api/machines/{m}/terminals/{pane}", s.handleTermClose)
+	dev("POST /api/machines/{m}/views", s.handleCreateView)
+	// /v/ carries no device token: the link token is the auth. Server.Handler() routes every
+	// /v/ path to handleView before the mux (viewHandler), so this registration is never
+	// reached in practice; it only reserves the pattern ahead of "/".
+	s.mux.HandleFunc("GET /v/{token}/{rest...}", s.handleView)
 	s.mux.Handle("/", web.Handler())
 	dev("GET /api/live", s.handleLive)
 }
@@ -244,7 +249,7 @@ func (s *Server) routes() {
 func (s *Server) handleMachines(w http.ResponseWriter, r *http.Request) {
 	ms, err := s.st.ListMachines()
 	if err != nil {
-		apiErr(w, 500, "error interno")
+		apiErr(w, 500, "internal error")
 		return
 	}
 	if ms == nil {
@@ -256,7 +261,7 @@ func (s *Server) handleMachines(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 	list, err := s.st.ListSessions(r.URL.Query().Get("closed") == "1")
 	if err != nil {
-		apiErr(w, 500, "error interno")
+		apiErr(w, 500, "internal error")
 		return
 	}
 	if list == nil {
@@ -277,12 +282,12 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	evs, err := s.st.Events(r.PathValue("id"), before, limit)
 	if err != nil {
-		apiErr(w, 500, "error interno")
+		apiErr(w, 500, "internal error")
 		return
 	}
 	if len(evs) == 0 && before == 0 {
-		// Sin historial guardado: pide a la máquina que lo rearme desde el transcript.
-		// No se espera; el resultado llega por el feed en vivo.
+		// No stored history: ask the machine to rebuild it from the transcript.
+		// Not awaited; the result arrives through the live feed.
 		if si, err := s.st.Session(r.PathValue("id")); err == nil {
 			s.hub.requestBackfill(si.Machine, si.ID)
 		}
@@ -293,23 +298,23 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, evs)
 }
 
-// target resuelve la sesión de la ruta y comprueba que se le pueda mandar órdenes.
+// target resolves the route's session and checks that commands can be sent to it.
 func (s *Server) target(w http.ResponseWriter, r *http.Request) (proto.SessionInfo, bool) {
 	si, err := s.st.Session(r.PathValue("id"))
 	if errors.Is(err, store.ErrNotFound) {
-		apiErr(w, 404, "sesión no encontrada")
+		apiErr(w, 404, "session not found")
 		return si, false
 	}
 	if err != nil {
-		apiErr(w, 500, "error interno")
+		apiErr(w, 500, "internal error")
 		return si, false
 	}
 	if si.State == proto.StateClosed {
-		apiErr(w, 409, "la sesión está cerrada")
+		apiErr(w, 409, "the session is closed")
 		return si, false
 	}
 	if !s.hub.Connected(si.Machine) {
-		apiErr(w, 409, "la máquina está fuera de línea")
+		apiErr(w, 409, "machine is offline")
 		return si, false
 	}
 	return si, true
@@ -317,7 +322,7 @@ func (s *Server) target(w http.ResponseWriter, r *http.Request) (proto.SessionIn
 
 func (s *Server) dispatch(w http.ResponseWriter, si proto.SessionInfo, cmd proto.Command) bool {
 	if !s.sendCommand(si, cmd) {
-		apiErr(w, 409, "la máquina está fuera de línea")
+		apiErr(w, 409, "machine is offline")
 		return false
 	}
 	return true
@@ -329,7 +334,7 @@ func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if b.Text == "" {
-		apiErr(w, 400, "el mensaje está vacío")
+		apiErr(w, 400, "the message is empty")
 		return
 	}
 	switch b.Mode {
@@ -337,7 +342,7 @@ func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 		b.Mode = "queue"
 	case "now", "queue", "interrupt":
 	default:
-		apiErr(w, 400, "modo inválido")
+		apiErr(w, 400, "invalid mode")
 		return
 	}
 	si, ok := s.target(w, r)
@@ -368,11 +373,11 @@ func (s *Server) handleDecide(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if b.AskID == "" {
-		apiErr(w, 400, "falta askId")
+		apiErr(w, 400, "missing askId")
 		return
 	}
 	if b.Decision != "allow" && b.Decision != "deny" {
-		apiErr(w, 400, "decisión inválida")
+		apiErr(w, 400, "invalid decision")
 		return
 	}
 	si, ok := s.target(w, r)
@@ -380,22 +385,22 @@ func (s *Server) handleDecide(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.asks.claim(b.AskID, si.ID) {
-		apiErr(w, 409, "ya se respondió")
+		apiErr(w, 409, "already answered")
 		return
 	}
 	cmd := proto.Command{Type: "decide", AskID: b.AskID, Decision: b.Decision, Answers: b.Answers, Reason: b.Reason}
 	if !s.sendCommand(si, cmd) {
 		s.asks.reopen(b.AskID, si.ID)
-		apiErr(w, 409, "la máquina está fuera de línea")
+		apiErr(w, 409, "machine is offline")
 		return
 	}
 	data, _ := json.Marshal(proto.AskResolved{AskID: b.AskID, By: "device:" + AuthName(r.Context())})
 	ev := proto.Event{Session: si.ID, TS: time.Now().UnixMilli(), Kind: proto.KindAskResolved, Data: data}
 	seq, err := s.st.AppendEvent(ev)
 	if err != nil {
-		// Sin seq no se publica (las apps ordenan por seq); el ask queda resuelto
-		// aquí para que no siga reclamado ni un reseed lo reabra.
-		log.Printf("hub: guardar ask_resolved de %s: %v", si.ID, err)
+		// Without seq it is not published (apps order by seq); the ask is left resolved
+		// here so it is neither kept claimed nor reopened by a reseed.
+		log.Printf("hub: save ask_resolved of %s: %v", si.ID, err)
 		s.asks.resolve(b.AskID)
 		w.WriteHeader(http.StatusAccepted)
 		return
@@ -406,7 +411,7 @@ func (s *Server) handleDecide(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
-// handleLaunch pide a una máquina abrir una sesión nueva; el resultado llega por /api/live.
+// handleLaunch asks a machine to open a new session; the result arrives through /api/live.
 func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 	var b struct {
 		Machine        string `json:"machine"`
@@ -421,19 +426,19 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if b.Dir == "" {
-		apiErr(w, 400, "falta la carpeta")
+		apiErr(w, 400, "missing folder")
 		return
 	}
 	if b.Machine == "" || !s.hub.Connected(b.Machine) {
-		apiErr(w, 409, "la máquina está fuera de línea")
+		apiErr(w, 409, "machine is offline")
 		return
 	}
 	id := make([]byte, 8)
 	if _, err := rand.Read(id); err != nil {
-		apiErr(w, 500, "error interno")
+		apiErr(w, 500, "internal error")
 		return
 	}
-	// sin label explícito, el workspace nuevo lleva el nombre del proyecto
+	// without an explicit label, the new workspace takes the project's name
 	if b.Label == "" && b.ProjectID != "" {
 		if p, err := s.st.GetProject(b.ProjectID); err == nil {
 			b.Label = p.Name
@@ -442,12 +447,12 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 	req := proto.LaunchRequest{ReqID: hex.EncodeToString(id), Dir: b.Dir, Continue: b.Continue, PermissionMode: b.PermissionMode,
 		Resume: b.Resume, Label: b.Label, Trust: true}
 	p, _ := json.Marshal(req)
-	// el pendiente ata la sesión que se registre con este reqId (launch_session). Sin
-	// ticket addPending no deduplica y siempre lo registra: su resultado no importa.
+	// the pending entry binds the session that registers with this reqId (launch_session). Without
+	// a ticket addPending does not deduplicate and always registers it: its result does not matter.
 	s.hub.addPending(req.ReqID, pendingLaunch{machine: b.Machine, root: b.Dir})
 	if !s.hub.SendToMachine(b.Machine, proto.Envelope{Type: "launch", Machine: b.Machine, Payload: p}) {
 		s.hub.dropPending(req.ReqID)
-		apiErr(w, 409, "la máquina está fuera de línea")
+		apiErr(w, 409, "machine is offline")
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"reqId": req.ReqID})

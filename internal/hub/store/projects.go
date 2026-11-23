@@ -14,13 +14,13 @@ import (
 	"github.com/S-kkipie/quorum/internal/proto"
 )
 
-// ErrNotEmpty: el trabajo aún tiene proyectos.
-var ErrNotEmpty = errors.New("el trabajo tiene proyectos")
+// ErrNotEmpty: the workspace still has projects.
+var ErrNotEmpty = errors.New("the workspace has projects")
 
-// TicketStatuses es el conjunto canónico de estados normalizados de un ticket.
-var TicketStatuses = []string{"por_hacer", "en_curso", "en_review", "hecho", "bloqueado"}
+// TicketStatuses is the canonical set of a ticket's normalized statuses.
+var TicketStatuses = []string{"todo", "in_progress", "in_review", "done", "blocked"}
 
-// ValidStatus indica si s es un estado de ticket normalizado.
+// ValidStatus says whether s is a normalized ticket status.
 func ValidStatus(s string) bool {
 	for _, v := range TicketStatuses {
 		if v == s {
@@ -32,12 +32,12 @@ func ValidStatus(s string) bool {
 
 func validProposalKind(k string) bool { return k == "comment" || k == "status" }
 
-// ValidProposalStatus indica si s es un estado de propuesta.
+// ValidProposalStatus says whether s is a proposal status.
 func ValidProposalStatus(s string) bool { return validProposalStatus(s) }
 
 func validProposalStatus(s string) bool {
 	switch s {
-	case "pendiente", "enviando", "aprobada", "rechazada", "fallida":
+	case "pending", "sending", "approved", "rejected", "failed":
 		return true
 	}
 	return false
@@ -62,8 +62,8 @@ func newID() string {
 	return hex.EncodeToString(b)
 }
 
-// NormalizeRepoURL reduce una URL de repo a host/owner/repo en minúsculas
-// (sin esquema, usuario ni .git); git@host:o/r ≡ https://host/o/r.
+// NormalizeRepoURL reduces a repo URL to lowercase host/owner/repo
+// (without scheme, user or .git); git@host:o/r ≡ https://host/o/r.
 func NormalizeRepoURL(u string) string {
 	u = strings.TrimSpace(u)
 	if u == "" {
@@ -91,10 +91,10 @@ func NormalizeRepoURL(u string) string {
 	return strings.TrimRight(u, "/")
 }
 
-// StripRepoUserinfo deja una URL de repo sin credenciales: quita query y fragmento
-// (?access_token=...) y, en URLs con esquema, todo hasta la ÚLTIMA '@' (una contraseña
-// puede llevar '/'): https://u:p/x@host/o/r -> https://host/o/r. Las formas scp
-// (git@host:o/r) no llevan secreto y quedan igual.
+// StripRepoUserinfo leaves a repo URL without credentials: removes the query and fragment
+// (?access_token=...) and, in URLs with a scheme, everything up to the LAST '@' (a password
+// may contain '/'): https://u:p/x@host/o/r -> https://host/o/r. The scp forms
+// (git@host:o/r) carry no secret and stay as they are.
 func StripRepoUserinfo(u string) string {
 	u = strings.TrimSpace(u)
 	if i := strings.IndexAny(u, "?#"); i >= 0 {
@@ -251,7 +251,7 @@ func (s *Store) GetProject(id string) (proto.Project, error) {
 	return p, err
 }
 
-// UpdateProject actualiza nombre, trabajo, repo y conector (no token, resumen ni sync).
+// UpdateProject updates name, workspace, repo and connector (not token, summary or sync).
 func (s *Store) UpdateProject(p proto.Project) error {
 	if err := s.workspaceExists(p.WorkspaceID); err != nil {
 		return err
@@ -265,18 +265,18 @@ func (s *Store) UpdateProject(p proto.Project) error {
 	return affected(res, err)
 }
 
-// ConnectorResetMsg es el error con que quedan las propuestas abiertas al cambiar el conector.
-const ConnectorResetMsg = "el conector cambió"
+// ConnectorResetMsg is the error open proposals are left with when the connector changes.
+const ConnectorResetMsg = "the connector changed"
 
-// ConnectorReset es lo que borró ResetConnector (para avisar a las apps).
+// ConnectorReset is what ResetConnector deleted (to notify the apps).
 type ConnectorReset struct {
-	Links     []proto.SessionTicket // vínculos borrados (para publicarlos como Removed)
-	Proposals []string              // propuestas pendiente/enviando que pasaron a fallida
+	Links     []proto.SessionTicket // deleted links (to publish them as Removed)
+	Proposals []string              // pending/sending proposals that became failed
 }
 
-// UpdateProjectResetConnector actualiza el proyecto como UpdateProject y, en la misma
-// transacción, borra sus tickets, sus vínculos (y descartes), marca fallidas sus propuestas
-// abiertas y reinicia synced_at y sync_error: el conector apunta a otro origen.
+// UpdateProjectResetConnector updates the project like UpdateProject and, in the same
+// transaction, deletes its tickets, its links (and dismissals), marks its open
+// proposals as failed and resets synced_at and sync_error: the connector points to another source.
 func (s *Store) UpdateProjectResetConnector(p proto.Project) (out ConnectorReset, err error) {
 	if err = s.workspaceExists(p.WorkspaceID); err != nil {
 		return out, err
@@ -316,7 +316,7 @@ func (s *Store) UpdateProjectResetConnector(p proto.Project) (out ConnectorReset
 	if err = rows.Err(); err != nil {
 		return out, err
 	}
-	rows, err = tx.Query(`SELECT id FROM proposals WHERE status IN ('pendiente','enviando') AND ticket_id IN `+tk, p.ID)
+	rows, err = tx.Query(`SELECT id FROM proposals WHERE status IN ('pending','sending') AND ticket_id IN `+tk, p.ID)
 	if err != nil {
 		return out, err
 	}
@@ -332,7 +332,7 @@ func (s *Store) UpdateProjectResetConnector(p proto.Project) (out ConnectorReset
 	if err = rows.Err(); err != nil {
 		return out, err
 	}
-	if _, err = tx.Exec(`UPDATE proposals SET status='fallida',error=? WHERE status IN ('pendiente','enviando') AND ticket_id IN `+tk, ConnectorResetMsg, p.ID); err != nil {
+	if _, err = tx.Exec(`UPDATE proposals SET status='failed',error=? WHERE status IN ('pending','sending') AND ticket_id IN `+tk, ConnectorResetMsg, p.ID); err != nil {
 		return out, err
 	}
 	for _, q := range []string{
@@ -396,7 +396,7 @@ func (s *Store) SetConnectorToken(projectID, token string) error {
 	return err
 }
 
-// ConnectorToken devuelve el token del conector; solo para uso de los conectores.
+// ConnectorToken returns the connector's token; only for use by the connectors.
 func (s *Store) ConnectorToken(projectID string) (string, error) {
 	var t string
 	err := s.db.QueryRow(`SELECT token FROM project_tokens WHERE project_id=?`, projectID).Scan(&t)
@@ -418,7 +418,7 @@ func (s *Store) SetSyncResult(projectID, syncErr string, at int64) error {
 
 // ---- Checkouts ----
 
-// UpsertCheckout inserta o actualiza por (machine, root); conserva el ID existente.
+// UpsertCheckout inserts or updates by (machine, root); keeps the existing ID.
 func (s *Store) UpsertCheckout(c proto.Checkout) (proto.Checkout, error) {
 	c.RepoURL = StripRepoUserinfo(c.RepoURL)
 	if c.UpdatedAt == 0 {
@@ -437,7 +437,7 @@ func (s *Store) UpsertCheckout(c proto.Checkout) (proto.Checkout, error) {
 	return s.CheckoutForRoot(c.Machine, c.Root)
 }
 
-// SetCheckoutProject asigna el checkout a un proyecto; projectID vacío lo desvincula.
+// SetCheckoutProject assigns the checkout to a project; an empty projectID unlinks it.
 func (s *Store) SetCheckoutProject(checkoutID, projectID string) error {
 	var pid any
 	if projectID != "" {
@@ -481,8 +481,8 @@ func (s *Store) CheckoutForRoot(machine, root string) (proto.Checkout, error) {
 
 // ---- Tickets ----
 
-// ReplaceTickets hace upsert por (project_id, external_id) en una transacción.
-// No borra los que faltan; con Comments == nil conserva los comentarios guardados ([] los borra). Recalcula el progreso del proyecto.
+// ReplaceTickets upserts by (project_id, external_id) in one transaction.
+// Does not delete the missing ones; with Comments == nil keeps the stored comments ([] deletes them). Recomputes the project's progress.
 func (s *Store) ReplaceTickets(projectID string, ts []proto.Ticket) (err error) {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -502,11 +502,11 @@ func (s *Store) ReplaceTickets(projectID string, ts []proto.Ticket) (err error) 
 	}
 	for _, t := range ts {
 		if t.ExternalID == "" {
-			err = fmt.Errorf("ticket sin ExternalID (%q)", t.Title)
+			err = fmt.Errorf("ticket without ExternalID (%q)", t.Title)
 			return err
 		}
 		if !ValidStatus(t.Status) {
-			err = fmt.Errorf("estado de ticket inválido %q (ticket %s)", t.Status, t.ExternalID)
+			err = fmt.Errorf("invalid ticket status %q (ticket %s)", t.Status, t.ExternalID)
 			return err
 		}
 		cj := []byte("[]")
@@ -550,7 +550,7 @@ func (s *Store) ListTickets(projectID string) ([]proto.Ticket, error) {
 	return out, rows.Err()
 }
 
-// Ticket devuelve un ticket por id (ErrNotFound si no existe).
+// Ticket returns a ticket by id (ErrNotFound if it does not exist).
 func (s *Store) Ticket(id string) (proto.Ticket, error) {
 	var t proto.Ticket
 	var cj string
@@ -569,7 +569,7 @@ func (s *Store) Ticket(id string) (proto.Ticket, error) {
 	return t, nil
 }
 
-// ConfirmedSessions devuelve los ids de las sesiones con el ticket confirmado.
+// ConfirmedSessions returns the ids of the sessions with the ticket confirmed.
 func (s *Store) ConfirmedSessions(ticketID string) ([]string, error) {
 	rows, err := s.db.Query(`SELECT session_id FROM session_tickets WHERE ticket_id=? AND confirmed=1 ORDER BY session_id`, ticketID)
 	if err != nil {
@@ -617,8 +617,8 @@ func (s *Store) SessionTickets(sessionID string) ([]proto.SessionTicket, error) 
 	return out, rows.Err()
 }
 
-// SuggestSessionTicket crea un vínculo sugerido (no confirmado) salvo que ya exista
-// (nunca degrada uno confirmado) o el dueño lo haya desasociado. Devuelve si lo creó.
+// SuggestSessionTicket creates a suggested (unconfirmed) link unless one already exists
+// (never downgrades a confirmed one) or the owner unlinked it. Returns whether it created it.
 func (s *Store) SuggestSessionTicket(sessionID, ticketID string) (bool, error) {
 	var n int
 	if err := s.db.QueryRow(`SELECT count(*) FROM session_ticket_dismissed WHERE session_id=? AND ticket_id=?`, sessionID, ticketID).Scan(&n); err != nil {
@@ -635,9 +635,9 @@ func (s *Store) SuggestSessionTicket(sessionID, ticketID string) (bool, error) {
 	return c > 0, nil
 }
 
-// ConfirmSessionTicket confirma el vínculo; solo hay uno confirmado por sesión: el
-// confirmado anterior pasa a sugerido. Devuelve los ids de ticket que cambiaron de estado
-// (el confirmado anterior, si lo había).
+// ConfirmSessionTicket confirms the link; there is only one confirmed per session: the
+// previous confirmed one becomes suggested. Returns the ticket ids whose state changed
+// (the previous confirmed one, if there was one).
 func (s *Store) ConfirmSessionTicket(sessionID, ticketID string) (demoted []string, err error) {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -674,7 +674,7 @@ func (s *Store) ConfirmSessionTicket(sessionID, ticketID string) (demoted []stri
 	return demoted, tx.Commit()
 }
 
-// DismissSessionTicket desasocia el vínculo y recuerda que no debe volver a sugerirse.
+// DismissSessionTicket unlinks and remembers that it must not be suggested again.
 func (s *Store) DismissSessionTicket(sessionID, ticketID string) error {
 	if _, err := s.db.Exec(`INSERT OR IGNORE INTO session_ticket_dismissed(session_id,ticket_id) VALUES(?,?)`, sessionID, ticketID); err != nil {
 		return err
@@ -686,10 +686,10 @@ func (s *Store) DismissSessionTicket(sessionID, ticketID string) error {
 
 func (s *Store) CreateProposal(p proto.Proposal) (proto.Proposal, error) {
 	if !validProposalKind(p.Kind) {
-		return p, fmt.Errorf("tipo de propuesta inválido %q", p.Kind)
+		return p, fmt.Errorf("invalid proposal kind %q", p.Kind)
 	}
 	p.ID = newID()
-	p.Status = "pendiente"
+	p.Status = "pending"
 	p.Error = ""
 	p.CreatedAt = s.now().UnixMilli()
 	_, err := s.db.Exec(`INSERT INTO proposals(id,ticket_id,kind,body,status,error,created_at) VALUES(?,?,?,?,?,?,?)`,
@@ -697,19 +697,19 @@ func (s *Store) CreateProposal(p proto.Proposal) (proto.Proposal, error) {
 	return p, err
 }
 
-// ListProposals devuelve las propuestas de un ticket (todas si ticketID es vacío), recientes primero.
+// ListProposals returns a ticket's proposals (all if ticketID is empty), newest first.
 func (s *Store) ListProposals(ticketID string) ([]proto.Proposal, error) {
 	return s.QueryProposals(ProposalFilter{TicketID: ticketID})
 }
 
-// ProposalFilter acota QueryProposals; los campos vacíos (o Limit <= 0) no filtran.
+// ProposalFilter narrows QueryProposals; empty fields (or Limit <= 0) do not filter.
 type ProposalFilter struct {
 	TicketID string
 	Status   string
 	Limit    int
 }
 
-// QueryProposals devuelve las propuestas que cumplen f, recientes primero.
+// QueryProposals returns the proposals matching f, newest first.
 func (s *Store) QueryProposals(f ProposalFilter) ([]proto.Proposal, error) {
 	q := `SELECT id,ticket_id,kind,body,status,error,created_at FROM proposals`
 	var where []string
@@ -746,7 +746,7 @@ func (s *Store) QueryProposals(f ProposalFilter) ([]proto.Proposal, error) {
 	return out, rows.Err()
 }
 
-// GetProposal devuelve una propuesta por id.
+// GetProposal returns a proposal by id.
 func (s *Store) GetProposal(id string) (proto.Proposal, error) {
 	var p proto.Proposal
 	err := s.db.QueryRow(`SELECT id,ticket_id,kind,body,status,error,created_at FROM proposals WHERE id=?`, id).
@@ -757,43 +757,43 @@ func (s *Store) GetProposal(id string) (proto.Proposal, error) {
 	return p, err
 }
 
-// UpdateProposalBody reemplaza el cuerpo de una propuesta pendiente y reinicia su fecha.
+// UpdateProposalBody replaces a pending proposal's body and resets its date.
 func (s *Store) UpdateProposalBody(id, body string) error {
-	res, err := s.db.Exec(`UPDATE proposals SET body=?,created_at=? WHERE id=? AND status='pendiente'`, body, s.now().UnixMilli(), id)
+	res, err := s.db.Exec(`UPDATE proposals SET body=?,created_at=? WHERE id=? AND status='pending'`, body, s.now().UnixMilli(), id)
 	return affected(res, err)
 }
 
-// TransitionProposal pasa la propuesta de from a to de forma atómica; ErrNotFound si no estaba en from.
+// TransitionProposal moves the proposal from from to to atomically; ErrNotFound if it was not in from.
 func (s *Store) TransitionProposal(id, from, to string) error {
 	if !validProposalStatus(from) || !validProposalStatus(to) {
-		return fmt.Errorf("estado de propuesta inválido")
+		return fmt.Errorf("invalid proposal status")
 	}
 	res, err := s.db.Exec(`UPDATE proposals SET status=? WHERE id=? AND status=?`, to, id, from)
 	return affected(res, err)
 }
 
-// ClaimProposalSend pasa pendiente -> enviando de forma atómica y, si body no es vacío,
-// guarda en la misma sentencia el cuerpo editado. ErrNotFound si ya no estaba pendiente.
+// ClaimProposalSend moves pending -> sending atomically and, if body is not empty,
+// stores the edited body in the same statement. ErrNotFound if it was no longer pending.
 func (s *Store) ClaimProposalSend(id, body string) error {
-	res, err := s.db.Exec(`UPDATE proposals SET status='enviando',body=CASE WHEN ?='' THEN body ELSE ? END WHERE id=? AND status='pendiente'`, body, body, id)
+	res, err := s.db.Exec(`UPDATE proposals SET status='sending',body=CASE WHEN ?='' THEN body ELSE ? END WHERE id=? AND status='pending'`, body, body, id)
 	return affected(res, err)
 }
 
-// FailInterruptedProposals marca como fallidas las propuestas que quedaron en "enviando" (reinicio del hub).
+// FailInterruptedProposals marks as failed the proposals left in "sending" (hub restart).
 func (s *Store) FailInterruptedProposals() error {
-	_, err := s.db.Exec(`UPDATE proposals SET status='fallida',error='interrumpida; verifica en la ticketera' WHERE status='enviando'`)
+	_, err := s.db.Exec(`UPDATE proposals SET status='failed',error='interrupted; check the ticket source' WHERE status='sending'`)
 	return err
 }
 
 func (s *Store) SetProposalStatus(id, status, errMsg string) error {
 	if !validProposalStatus(status) {
-		return fmt.Errorf("estado de propuesta inválido %q", status)
+		return fmt.Errorf("invalid proposal status %q", status)
 	}
 	res, err := s.db.Exec(`UPDATE proposals SET status=?,error=? WHERE id=?`, status, errMsg, id)
 	return affected(res, err)
 }
 
-// AllCheckouts devuelve todos los checkouts (con o sin proyecto).
+// AllCheckouts returns all checkouts (with or without a project).
 func (s *Store) AllCheckouts() ([]proto.Checkout, error) {
 	rows, err := s.db.Query(`SELECT ` + checkoutCols + ` FROM checkouts ORDER BY machine, root`)
 	if err != nil {
@@ -811,35 +811,35 @@ func (s *Store) AllCheckouts() ([]proto.Checkout, error) {
 	return out, rows.Err()
 }
 
-// ProgressWindow es la ventana de tickets que cuenta para el avance.
+// ProgressWindow is the window of tickets that counts toward progress.
 const ProgressWindow = 30 * 24 * time.Hour
 
 type execer2 interface {
 	Exec(query string, args ...any) (sql.Result, error)
 }
 
-// recomputeProgress fija Progress = hecho / total entre los tickets actualizados en los
-// últimos 30 días (sin fecha real, < MinActivityMs, cuenta como reciente); si ninguno entra, entre todos.
+// recomputeProgress sets Progress = done / total among the tickets updated in the
+// last 30 days (without a real date, < MinActivityMs, counts as recent); if none qualifies, among all.
 func recomputeProgress(x execer2, projectID string, nowMs int64) error {
 	cut := nowMs - ProgressWindow.Milliseconds()
-	// Ventana: actualizados en 30 días o sin fecha (se tratan como recientes); si queda vacía, todos.
+	// Window: updated within 30 days or without a date (treated as recent); if empty, all.
 	const win = `(SELECT count(*) FROM tickets WHERE project_id=projects.id AND (updated_at<100000000000 OR updated_at>=?))`
 	_, err := x.Exec(`UPDATE projects SET
 		progress_total=CASE WHEN `+win+`=0 THEN (SELECT count(*) FROM tickets WHERE project_id=projects.id)
 			ELSE `+win+` END,
-		progress_done=CASE WHEN `+win+`=0 THEN (SELECT count(*) FROM tickets WHERE project_id=projects.id AND status='hecho')
-			ELSE (SELECT count(*) FROM tickets WHERE project_id=projects.id AND status='hecho' AND (updated_at<100000000000 OR updated_at>=?)) END
+		progress_done=CASE WHEN `+win+`=0 THEN (SELECT count(*) FROM tickets WHERE project_id=projects.id AND status='done')
+			ELSE (SELECT count(*) FROM tickets WHERE project_id=projects.id AND status='done' AND (updated_at<100000000000 OR updated_at>=?)) END
 		WHERE id=?`, cut, cut, cut, cut, projectID)
 	return err
 }
 
-// RecomputeProgress recalcula el avance del proyecto con nowMs como "ahora".
+// RecomputeProgress recomputes the project's progress with nowMs as "now".
 func (s *Store) RecomputeProgress(projectID string, nowMs int64) error {
 	return recomputeProgress(s.db, projectID, nowMs)
 }
 
-// ProjectTurnEnds devuelve los últimos n turn_end de las sesiones del proyecto
-// (por checkout de su máquina y raíz), el más reciente primero.
+// ProjectTurnEnds returns the last n turn_end events of the project's sessions
+// (by their machine's checkout and root), most recent first.
 func (s *Store) ProjectTurnEnds(projectID string, n int) ([]proto.Event, error) {
 	rows, err := s.db.Query(`SELECT e.session,e.seq,e.ts,e.kind,e.data FROM events e
 		JOIN sessions s ON s.id=e.session
@@ -862,13 +862,13 @@ func (s *Store) ProjectTurnEnds(projectID string, n int) ([]proto.Event, error) 
 	return out, rows.Err()
 }
 
-// MinActivityMs: por debajo de esto (antes de 1973) un timestamp no es una fecha real en
-// ms (p. ej. un conector que manda 1, 2… o segundos) y la actividad se toma como desconocida.
+// MinActivityMs: below this (before 1973) a timestamp is not a real date in
+// ms (e.g. a connector sending 1, 2… or seconds) and the activity is taken as unknown.
 const MinActivityMs = 100_000_000_000
 
-// ProjectActivity devuelve la última actividad conocida del proyecto en ms: el máximo
-// entre el updated_at de sus tickets, el último turn_end y el updated_at de sus sesiones
-// vivas. Los valores que no parecen ms reales se ignoran; 0 = desconocida.
+// ProjectActivity returns the project's last known activity in ms: the maximum
+// of its tickets' updated_at, the last turn_end and the updated_at of its live
+// sessions. Values that do not look like real ms are ignored; 0 = unknown.
 func (s *Store) ProjectActivity(projectID string) (int64, error) {
 	var best int64
 	qs := []string{
@@ -891,8 +891,8 @@ func (s *Store) ProjectActivity(projectID string) (int64, error) {
 	return best, nil
 }
 
-// TicketLinks devuelve las sesiones asociadas (sugeridas o confirmadas) a cada ticket
-// del proyecto, por id de ticket.
+// TicketLinks returns the sessions associated (suggested or confirmed) with each ticket
+// of the project, by ticket id.
 func (s *Store) TicketLinks(projectID string) (map[string][]proto.SessionTicket, error) {
 	rows, err := s.db.Query(`SELECT st.session_id,st.ticket_id,st.confirmed FROM session_tickets st
 		JOIN tickets t ON t.id=st.ticket_id WHERE t.project_id=? ORDER BY st.ticket_id, st.session_id`, projectID)
@@ -911,7 +911,7 @@ func (s *Store) TicketLinks(projectID string) (map[string][]proto.SessionTicket,
 	return out, rows.Err()
 }
 
-// TicketSessions devuelve las sesiones asociadas a un ticket.
+// TicketSessions returns the sessions associated with a ticket.
 func (s *Store) TicketSessions(ticketID string) ([]proto.SessionTicket, error) {
 	rows, err := s.db.Query(`SELECT session_id,ticket_id,confirmed FROM session_tickets WHERE ticket_id=? ORDER BY session_id`, ticketID)
 	if err != nil {

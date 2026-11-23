@@ -17,7 +17,7 @@ function get(k: string): string {
   try { return localStorage.getItem(k) ?? '' } catch { return '' }
 }
 
-/** Normaliza la dirección: agrega http:// si falta y quita la barra final. */
+/** Normalizes the address: adds http:// if missing and strips the trailing slash. */
 export function normalizeHub(url: string): string {
   let u = url.trim()
   if (!u) return ''
@@ -25,17 +25,17 @@ export function normalizeHub(url: string): string {
   return u.replace(/\/+$/, '')
 }
 
-/** Dirección del hub; vacía = mismo origen (cuando lo sirve el propio hub). */
+/** Hub address; empty = same origin (when the hub itself serves the app). */
 export function hubUrl(): string {
   return get(K_HUB)
 }
 export function getToken(): string {
   return get(K_TOKEN)
 }
-/** Guarda hub y token juntos: si falla una escritura no queda un hub sin su token. */
+/** Saves hub and token together: if a write fails, no hub is left without its token. */
 export function setHub(url: string, token: string) {
   let prevHub: string | null = null
-  try { prevHub = localStorage.getItem(K_HUB) } catch { /* sin lectura: nada que restaurar */ }
+  try { prevHub = localStorage.getItem(K_HUB) } catch { /* cannot read: nothing to restore */ }
   try {
     localStorage.setItem(K_TOKEN, token)
     localStorage.setItem(K_HUB, normalizeHub(url))
@@ -44,17 +44,17 @@ export function setHub(url: string, token: string) {
       localStorage.removeItem(K_TOKEN)
       if (prevHub === null) localStorage.removeItem(K_HUB)
       else localStorage.setItem(K_HUB, prevHub)
-    } catch { /* lo que se pueda */ }
-    throw new Error('no se pudo guardar el token en este dispositivo')
+    } catch { /* best effort */ }
+    throw new Error('could not save the token on this device')
   }
 }
 export function clearToken() {
-  try { localStorage.removeItem(K_TOKEN) } catch { /* ignorar */ }
+  try { localStorage.removeItem(K_TOKEN) } catch { /* ignore */ }
 }
 
 export const UNAUTH_EVENT = 'quorum:unauth'
 
-/** Error de la API: mensaje del hub en español, código HTTP y el cuerpo JSON (p. ej. {session} en un 409). */
+/** API error: hub message, HTTP status and the JSON body (e.g. {session} on a 409). */
 export class ApiError extends Error {
   constructor(message: string, public status: number, public data: any) { super(message) }
 }
@@ -71,19 +71,19 @@ export async function apiFetch<T = any>(path: string, init: RequestInit = {}): P
     try {
       data = await res.json()
       if (data?.error) msg = data.error
-    } catch { /* cuerpo no JSON */ }
+    } catch { /* non-JSON body */ }
     if (res.status === 401) {
       clearToken()
       if (typeof window !== 'undefined') window.dispatchEvent(new Event(UNAUTH_EVENT))
     }
     throw new ApiError(msg, res.status, data)
   }
-  // 202/204 del hub (prompt, decide, close…) llegan sin cuerpo
+  // 202/204 from the hub (prompt, decide, close…) arrive without a body
   const body = await res.text()
   return (body ? JSON.parse(body) : undefined) as T
 }
 
-/** POST /api/pair con la dirección dada (aún sin guardar). */
+/** POST /api/pair with the given address (not saved yet). */
 export async function pair(hub: string, code: string, deviceName: string): Promise<{ token: string; name: string }> {
   const base = normalizeHub(hub)
   const res = await fetch(base + '/api/pair', {
@@ -100,10 +100,10 @@ export async function pair(hub: string, code: string, deviceName: string): Promi
 export const listSessions = () => apiFetch<SessionInfo[]>('/api/sessions?closed=1')
 export const listMachines = () => apiFetch<Machine[]>('/api/machines')
 
-/** Nombre corto del dispositivo, p. ej. "Chrome · Android". */
+/** Short device name, e.g. "Chrome · Android". */
 export function defaultDeviceName(ua: string = typeof navigator !== 'undefined' ? navigator.userAgent : ''): string {
-  const browser = /Edg\//.test(ua) ? 'Edge' : /Firefox\//.test(ua) ? 'Firefox' : /Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : 'Navegador'
-  const os = /Android/.test(ua) ? 'Android' : /iPhone|iPad/.test(ua) ? 'iOS' : /Windows/.test(ua) ? 'Windows' : /Mac OS X/.test(ua) ? 'macOS' : /Linux/.test(ua) ? 'Linux' : 'Desconocido'
+  const browser = /Edg\//.test(ua) ? 'Edge' : /Firefox\//.test(ua) ? 'Firefox' : /Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : 'Browser'
+  const os = /Android/.test(ua) ? 'Android' : /iPhone|iPad/.test(ua) ? 'iOS' : /Windows/.test(ua) ? 'Windows' : /Mac OS X/.test(ua) ? 'macOS' : /Linux/.test(ua) ? 'Linux' : 'Unknown'
   return `${browser} · ${os}`
 }
 
@@ -119,7 +119,7 @@ export const closeSession = (id: string) => apiFetch(`/api/sessions/${encodeURIC
 export const launch = (b: { machine: string; dir: string; permissionMode?: string; resume?: string; label?: string; projectId?: string }) =>
   apiFetch<{ reqId: string }>('/api/launch', { method: 'POST', body: JSON.stringify(b) })
 
-// --- Conversaciones y terminal ---
+// --- Conversations and terminal ---
 
 const term = (machine: string, pane?: string) =>
   `/api/machines/${encodeURIComponent(machine)}/terminals` + (pane === undefined ? '' : '/' + encodeURIComponent(pane))
@@ -134,9 +134,9 @@ export const readTerminal = (machine: string, pane: string, lines: number) =>
   apiFetch<{ ansi: string }>(term(machine, pane) + `/read?lines=${lines}`)
 export const closeTerminal = (machine: string, pane: string) => apiFetch(term(machine, pane), { method: 'DELETE' })
 
-// --- Proyectos, tickets y propuestas ---
+// --- Projects, tickets and proposals ---
 
-/** Ticket con sus sesiones asociadas (confirmadas o sugeridas) y, en el detalle, sus propuestas. */
+/** Ticket with its associated sessions (confirmed or suggested) and, in the detail, its proposals. */
 export type TicketView = Ticket & { sessions: { sessionId: string; confirmed: boolean }[]; proposals?: Proposal[] }
 export interface ProjectSuggestion { repoURL: string; roots: { machine: string; root: string }[]; sessions: number }
 export type ConnectorInput = Pick<ConnectorConfig, 'kind' | 'settings' | 'intervalMin'>
@@ -152,7 +152,7 @@ export const listProjects = () => apiFetch<Project[]>('/api/projects')
 export const createProject = (b: { workspaceId: string; name: string; repoURL: string; connector?: ConnectorInput }) => apiFetch<Project>('/api/projects', json('POST', b))
 export const updateProject = (id: string, b: { name?: string; workspaceId?: string; repoURL?: string; connector?: ConnectorInput }) => apiFetch<Project>(`/api/projects/${enc(id)}`, json('PATCH', b))
 export const deleteProject = (id: string) => apiFetch(`/api/projects/${enc(id)}`, json('DELETE'))
-/** El token es solo de escritura: "" lo borra. */
+/** The token is write-only: "" deletes it. */
 export const setProjectToken = (id: string, token: string) => apiFetch(`/api/projects/${enc(id)}/token`, json('PUT', { token }))
 export const listSuggestions = () => apiFetch<ProjectSuggestion[]>('/api/projects/suggestions')
 export const syncProject = (id: string) => apiFetch(`/api/projects/${enc(id)}/sync`, json('POST'))
@@ -163,7 +163,7 @@ export const launchTicket = (id: string, b: { machine: string; checkoutRoot: str
   apiFetch<{ reqId: string }>(`/api/tickets/${enc(id)}/launch`, json('POST', b))
 export const proposeStatus = (ticketId: string, status: string) => apiFetch<Proposal>(`/api/tickets/${enc(ticketId)}/proposals`, json('POST', { kind: 'status', status }))
 export type ProposalQuery = { ticket?: string; status?: string; limit?: number }
-/** Propuestas, recientes primero (el hub devuelve 200 como máximo si no se pide limit). */
+/** Proposals, most recent first (the hub returns at most 200 if no limit is given). */
 export const listProposals = (q: ProposalQuery = {}) => {
   const p = new URLSearchParams()
   if (q.ticket) p.set('ticket', q.ticket)
@@ -172,9 +172,9 @@ export const listProposals = (q: ProposalQuery = {}) => {
   const qs = p.toString()
   return apiFetch<Proposal[]>('/api/proposals' + (qs ? '?' + qs : ''))
 }
-/** Lo que carga la app al arrancar: todas las pendientes y las 50 más recientes (sin repetir). */
+/** What the app loads on startup: all pending ones and the 50 most recent (without repeats). */
 export const loadProposals = async () => {
-  const [pending, recent] = await Promise.all([listProposals({ status: 'pendiente', limit: 1000 }), listProposals({ limit: 50 })])
+  const [pending, recent] = await Promise.all([listProposals({ status: 'pending', limit: 1000 }), listProposals({ limit: 50 })])
   const seen = new Set<string>()
   return [...(pending ?? []), ...(recent ?? [])].filter((p) => !seen.has(p.id) && (seen.add(p.id), true))
 }
@@ -182,3 +182,7 @@ export const approveProposal = (id: string, body?: string) => apiFetch<Proposal>
 export const rejectProposal = (id: string) => apiFetch<Proposal>(`/api/proposals/${enc(id)}/reject`, json('POST'))
 export const confirmTicketLink = (sessionId: string, ticketId: string) => apiFetch(`/api/sessions/${enc(sessionId)}/ticket`, json('POST', { ticketId }))
 export const unlinkTicket = (sessionId: string, ticketId: string) => apiFetch(`/api/sessions/${enc(sessionId)}/ticket?ticketId=${enc(ticketId)}`, json('DELETE'))
+
+/** Asks the hub for a short-lived link to a file of the session; `url` is relative to the hub. */
+export const createView = (machine: string, sessionId: string, path: string) =>
+  apiFetch<{ url: string }>(`/api/machines/${enc(machine)}/views`, json('POST', { sessionId, path }))

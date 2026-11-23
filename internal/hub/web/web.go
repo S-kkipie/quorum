@@ -1,5 +1,5 @@
-// Package web sirve la app embebida: dist/ si se compiló (make app) o, si no,
-// una página marcador.
+// Package web serves the embedded app: dist/ if it was built (make app) or, if not,
+// a placeholder page.
 package web
 
 import (
@@ -16,7 +16,7 @@ var distFS embed.FS
 //go:embed all:placeholder
 var placeholderFS embed.FS
 
-// Handler sirve la app con fallback a index.html para rutas desconocidas.
+// Handler serves the app, falling back to index.html for unknown routes.
 func Handler() http.Handler {
 	return handler(distFS, "dist", placeholderFS, "placeholder")
 }
@@ -34,7 +34,7 @@ func handler(dist fs.FS, distDir string, ph fs.FS, phDir string) http.Handler {
 	files := http.FileServerFS(root)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			http.Error(w, "método no permitido", http.StatusMethodNotAllowed)
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 		p := strings.TrimPrefix(path.Clean("/"+r.URL.Path), "/")
@@ -51,7 +51,7 @@ func handler(dist fs.FS, distDir string, ph fs.FS, phDir string) http.Handler {
 				return
 			}
 		}
-		// Rutas con extensión son archivos: si faltan, 404. El resto es SPA.
+		// Routes with an extension are files: 404 if missing. The rest is the SPA.
 		if path.Ext(p) != "" {
 			http.NotFound(w, r)
 			return

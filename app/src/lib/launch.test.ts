@@ -21,8 +21,8 @@ describe('pendingReducer', () => {
     expect(r.open).toBeUndefined()
   })
   it('records error on failed launch_result', () => {
-    const r = pendingReducer(p, env('launch_result', { reqId: 'r1', ok: false, error: 'no hay carpeta' }), 2000)
-    expect(r.pending?.error).toBe('no hay carpeta')
+    const r = pendingReducer(p, env('launch_result', { reqId: 'r1', ok: false, error: 'no folder' }), 2000)
+    expect(r.pending?.error).toBe('no folder')
   })
   it('null pending stays null', () => {
     expect(pendingReducer(null, env('launch_session', { reqId: 'r1', sessionId: 's' }), 1).pending).toBeNull()
@@ -56,10 +56,10 @@ describe('EarlyLaunches', () => {
   const np = (reqId: string): Pending => ({ reqId, machine: 'vps-1', label: 'x', startedAt: 5000 })
   it('replays a fast failure that arrived before the POST replied', () => {
     const e = new EarlyLaunches()
-    e.remember(env('launch_result', { reqId: 'r1', ok: false, error: 'no hay carpeta' }), 1000)
+    e.remember(env('launch_result', { reqId: 'r1', ok: false, error: 'no folder' }), 1000)
     const r = e.replay(np('r1'), 2000)
-    expect(r.pending?.error).toBe('no hay carpeta')
-    // se olvida tras usarlo
+    expect(r.pending?.error).toBe('no folder')
+    // forgotten after use
     expect(e.replay(np('r1'), 2000).pending?.error).toBeUndefined()
   })
   it('replays pane then session in order', () => {

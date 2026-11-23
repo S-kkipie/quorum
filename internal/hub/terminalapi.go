@@ -9,11 +9,11 @@ import (
 	"github.com/S-kkipie/quorum/internal/proto"
 )
 
-// allowedKeys: teclas que la app puede mandar (nombres de herdr).
+// allowedKeys: keys the app may send (herdr names).
 var allowedKeys = map[string]bool{"esc": true, "tab": true, "enter": true, "ctrl+c": true, "ctrl+d": true,
 	"ctrl+l": true, "up": true, "down": true, "left": true, "right": true}
 
-// rpcFail traduce un error de call a la respuesta HTTP.
+// rpcFail translates a call error into the HTTP response.
 func rpcFail(w http.ResponseWriter, err error) {
 	var de daemonError
 	switch {
@@ -24,7 +24,7 @@ func rpcFail(w http.ResponseWriter, err error) {
 	case errors.Is(err, errTimeout):
 		apiErr(w, 504, errTimeout.Error())
 	default:
-		apiErr(w, 502, "error al hablar con la máquina")
+		apiErr(w, 502, "error talking to the machine")
 	}
 }
 
@@ -61,7 +61,7 @@ func (s *Server) handleTermOpen(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.st.AuditTerminal(AuthName(r.Context()), m, out.Pane, "open"); err != nil {
-		log.Printf("hub: no se pudo auditar la terminal de %s: %v", m, err)
+		log.Printf("hub: could not audit the terminal of %s: %v", m, err)
 	}
 	writeJSON(w, 200, out)
 }
@@ -84,7 +84,7 @@ func (s *Server) handleTermInput(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, k := range req.Keys {
 		if !allowedKeys[k] {
-			apiErr(w, 400, "tecla no permitida: "+k)
+			apiErr(w, 400, "key not allowed: "+k)
 			return
 		}
 	}
@@ -122,7 +122,7 @@ func (s *Server) handleTermClose(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.st.AuditTerminal(AuthName(r.Context()), m, pane, "close"); err != nil {
-		log.Printf("hub: no se pudo auditar la terminal de %s: %v", m, err)
+		log.Printf("hub: could not audit the terminal of %s: %v", m, err)
 	}
 	w.WriteHeader(204)
 }

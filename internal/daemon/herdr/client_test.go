@@ -40,8 +40,8 @@ func TestCallServerError(t *testing.T) {
 	}
 }
 
-// herdr 0.9.5 responde pane_not_found (y workspace_not_found, tab_not_found...);
-// versiones viejas, not_found.
+// herdr 0.9.5 answers pane_not_found (and workspace_not_found, tab_not_found...);
+// older versions, not_found.
 func TestIsNotFound(t *testing.T) {
 	for code, want := range map[string]bool{
 		"not_found": true, "pane_not_found": true, "workspace_not_found": true, "tab_not_found": true,
@@ -52,10 +52,10 @@ func TestIsNotFound(t *testing.T) {
 		}
 	}
 	if IsNotFound(errors.New("not_found")) || IsNotFound(nil) {
-		t.Error("solo errores de herdr")
+		t.Error("herdr errors only")
 	}
 	if !IsNotFound(fmt.Errorf("envuelto: %w", &Error{Code: "pane_not_found"})) {
-		t.Error("debe ver errores envueltos")
+		t.Error("should see wrapped errors")
 	}
 }
 
@@ -87,7 +87,7 @@ func TestCreateTabSendsEnvAndCwd(t *testing.T) {
 func TestAvailableFalseWithoutSocket(t *testing.T) {
 	c := &Client{Socket: t.TempDir() + "/no.sock"}
 	if c.Available(context.Background()) {
-		t.Fatal("no debería estar disponible")
+		t.Fatal("should not be available")
 	}
 }
 
@@ -102,7 +102,7 @@ func TestWorkspaceAndPaneHelpers(t *testing.T) {
 		}}}, ""
 	})
 	f.Handle("pane.read", func(json.RawMessage) (any, string) {
-		return map[string]any{"read": map[string]any{"pane_id": "w2:p1", "text": "hola"}}, ""
+		return map[string]any{"read": map[string]any{"pane_id": "w2:p1", "text": "hello"}}, ""
 	})
 	f.Handle("pane.list", func(json.RawMessage) (any, string) {
 		return map[string]any{"panes": []map[string]any{
@@ -125,10 +125,10 @@ func TestWorkspaceAndPaneHelpers(t *testing.T) {
 		t.Fatalf("%d %d %v", cols, rows, err)
 	}
 	if _, _, err := c.PaneSize(ctx, "w2:p9"); err == nil {
-		t.Fatal("panel ausente debería fallar")
+		t.Fatal("a missing pane should fail")
 	}
 	txt, err := c.ReadPane(ctx, "w2:p1", "visible", 40)
-	if err != nil || txt != "hola" {
+	if err != nil || txt != "hello" {
 		t.Fatalf("%q %v", txt, err)
 	}
 	ps, err := c.ListPanes(ctx, "w2")
@@ -154,7 +154,7 @@ func TestWorkspaceAndPaneHelpers(t *testing.T) {
 		switch call.Method {
 		case "workspace.create":
 			if p["focus"] != false {
-				t.Fatalf("workspace.create sin focus:false: %v", p)
+				t.Fatalf("workspace.create without focus:false: %v", p)
 			}
 		case "pane.read":
 			if p["format"] != "ansi" || p["strip_ansi"] != false || p["source"] != "visible" || p["lines"] != float64(40) {

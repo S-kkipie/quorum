@@ -25,11 +25,12 @@ type Server struct {
 	sync  *connectors.Syncer
 	asks  *askTracker
 	fails *failLimiter
+	views *viewLinks
 }
 
-// Options configura el servidor; todos los campos son opcionales.
+// Options configures the server; all fields are optional.
 type Options struct {
-	// Model genera los resúmenes de proyecto; nil usa ccapi (CCAPIURL/CCAPITokenFile) o `claude -p`.
+	// Model generates the project summaries; nil uses ccapi (CCAPIURL/CCAPITokenFile) or `claude -p`.
 	Model          summary.Model
 	CCAPIURL       string
 	CCAPITokenFile string
@@ -40,18 +41,18 @@ func NewServer(st *store.Store, opts ...Options) *Server {
 	if len(opts) > 0 {
 		o = opts[0]
 	}
-	s := &Server{st: st, mux: http.NewServeMux(), hub: newHub(st), asks: newAskTracker(), fails: newFailLimiter()}
-	// Tras un reinicio nadie está conectado: cada máquina vuelve a en línea con su hello.
+	s := &Server{st: st, mux: http.NewServeMux(), hub: newHub(st), asks: newAskTracker(), fails: newFailLimiter(), views: newViewLinks()}
+	// After a restart nobody is connected: each machine comes back online with its hello.
 	if err := st.MarkAllMachinesOffline(); err != nil {
-		log.Printf("hub: marcar máquinas fuera de línea: %v", err)
+		log.Printf("hub: mark machines offline: %v", err)
 	}
 	if open, err := st.OpenAsks(); err != nil {
-		log.Printf("hub: recuperar asks abiertos: %v", err)
+		log.Printf("hub: recover open asks: %v", err)
 	} else {
 		s.asks.open = open
 	}
 	if err := st.FailInterruptedProposals(); err != nil {
-		log.Printf("hub: propuestas interrumpidas: %v", err)
+		log.Printf("hub: interrupted proposals: %v", err)
 	}
 	s.mux.HandleFunc("GET /api/ping", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"ok": true, "version": proto.Version})
@@ -69,23 +70,23 @@ func NewServer(st *store.Store, opts ...Options) *Server {
 	s.hub.touch = s.sum.Touch
 	s.sync.OnChange = func(id string) {
 		s.sum.Touch(id)
-		s.hub.suggestProject(id) // el ticket de la rama de una sesión abierta pudo llegar ahora
+		s.hub.suggestProject(id) // the branch ticket of an open session may have arrived by now
 	}
 	s.hub.startupGrace()
 	s.routes()
 	return s
 }
 
-// Hub expone las conexiones de máquinas.
+// Hub exposes the machine connections.
 func (s *Server) Hub() *Hub { return s.hub }
 
-// StartSync arranca el sincronizador de tickets (no bloquea); para al cancelarse ctx.
+// StartSync starts the ticket syncer (does not block); stops when ctx is cancelled.
 func (s *Server) StartSync(ctx context.Context) {
 	s.sync.Start(ctx)
 	s.sum.Start(ctx)
 }
 
-func (s *Server) Handler() http.Handler { return s.mux }
+func (s *Server) Handler() http.Handler { return s.viewHandler(s.mux) }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -96,22 +97,22 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 func (s *Server) issue(w http.ResponseWriter, r *http.Request, codeKind, code, tokKind, name string) {
 	key := clientKey(r)
 	if s.fails.blocked(key) {
-		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "demasiados intentos, espera un minuto"})
+		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many attempts, wait a minute"})
 		return
 	}
 	tok, err := NewToken()
 	if err != nil {
-		writeJSON(w, 500, map[string]string{"error": "error interno"})
+		writeJSON(w, 500, map[string]string{"error": "internal error"})
 		return
 	}
-	// Código y token en una transacción: si el token no se guarda, el código sigue valiendo.
+	// Code and token in one transaction: if the token is not saved, the code stays valid.
 	name, err = s.st.Pair(codeKind, code, tokKind, name, tok)
 	if err != nil {
 		if errors.Is(err, store.ErrInvalidCode) {
 			s.fails.fail(key)
-			writeJSON(w, 400, map[string]string{"error": "código inválido o vencido"})
+			writeJSON(w, 400, map[string]string{"error": "invalid or expired code"})
 		} else {
-			writeJSON(w, 500, map[string]string{"error": "error interno"})
+			writeJSON(w, 500, map[string]string{"error": "internal error"})
 		}
 		return
 	}
@@ -120,7 +121,7 @@ func (s *Server) issue(w http.ResponseWriter, r *http.Request, codeKind, code, t
 
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(v); err != nil {
-		writeJSON(w, 400, map[string]string{"error": "solicitud inválida"})
+		writeJSON(w, 400, map[string]string{"error": "invalid request"})
 		return false
 	}
 	return true
@@ -128,14 +129,14 @@ func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 
 const maxDeviceName = 64
 
-// deviceName recorta espacios y limita el nombre a 64 caracteres ("dispositivo" si queda vacío).
+// deviceName trims whitespace and limits the name to 64 characters ("device" if empty).
 func deviceName(n string) string {
 	n = strings.TrimSpace(n)
 	if utf8.RuneCountInString(n) > maxDeviceName {
 		n = strings.TrimSpace(string([]rune(n)[:maxDeviceName]))
 	}
 	if n == "" {
-		n = "dispositivo"
+		n = "device"
 	}
 	return n
 }
@@ -161,7 +162,7 @@ func (s *Server) handleLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if b.Machine == "" {
-		writeJSON(w, 400, map[string]string{"error": "falta el nombre de la máquina"})
+		writeJSON(w, 400, map[string]string{"error": "missing machine name"})
 		return
 	}
 	s.issue(w, r, "link", b.Code, "machine", b.Machine)

@@ -1,8 +1,8 @@
-// Package launch abre sesiones nuevas de Claude Code en un terminal de la máquina.
+// Package launch opens new Claude Code sessions in a terminal on the machine.
 //
-// Claude siempre se resuelve por el PATH de un shell de login (bash -lc / -lic),
-// nunca por ruta absoluta, para respetar los shims de whoas. Excepción: en
-// Windows nativo se usa `wt.exe -d <dir> claude`, con el PATH de la sesión de Windows.
+// Claude is always resolved through the PATH of a login shell (bash -lc / -lic),
+// never by absolute path, to respect whoas shims. Exception: on native
+// Windows `wt.exe -d <dir> claude` is used, with the Windows session's PATH.
 package launch
 
 import (
@@ -36,32 +36,32 @@ var (
 	now        = time.Now
 	modeRe     = regexp.MustCompile(`^[A-Za-z]+$`)
 	runTimeout = 15 * time.Second
-	// execFn ejecuta el lanzador y espera a que termine; se inyecta en los tests.
+	// execFn runs the launcher and waits for it to finish; injected in tests.
 	execFn = runDetached
-	// geteuid se inyecta en los tests (Sin permisos no se permite como root).
+	// geteuid is injected in tests (Skip permissions is not allowed as root).
 	geteuid  = os.Geteuid
 	resumeRe = regexp.MustCompile(`^[0-9a-fA-F-]{8,64}$`)
 	hexRe    = regexp.MustCompile(`[0-9a-fA-F]`)
 	notAlnum = regexp.MustCompile(`[^A-Za-z0-9]`)
 )
 
-// LaunchReqEnv es la variable de entorno que ata la sesión lanzada a su reqId.
+// LaunchReqEnv is the environment variable that ties the launched session to its reqId.
 const LaunchReqEnv = "QUORUM_LAUNCH_REQ"
 
-// validResume: id de conversación de 8 a 64 caracteres hex o '-', con al menos un dígito hex
-// (así nunca es algo como "--------", que claude leería como opción).
+// validResume: a conversation id of 8 to 64 hex characters or '-', with at least one hex digit
+// (so it is never something like "--------", which claude would read as an option).
 func validResume(id string) bool { return resumeRe.MatchString(id) && hexRe.MatchString(id) }
 
-// launchReqValue es el reqId saneado para el entorno ([A-Za-z0-9]); vacío si no queda nada.
+// launchReqValue is the reqId sanitized for the environment ([A-Za-z0-9]); empty if nothing is left.
 func launchReqValue(reqID string) string { return notAlnum.ReplaceAllString(reqID, "") }
 
-// graceWait es lo que se espera a un lanzador gráfico (wt.exe, osascript) antes
-// de darlo por lanzado: pueden quedar vivos reteniendo handles heredados. Variable para tests.
+// graceWait is how long a graphical launcher (wt.exe, osascript) is awaited before
+// considering it launched: they may stay alive holding inherited handles. A variable for tests.
 var graceWait = 3 * time.Second
 
-// runDetached arranca bin con la salida a un fichero temporal (sin goroutines de
-// copia que bloqueen Wait). tmux -d vuelve al instante y se espera completo; los
-// demás se esperan graceWait y, si siguen vivos, se dan por lanzados.
+// runDetached starts bin with its output going to a temp file (no copy goroutines
+// that would block Wait). tmux -d returns instantly and is awaited fully; the
+// others are awaited graceWait and, if still alive, are considered launched.
 func runDetached(ctx context.Context, bin string, args ...string) ([]byte, error) {
 	f, err := os.CreateTemp("", "quorum-launch-*")
 	if err != nil {
@@ -71,15 +71,15 @@ func runDetached(ctx context.Context, bin string, args ...string) ([]byte, error
 	cmd := exec.Command(bin, args...)
 	cmd.Stdout, cmd.Stderr = f, f
 	err = cmd.Start()
-	f.Close() // el hijo tiene su propio handle; el nuestro no debe retener el fichero
+	f.Close() // the child has its own handle; ours must not hold the file
 	if err != nil {
 		os.Remove(name)
 		return nil, err
 	}
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
-	// Si devolvemos antes de que el hijo termine, el temporal se borra cuando acabe
-	// (en Windows no se puede borrar mientras el hijo lo tenga abierto). Best effort.
+	// If we return before the child finishes, the temp file is deleted when it ends
+	// (on Windows it cannot be deleted while the child has it open). Best effort.
 	removeLater := func() { go func() { <-done; os.Remove(name) }() }
 	var grace <-chan time.Time
 	if bin != "tmux" {
@@ -94,7 +94,7 @@ func runDetached(ctx context.Context, bin string, args ...string) ([]byte, error
 		return out, err
 	case <-grace:
 		removeLater()
-		return nil, nil // sigue vivo: se considera lanzado
+		return nil, nil // still alive: considered launched
 	case <-ctx.Done():
 		_ = cmd.Process.Kill()
 		removeLater()
@@ -102,7 +102,7 @@ func runDetached(ctx context.Context, bin string, args ...string) ([]byte, error
 	}
 }
 
-// DetectEnv deduce el entorno de ejecución actual.
+// DetectEnv infers the current execution environment.
 func DetectEnv() Env {
 	if runtime.GOOS == "linux" {
 		if os.Getenv("WSL_DISTRO_NAME") != "" {
@@ -116,19 +116,19 @@ func DetectEnv() Env {
 	return Env(runtime.GOOS)
 }
 
-// shellQuote envuelve s en comillas simples para un shell POSIX.
+// shellQuote wraps s in single quotes for a POSIX shell.
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
-// modeFlags traduce el modo de permisos; ok=false si no es válido.
+// modeFlags translates the permission mode; ok=false if it is not valid.
 func modeFlags(m string) (flags []string, ok bool) {
 	switch m {
 	case "":
 		return nil, true
 	case "default":
-		// explícito: si no, claude usa el defaultMode del usuario o la cuenta (p. ej. auto)
-		// y la sesión "Normal (pide permisos)" no pediría permisos.
+		// explicit: otherwise claude uses the user's or account's defaultMode (e.g. auto)
+		// and a "Normal (asks for permissions)" session would not ask for permissions.
 		return []string{"--permission-mode", "default"}, true
 	case "bypass":
 		return []string{"--dangerously-skip-permissions"}, true
@@ -139,18 +139,18 @@ func modeFlags(m string) (flags []string, ok bool) {
 	return []string{"--permission-mode", m}, true
 }
 
-// claudeArgs son los argumentos de claude (sin el binario) y el índice del prompt
-// (-1 si no hay). El prompt va como argumento posicional tras "--", así nunca se
-// confunde con una opción.
+// claudeArgs are claude's arguments (without the binary) and the prompt's index
+// (-1 if none). The prompt goes as a positional argument after "--", so it is never
+// mistaken for an option.
 func claudeArgs(req proto.LaunchRequest) (parts []string, promptIdx int) {
 	promptIdx = -1
 	if req.Continue {
 		parts = append(parts, "--continue")
 	}
-	if f, ok := modeFlags(req.PermissionMode); ok { // Run ya rechazó los inválidos
+	if f, ok := modeFlags(req.PermissionMode); ok { // Run already rejected the invalid ones
 		parts = append(parts, f...)
 	}
-	if req.Resume != "" && validResume(req.Resume) { // validate ya rechazó los inválidos
+	if req.Resume != "" && validResume(req.Resume) { // validate already rejected the invalid ones
 		parts = append(parts, "--resume", req.Resume)
 	}
 	if req.Prompt != "" {
@@ -160,8 +160,8 @@ func claudeArgs(req proto.LaunchRequest) (parts []string, promptIdx int) {
 	return parts, promptIdx
 }
 
-// claudeLine es la línea de shell POSIX; solo el prompt necesita cita (los flags y
-// el id de --resume son seguros). Lleva delante QUORUM_LAUNCH_REQ=<reqId saneado>.
+// claudeLine is the POSIX shell line; only the prompt needs quoting (the flags and
+// the --resume id are safe). It is prefixed with QUORUM_LAUNCH_REQ=<sanitized reqId>.
 func claudeLine(req proto.LaunchRequest) string {
 	args, pi := claudeArgs(req)
 	var parts []string
@@ -178,14 +178,14 @@ func claudeLine(req proto.LaunchRequest) string {
 	return strings.Join(parts, " ")
 }
 
-// wtEscape escapa ';' (separador de comandos de Windows Terminal).
+// wtEscape escapes ';' (Windows Terminal's command separator).
 func wtEscape(s string) string { return strings.ReplaceAll(s, ";", `\;`) }
 
 func appleScriptEscape(s string) string {
 	return strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(s)
 }
 
-// suffix da un sufijo corto y apto para nombre de sesión tmux (sin '.' ni ':').
+// suffix gives a short suffix suitable for a tmux session name (no '.' or ':').
 func suffix(reqID string) string {
 	var b strings.Builder
 	for _, r := range reqID {
@@ -211,8 +211,8 @@ func isAbs(env Env, dir string) bool {
 	return strings.HasPrefix(dir, "/")
 }
 
-// Argv construye el comando que abre el terminal. hasDisplay queda reservado
-// para elegir emulador gráfico en Linux con pantalla; por ahora Linux siempre usa tmux.
+// Argv builds the command that opens the terminal. hasDisplay is reserved
+// for choosing a graphical emulator on Linux with a display; for now Linux always uses tmux.
 func Argv(env Env, req proto.LaunchRequest, hasDisplay bool) (bin string, args []string) {
 	line := claudeLine(req)
 	switch env {
@@ -232,30 +232,30 @@ func Argv(env Env, req proto.LaunchRequest, hasDisplay bool) (bin string, args [
 	}
 }
 
-// rootBypassMsg es el motivo por el que "Sin permisos" no se ofrece como root.
-const rootBypassMsg = "Sin permisos no funciona como root"
+// rootBypassMsg is why "Skip permissions" is not offered as root.
+const rootBypassMsg = "Skip permissions does not work as root"
 
-// validate comprueba la petición; devuelve el mensaje de error o "".
+// validate checks the request; returns the error message or "".
 func validate(env Env, req proto.LaunchRequest) string {
 	if _, ok := modeFlags(req.PermissionMode); !ok {
-		return "modo de permisos inválido"
+		return "invalid permission mode"
 	}
 	if req.PermissionMode == "bypass" && geteuid() == 0 {
 		return rootBypassMsg
 	}
 	if req.Resume != "" && !validResume(req.Resume) {
-		return "id de conversación inválido"
+		return "invalid conversation id"
 	}
 	if !isAbs(env, req.Dir) {
-		return "la carpeta debe ser una ruta absoluta"
+		return "the folder must be an absolute path"
 	}
 	if st, err := os.Stat(req.Dir); err != nil || !st.IsDir() {
-		return "la carpeta no existe: " + req.Dir
+		return "the folder does not exist: " + req.Dir
 	}
 	return ""
 }
 
-// trust marca la carpeta como de confianza si se pidió; un fallo solo se registra.
+// trust marks the folder as trusted if requested; a failure is only logged.
 func trust(req proto.LaunchRequest) {
 	if !req.Trust {
 		return
@@ -265,11 +265,11 @@ func trust(req proto.LaunchRequest) {
 		err = TrustDir(home, req.Dir)
 	}
 	if err != nil {
-		log.Printf("launch: no se pudo confiar en %s: %v", req.Dir, err)
+		log.Printf("launch: could not trust %s: %v", req.Dir, err)
 	}
 }
 
-// via es el nombre del lanzador para LaunchResult.Via.
+// via is the launcher's name for LaunchResult.Via.
 func via(bin string) string {
 	if bin == "wt.exe" {
 		return "wt"
@@ -277,7 +277,7 @@ func via(bin string) string {
 	return bin
 }
 
-// Run valida la petición y lanza el terminal. No espera a que Claude termine.
+// Run validates the request and launches the terminal. It does not wait for Claude to finish.
 func Run(ctx context.Context, req proto.LaunchRequest) proto.LaunchResult {
 	res := proto.LaunchResult{ReqID: req.ReqID}
 	env := DetectEnv()
@@ -288,7 +288,7 @@ func Run(ctx context.Context, req proto.LaunchRequest) proto.LaunchResult {
 	trust(req)
 	req, err := collapsePrompt(env, req)
 	if err != nil {
-		res.Error = "no se pudo preparar el prompt: " + err.Error()
+		res.Error = "could not prepare the prompt: " + err.Error()
 		return res
 	}
 	bin, args := Argv(env, req, os.Getenv("DISPLAY") != "" || os.Getenv("WAYLAND_DISPLAY") != "")
@@ -299,7 +299,7 @@ func Run(ctx context.Context, req proto.LaunchRequest) proto.LaunchResult {
 		if msg == "" {
 			msg = err.Error()
 		}
-		res.Error = "no se pudo abrir el terminal: " + msg
+		res.Error = "could not open the terminal: " + msg
 		return res
 	}
 	res.OK, res.Via = true, via(bin)
@@ -310,23 +310,23 @@ const (
 	promptMaxInline = 1000
 	promptFileTTL   = 24 * time.Hour
 	promptFilePre   = "ticket-"
-	legacyPromptPre = "quorum-ticket-" // versiones anteriores lo dejaban en el temporal
+	legacyPromptPre = "quorum-ticket-" // earlier versions left it in the temp dir
 )
 
 var unsafeID = regexp.MustCompile(`[^A-Za-z0-9_-]`)
 
-// PromptDir es donde se dejan los prompts largos, dentro de la carpeta de la sesión:
-// así claude lo lee sin pedir permiso para salir de su cwd. Conviene ignorarla en git.
+// PromptDir is where long prompts are left, inside the session's folder:
+// this way claude reads it without asking permission to leave its cwd. Worth gitignoring.
 func PromptDir(dir string) string { return filepath.Join(dir, ".claude", "quorum") }
 
-// collapsePrompt evita pasar por la línea de comandos (wt.exe, osascript, tmux) un
-// prompt con saltos de línea o largo: lo escribe en <dir>/.claude/quorum/ticket-<reqId>.md
-// (carpetas 0700, fichero 0600, O_EXCL) y deja un prompt corto que apunta al fichero.
-// Los ficheros de más de 24 h se borran en el siguiente lanzamiento (best effort).
+// collapsePrompt avoids passing a long prompt or one with newlines through the command line
+// (wt.exe, osascript, tmux): it writes it to <dir>/.claude/quorum/ticket-<reqId>.md
+// (folders 0700, file 0600, O_EXCL) and leaves a short prompt pointing at the file.
+// Files older than 24 h are deleted on the next launch (best effort).
 //
-// En WSL y Windows (wt.exe) también se usa el fichero si el prompt lleva ';', que
-// wt.exe toma como separador de comandos: así ningún ';' del prompt llega a su línea
-// de comandos (el escapado `\;` no se puede garantizar que llegue limpio a claude).
+// On WSL and Windows (wt.exe) the file is also used if the prompt contains ';', which
+// wt.exe takes as a command separator: this way no ';' of the prompt reaches its command
+// line (the `\;` escape cannot be guaranteed to reach claude cleanly).
 func collapsePrompt(env Env, req proto.LaunchRequest) (proto.LaunchRequest, error) {
 	wt := (env == WSL || env == Windows) && strings.Contains(req.Prompt, ";")
 	if req.Prompt == "" || (!wt && !strings.ContainsAny(req.Prompt, "\r\n") && len(req.Prompt) <= promptMaxInline) {
@@ -335,10 +335,10 @@ func collapsePrompt(env Env, req proto.LaunchRequest) (proto.LaunchRequest, erro
 	return promptToFile(req, false)
 }
 
-// promptToFile escribe el prompt en <dir>/.claude/quorum/ticket-<reqId>.md y lo
-// cambia por uno corto que apunta al fichero. Con rel, la ruta del prompt es relativa
-// a <dir> (el cwd de la sesión): así la carpeta del proyecto, que puede llevar
-// comillas, ';' o '$(', nunca llega a la línea que se escribe en un shell.
+// promptToFile writes the prompt to <dir>/.claude/quorum/ticket-<reqId>.md and replaces it
+// with a short one pointing at the file. With rel, the prompt's path is relative
+// to <dir> (the session's cwd): this way the project folder, which may contain
+// quotes, ';' or '$(', never reaches the line written into a shell.
 func promptToFile(req proto.LaunchRequest, rel bool) (proto.LaunchRequest, error) {
 	cleanPromptFiles(os.TempDir(), legacyPromptPre)
 	dir := PromptDir(req.Dir)
@@ -367,7 +367,7 @@ func promptToFile(req proto.LaunchRequest, rel bool) (proto.LaunchRequest, error
 	if rel {
 		shown = ".claude/quorum/" + promptFilePre + id + ".md"
 	}
-	req.Prompt = "Lee el archivo " + shown + " y trabaja en ese ticket."
+	req.Prompt = "Read the file " + shown + " and work on that ticket."
 	return req, nil
 }
 

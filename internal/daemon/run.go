@@ -16,13 +16,13 @@ import (
 	"github.com/S-kkipie/quorum/internal/proto"
 )
 
-// Serve levanta la API local en 127.0.0.1 y bloquea hasta ctx.Done.
-// Con cfg.Hub vacío los envelopes de Out() se descartan; si no, los lleva RunHubLink.
+// Serve brings up the local API on 127.0.0.1 and blocks until ctx.Done.
+// With cfg.Hub empty the envelopes from Out() are dropped; otherwise RunHubLink carries them.
 func Serve(ctx context.Context, cfg Config) error {
 	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", cfg.Port))
 	if err != nil {
 		if healthy(cfg) {
-			return nil // ya hay un quorumd sano en el puerto guardado
+			return nil // a healthy quorumd already exists on the saved port
 		}
 		ln, err = net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
@@ -66,8 +66,8 @@ type EnsureResult struct {
 
 func healthy(cfg Config) bool { _, ok := health(cfg); return ok }
 
-// health consulta /v1/health y devuelve la versión del daemon que responde (no la de
-// este binario: puede ser un quorumd viejo que sigue vivo).
+// health queries /v1/health and returns the version of the daemon that answers (not that of
+// this binary: it may be an old quorumd that is still alive).
 func health(cfg Config) (version string, ok bool) {
 	if cfg.Port == 0 {
 		return "", false
@@ -89,11 +89,11 @@ func health(cfg Config) (version string, ok bool) {
 	return h.Version, h.OK && h.Machine == cfg.Machine
 }
 
-// Ensure garantiza que haya un daemon sano, lanzándolo desacoplado si hace falta.
+// Ensure guarantees a healthy daemon exists, launching it detached if needed.
 func Ensure() EnsureResult { return ensureWith(spawnDetached) }
 
-// ensureWith hace check-spawn-wait bajo un lock exclusivo entre procesos, de
-// modo que sesiones simultáneas lancen un único daemon.
+// ensureWith does check-spawn-wait under an exclusive lock across processes,
+// so that simultaneous sessions launch a single daemon.
 func ensureWith(spawn func() error) EnsureResult {
 	unlock, err := lockConfig()
 	if err != nil {
@@ -122,7 +122,7 @@ func ensureWith(spawn func() error) EnsureResult {
 			}
 		}
 	}
-	return EnsureResult{Error: "daemon no respondió en 5s (ver quorumd.log)"}
+	return EnsureResult{Error: "daemon did not answer in 5s (see quorumd.log)"}
 }
 
 func spawnDetached() error {
@@ -145,14 +145,14 @@ func spawnDetached() error {
 	if err := cmd.Start(); err != nil {
 		return err
 	}
-	go cmd.Wait() // evita zombi si morimos antes; el hijo sigue vivo
+	go cmd.Wait() // avoids a zombie if we die first; the child stays alive
 	return nil
 }
 
 func PrintJSON(r EnsureResult) { json.NewEncoder(os.Stdout).Encode(r) }
 
-// linker gestiona la tarea que consume reg.Out(): RunHubLink si hay hub, o un
-// vaciado si no. start reemplaza la tarea anterior (para recargar la config).
+// linker manages the task that consumes reg.Out(): RunHubLink if there is a hub, or a
+// drain if not. start replaces the previous task (to reload the config).
 type linker struct {
 	reg    *Registry
 	parent context.Context
@@ -167,7 +167,7 @@ func (l *linker) start(cfg Config) {
 	defer l.mu.Unlock()
 	if l.cancel != nil {
 		l.cancel()
-		<-l.done // un único consumidor de Out() a la vez
+		<-l.done // a single consumer of Out() at a time
 	}
 	ctx, cancel := context.WithCancel(l.parent)
 	done := make(chan struct{})
@@ -188,10 +188,10 @@ func (l *linker) start(cfg Config) {
 	}()
 }
 
-// ReloadRunning pide al daemon local sano que relea la config y se enlace.
+// ReloadRunning asks the healthy local daemon to reread the config and link.
 func ReloadRunning(cfg Config) error {
 	if !healthy(cfg) {
-		return errors.New("no hay un quorumd corriendo")
+		return errors.New("no quorumd is running")
 	}
 	req, _ := http.NewRequest("POST", fmt.Sprintf("http://127.0.0.1:%d/v1/reload", cfg.Port), nil)
 	req.Header.Set("Authorization", "Bearer "+cfg.LocalToken)
@@ -201,7 +201,7 @@ func ReloadRunning(cfg Config) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNoContent {
-		return fmt.Errorf("el daemon respondió %s", resp.Status)
+		return fmt.Errorf("the daemon answered %s", resp.Status)
 	}
 	return nil
 }

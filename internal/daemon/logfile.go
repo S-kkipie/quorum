@@ -6,28 +6,28 @@ import (
 	"time"
 )
 
-// LogEnv lleva al daemon lanzado por ensure la ruta de su quorumd.log, para que
-// escriba su log con rotación (ver RotatingLog).
+// LogEnv carries to the daemon launched by ensure the path of its quorumd.log, so that
+// it writes its log with rotation (see RotatingLog).
 const LogEnv = "QUORUMD_LOG"
 
-// maxLogSize: al pasar de 5 MiB quorumd.log se renombra a quorumd.log.1 (se guarda uno viejo).
+// maxLogSize: past 5 MiB quorumd.log is renamed to quorumd.log.1 (one old file is kept).
 const maxLogSize = 5 << 20
 
-// rotateLog renombra path a path.1 (pisando el anterior) si pasa de max bytes.
+// rotateLog renames path to path.1 (overwriting the previous one) if it exceeds max bytes.
 func rotateLog(path string, max int64) {
 	if st, err := os.Stat(path); err == nil && st.Size() > max {
 		_ = os.Rename(path, path+".1")
 	}
 }
 
-// renameRetry: tras un renombre fallido (en Windows, p. ej., otro handle mantiene
-// abierto el fichero) no se reintenta hasta pasado este tiempo.
+// renameRetry: after a failed rename (on Windows, e.g., another handle keeps
+// the file open) it is not retried until this time has passed.
 const renameRetry = time.Minute
 
-// RotatingLog es un io.Writer de log que rota el fichero al pasar de max bytes.
-// Con redirect (el daemon lanzado por ensure, cuyo stdout/stderr es este mismo
-// fichero) también reapunta stdout y stderr al fichero nuevo tras rotar, donde el
-// sistema lo permite (Unix); en Windows siguen en el viejo hasta el próximo arranque.
+// RotatingLog is a log io.Writer that rotates the file when it exceeds max bytes.
+// With redirect (the daemon launched by ensure, whose stdout/stderr is this same
+// file) it also repoints stdout and stderr to the new file after rotating, where the
+// system allows it (Unix); on Windows they stay on the old one until the next start.
 type RotatingLog struct {
 	mu       sync.Mutex
 	path     string
@@ -36,8 +36,8 @@ type RotatingLog struct {
 	size     int64
 	redirect bool
 	now      func() time.Time
-	failedAt time.Time // último renombre fallido
-	opens    int       // aperturas (para tests)
+	failedAt time.Time // last failed rename
+	opens    int       // opens (for tests)
 }
 
 func NewRotatingLog(path string) *RotatingLog {
@@ -77,10 +77,10 @@ func (l *RotatingLog) Write(p []byte) (int, error) {
 		}
 	}
 	if l.size > 0 && l.size+int64(len(p)) > l.max && l.now().Sub(l.failedAt) >= renameRetry {
-		l.f.Close() // Windows no renombra un fichero abierto
+		l.f.Close() // Windows does not rename an open file
 		l.f = nil
 		if err := os.Rename(l.path, l.path+".1"); err != nil {
-			l.failedAt = l.now() // sigue en el mismo fichero; no reabrir en cada escritura
+			l.failedAt = l.now() // stays on the same file; do not reopen on every write
 		}
 		if err := l.open(); err != nil {
 			return 0, err

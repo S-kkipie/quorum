@@ -22,7 +22,7 @@ export default function Project({ state, id, selectedTicket, onBack, onOpenTicke
   onEdit?: (id: string) => void
   onTickets?: (projectId: string, views: TicketView[]) => void
   onCheckouts?: (projectId: string, cos: Checkout[]) => void
-  /** Hay un lanzamiento en curso (esperando que la sesión se registre). */
+  /** A launch is in progress (waiting for the session to register). */
   pending?: boolean
   onLaunched?: (p: { reqId: string; machine: string; label: string }) => void
   onGuard?: (fn: () => Promise<{ reqId: string; machine: string; label: string }>) => Promise<void>
@@ -37,20 +37,20 @@ export default function Project({ state, id, selectedTicket, onBack, onOpenTicke
   useEffect(() => {
     let off = false
     listTickets(id).then((v) => { if (!off) onTickets?.(id, v) }).catch((e) => { if (!off) setError(e instanceof Error ? e.message : 'error') })
-    listCheckouts(id).then((c) => { if (!off) onCheckouts?.(id, c ?? []) }).catch(() => { /* quedan los deducidos de las sesiones */ })
+    listCheckouts(id).then((c) => { if (!off) onCheckouts?.(id, c ?? []) }).catch(() => { /* the ones inferred from sessions remain */ })
     return () => { off = true }
   }, [id, onTickets, onCheckouts])
-  // "Actualizando…" hasta que llegue el project_upsert de la sincronización
+  // "Syncing…" until the sync's project_upsert arrives
   useEffect(() => { setSyncing(false) }, [p?.syncedAt, p?.syncError])
 
-  if (!p) return <p className="p-4 text-sm text-zinc-500">{onBack && <button onClick={onBack} className="mr-2 text-zinc-400">←</button>}Proyecto no encontrado.</p>
+  if (!p) return <p className="p-4 text-sm text-zinc-500">{onBack && <button onClick={onBack} className="mr-2 text-zinc-400">←</button>}Project not found.</p>
 
   const ws = state.workspaces[p.workspaceId]
   const tickets = state.tickets[id] ?? []
   const sessions = projectSessions(state, id)
   const checkouts = projectCheckouts(state, id)
   const pendingByTicket: Record<string, number> = {}
-  for (const x of Object.values(state.proposals)) if (x.status === 'pendiente') pendingByTicket[x.ticketId] = (pendingByTicket[x.ticketId] ?? 0) + 1
+  for (const x of Object.values(state.proposals)) if (x.status === 'pending') pendingByTicket[x.ticketId] = (pendingByTicket[x.ticketId] ?? 0) + 1
   const suggestions = tickets.flatMap((t) =>
     Object.entries(state.links[t.id] ?? {}).filter(([sid, c]) => !c && state.sessions[sid]).map(([sid]) => ({ t, s: state.sessions[sid] })))
 
@@ -74,21 +74,21 @@ export default function Project({ state, id, selectedTicket, onBack, onOpenTicke
   return (
     <div className="pb-10">
       <header className="sticky top-0 z-10 flex items-center gap-2 border-b border-zinc-800 bg-zinc-950/90 px-3 py-2 backdrop-blur">
-        {onBack && <button onClick={onBack} aria-label="Volver" className="text-zinc-400">←</button>}
+        {onBack && <button onClick={onBack} aria-label="Back" className="text-zinc-400">←</button>}
         {ws && <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: ws.color || '#71717a' }} title={ws.name} />}
         <h2 className="min-w-0 flex-1 truncate text-base font-semibold">{p.name}</h2>
         {p.connector?.kind !== 'none' && (
-          <button disabled={syncing} onClick={sync} className="shrink-0 rounded bg-zinc-800 px-2 py-1 text-xs disabled:opacity-50">{syncing ? 'Actualizando…' : 'Actualizar'}</button>
+          <button disabled={syncing} onClick={sync} className="shrink-0 rounded bg-zinc-800 px-2 py-1 text-xs disabled:opacity-50">{syncing ? 'Syncing…' : 'Sync'}</button>
         )}
-        {onEdit && <button onClick={() => onEdit(id)} className="shrink-0 rounded bg-zinc-800 px-2 py-1 text-xs">Editar</button>}
+        {onEdit && <button onClick={() => onEdit(id)} className="shrink-0 rounded bg-zinc-800 px-2 py-1 text-xs">Edit</button>}
       </header>
       <div className="px-3 pt-3">
         <Progress done={p.progress?.done ?? 0} total={p.progress?.total ?? 0} />
         {p.summary && <p className="mt-2 text-sm text-zinc-300">{p.summary}</p>}
         <p className="mt-1 text-xs text-zinc-600">
-          {ws?.name}{p.repoUrl && ` · ${p.repoUrl}`}{p.syncedAt ? ` · ${p.syncError ? 'último intento' : 'sincronizado'} ${since(p.syncedAt)}` : ''}
+          {ws?.name}{p.repoUrl && ` · ${p.repoUrl}`}{p.syncedAt ? ` · ${p.syncError ? 'last attempt' : 'synced'} ${since(p.syncedAt)}` : ''}
         </p>
-        {p.syncError && <p role="alert" className="mt-2 rounded bg-red-500/10 px-2 py-1 text-xs text-red-300">Error de sincronización: {p.syncError}</p>}
+        {p.syncError && <p role="alert" className="mt-2 rounded bg-red-500/10 px-2 py-1 text-xs text-red-300">Sync error: {p.syncError}</p>}
         {error && <p role="alert" className="mt-2 text-xs text-red-400">{error}</p>}
       </div>
 
@@ -96,7 +96,7 @@ export default function Project({ state, id, selectedTicket, onBack, onOpenTicke
 
       {sessions.length > 0 && (
         <section>
-          <h3 className={h3}>Sesiones abiertas</h3>
+          <h3 className={h3}>Open sessions</h3>
           <ul className="divide-y divide-zinc-900 border-y border-zinc-900">
             {sessions.map((s) => {
               const st = SESSION_STATE[s.state] ?? SESSION_STATE.idle
@@ -117,14 +117,14 @@ export default function Project({ state, id, selectedTicket, onBack, onOpenTicke
 
       {sel && (
         <section>
-          <h3 className={h3}>Conversaciones</h3>
+          <h3 className={h3}>Conversations</h3>
           <Conversations machine={sel.machine} root={sel.root} liveIds={liveIds} busy={pending} outdated={!state.machines[sel.machine]?.caps} onOpen={(sid) => onOpenSession?.(sid)} onResume={resume} />
         </section>
       )}
 
       {suggestions.length > 0 && (
         <section>
-          <h3 className={h3}>Sugerencias de asociación</h3>
+          <h3 className={h3}>Link suggestions</h3>
           <ul className="divide-y divide-zinc-900 border-y border-zinc-900">
             {suggestions.map(({ t, s }) => <Suggestion key={t.id + s.id} ticketId={t.id} ticketLabel={`${t.externalId} ${t.title}`} sessionId={s.id} sessionLabel={sessionTitle(s).title} />)}
           </ul>
@@ -132,13 +132,13 @@ export default function Project({ state, id, selectedTicket, onBack, onOpenTicke
       )}
 
       {tickets.length === 0 && (
-        <p className="px-3 pt-6 text-sm text-zinc-500">{p.connector?.kind === 'none' ? 'Este proyecto no tiene ticketera configurada.' : 'Sin tickets todavía.'}</p>
+        <p className="px-3 pt-6 text-sm text-zinc-500">{p.connector?.kind === 'none' ? 'This project has no ticket source configured.' : 'No tickets yet.'}</p>
       )}
       {STATUSES.map((st) => {
-        const list = tickets.filter((t) => (STATUSES as readonly string[]).includes(t.status) ? t.status === st : st === 'por_hacer')
+        const list = tickets.filter((t) => (STATUSES as readonly string[]).includes(t.status) ? t.status === st : st === 'todo')
         if (!list.length) return null
         const rows = <ul className="divide-y divide-zinc-900 border-y border-zinc-900">{list.map((t) => <TicketRow key={t.id} state={state} ticket={t} pending={pendingByTicket[t.id]} active={t.id === selectedTicket} onOpen={onOpenTicket} />)}</ul>
-        if (st === 'hecho') {
+        if (st === 'done') {
           return (
             <details key={st} className="mt-5">
               <summary className="cursor-pointer px-3 pb-1 text-xs font-semibold uppercase tracking-wide text-zinc-400">{STATUS_LABEL[st]} ({list.length})</summary>
@@ -160,7 +160,7 @@ export default function Project({ state, id, selectedTicket, onBack, onOpenTicke
             ))}
           </ul>
         ) : (
-          <p className="px-3 text-xs text-zinc-600">Ninguno todavía: aparecen solos cuando hay sesiones en el repo del proyecto.</p>
+          <p className="px-3 text-xs text-zinc-600">None yet: they appear on their own when there are sessions in the project's repo.</p>
         )}
       </section>
     </div>
@@ -182,8 +182,8 @@ function Suggestion({ ticketId, ticketLabel, sessionId, sessionLabel }: { ticket
         <span className="text-zinc-500"> → {ticketLabel}</span>
       </span>
       {error && <span role="alert" className="text-xs text-red-400">{error}</span>}
-      <button disabled={busy} onClick={() => run(() => unlinkTicket(sessionId, ticketId))} className="shrink-0 text-xs text-zinc-400">Descartar</button>
-      <button disabled={busy} onClick={() => run(() => confirmTicketLink(sessionId, ticketId))} className="shrink-0 rounded bg-blue-600 px-2 py-0.5 text-xs text-white">Confirmar</button>
+      <button disabled={busy} onClick={() => run(() => unlinkTicket(sessionId, ticketId))} className="shrink-0 text-xs text-zinc-400">Dismiss</button>
+      <button disabled={busy} onClick={() => run(() => confirmTicketLink(sessionId, ticketId))} className="shrink-0 rounded bg-blue-600 px-2 py-0.5 text-xs text-white">Confirm</button>
     </li>
   )
 }

@@ -39,11 +39,11 @@ func newPaperclip(cfg proto.ConnectorConfig, token string, timeout time.Duration
 	base := strings.TrimRight(strings.TrimSpace(cfg.Settings["baseURL"]), "/")
 	company := strings.TrimSpace(cfg.Settings["companyId"])
 	if base == "" || company == "" {
-		return nil, errors.New("Paperclip: falta baseURL/companyId")
+		return nil, errors.New("Paperclip: missing baseURL/companyId")
 	}
 	u, err := url.Parse(base)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return nil, errors.New("Paperclip: baseURL debe ser http(s)")
+		return nil, errors.New("Paperclip: baseURL must be http(s)")
 	}
 	return &paperclipConnector{
 		baseURL: base, companyID: company, projectID: strings.TrimSpace(cfg.Settings["projectId"]), token: token,
@@ -51,10 +51,10 @@ func newPaperclip(cfg proto.ConnectorConfig, token string, timeout time.Duration
 			Timeout: timeout,
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
 				if len(via) >= 5 {
-					return errors.New("demasiadas redirecciones")
+					return errors.New("too many redirects")
 				}
 				if req.URL.Host != via[0].URL.Host {
-					return http.ErrUseLastResponse // nunca enviar el token a otro host
+					return http.ErrUseLastResponse // never send the token to another host
 				}
 				return nil
 			},
@@ -92,19 +92,19 @@ func (p *paperclipConnector) do(ctx context.Context, method, path string, body a
 		return errors.New(redact("Paperclip: "+err.Error(), p.token))
 	}
 	if len(data) > pcMaxBody {
-		return errors.New("Paperclip: respuesta demasiado grande")
+		return errors.New("Paperclip: response too large")
 	}
 	switch {
 	case resp.StatusCode == 401 || resp.StatusCode == 403:
-		return errors.New("Paperclip: token inválido")
+		return errors.New("Paperclip: invalid token")
 	case resp.StatusCode == 404:
-		return errors.New(redact(fmt.Sprintf("Paperclip: no encontrado (%s)", strings.SplitN(path, "?", 2)[0]), p.token))
+		return errors.New(redact(fmt.Sprintf("Paperclip: not found (%s)", strings.SplitN(path, "?", 2)[0]), p.token))
 	case resp.StatusCode < 200 || resp.StatusCode > 299:
 		return errors.New(redact(fmt.Sprintf("Paperclip: HTTP %d: %s", resp.StatusCode, clip(string(data), 300)), p.token))
 	}
 	if out != nil && len(bytes.TrimSpace(data)) > 0 {
 		if err := json.Unmarshal(data, out); err != nil {
-			return fmt.Errorf("Paperclip: respuesta inválida: %v", err)
+			return fmt.Errorf("Paperclip: invalid response: %v", err)
 		}
 	}
 	return nil
@@ -137,7 +137,7 @@ type pcComment struct {
 	DeletedAt  *string         `json:"deletedAt"`
 }
 
-// pcName saca un nombre de un valor que puede ser string u objeto {name|displayName|id}.
+// pcName extracts a name from a value that may be a string or an object {name|displayName|id}.
 func pcName(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""
@@ -185,7 +185,7 @@ func (p *paperclipConnector) List(ctx context.Context, since int64) ([]proto.Tic
 		}
 		body := clipRunes(firstNonEmpty(is.Description, is.Body), ghMaxBody)
 		if is.Truncated {
-			body += "\n\n(descripción recortada en Paperclip)"
+			body += "\n\n(description truncated in Paperclip)"
 		}
 		t := proto.Ticket{
 			ExternalID: is.ID,
@@ -202,7 +202,7 @@ func (p *paperclipConnector) List(ctx context.Context, since int64) ([]proto.Tic
 		if t.URL == "" {
 			t.URL = p.baseURL + "/issues/" + url.PathEscape(is.ID)
 		}
-		if StatusMap(is.Status, nil) != "hecho" && fetches < pcMaxFetches {
+		if StatusMap(is.Status, nil) != "done" && fetches < pcMaxFetches {
 			fetches++
 			if cs, err := p.comments(ctx, is.ID); err == nil {
 				t.Comments = cs
@@ -225,10 +225,10 @@ func pcAssignee(is pcIssue) string {
 		return n
 	}
 	if is.AssigneeAgentID != "" {
-		return "agente " + pcShort(is.AssigneeAgentID)
+		return "agent " + pcShort(is.AssigneeAgentID)
 	}
 	if is.AssigneeUserID != "" {
-		return "usuario " + pcShort(is.AssigneeUserID)
+		return "user " + pcShort(is.AssigneeUserID)
 	}
 	return ""
 }
@@ -242,7 +242,7 @@ func firstNonEmpty(ss ...string) string {
 	return ""
 }
 
-// comments devuelve los últimos 5 comentarios en orden cronológico.
+// comments returns the latest 5 comments in chronological order.
 func (p *paperclipConnector) comments(ctx context.Context, id string) ([]proto.TicketComment, error) {
 	var items []json.RawMessage
 	if err := p.do(ctx, "GET", "/api/issues/"+url.PathEscape(id)+"/comments", nil, &items); err != nil {
@@ -263,7 +263,7 @@ func (p *paperclipConnector) comments(ctx context.Context, id string) ([]proto.T
 			Body:   c.Body, At: pcMillis(c.CreatedAt),
 		})
 	}
-	// La API puede devolver del más nuevo al más viejo o al revés: ordenar por fecha.
+	// The API may return newest to oldest or the reverse: sort by date.
 	for i := 1; i < len(res); i++ {
 		for j := i; j > 0 && res[j].At < res[j-1].At; j-- {
 			res[j], res[j-1] = res[j-1], res[j]
@@ -280,13 +280,13 @@ func (p *paperclipConnector) Comment(ctx context.Context, externalID, body strin
 }
 
 var pcSetStatus = map[string]string{
-	"por_hacer": "todo", "en_curso": "in_progress", "en_review": "in_review", "bloqueado": "blocked", "hecho": "done",
+	"todo": "todo", "in_progress": "in_progress", "in_review": "in_review", "blocked": "blocked", "done": "done",
 }
 
 func (p *paperclipConnector) SetStatus(ctx context.Context, externalID, status string) error {
 	s, ok := pcSetStatus[status]
 	if !ok {
-		return fmt.Errorf("Paperclip: estado desconocido %q", status)
+		return fmt.Errorf("Paperclip: unknown status %q", status)
 	}
 	return p.do(ctx, "PATCH", "/api/issues/"+url.PathEscape(externalID), map[string]string{"status": s}, nil)
 }

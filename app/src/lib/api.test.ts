@@ -11,11 +11,11 @@ import { apiFetch, setHub, getToken } from './api'
 beforeEach(() => { for (const k in mem) delete mem[k]; setHub('http://h:1/', 'tok') })
 
 describe('apiFetch', () => {
-  it('lanza el mensaje de error del hub', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'código inválido o vencido' }), { status: 400 })))
-    await expect(apiFetch('/api/pair')).rejects.toThrow('código inválido o vencido')
+  it('throws the hub\'s error message', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'invalid or expired code' }), { status: 400 })))
+    await expect(apiFetch('/api/pair')).rejects.toThrow('invalid or expired code')
   })
-  it('envia bearer y normaliza la url', async () => {
+  it('sends bearer and normalizes the url', async () => {
     const f = vi.fn(async () => new Response('[]', { status: 200 }))
     vi.stubGlobal('fetch', f)
     await apiFetch('/api/machines')
@@ -23,24 +23,24 @@ describe('apiFetch', () => {
     expect(u).toBe('http://h:1/api/machines')
     expect(init.headers.get('Authorization')).toBe('Bearer tok')
   })
-  it('202 sin cuerpo (prompt, decide) se resuelve sin error', async () => {
+  it('202 without a body (prompt, decide) resolves without error', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 202 })))
     await expect(apiFetch('/api/sessions/s1/prompt', { method: 'POST', body: '{}' })).resolves.toBe(undefined)
   })
-  it('401 limpia el token', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('{"error":"no autorizado"}', { status: 401 })))
-    await expect(apiFetch('/api/machines')).rejects.toThrow('no autorizado')
+  it('401 clears the token', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{"error":"unauthorized"}', { status: 401 })))
+    await expect(apiFetch('/api/machines')).rejects.toThrow('unauthorized')
     expect(getToken()).toBe('')
   })
 })
 
 describe('setHub', () => {
-  it('si falla una escritura no deja un hub nuevo sin token y lanza', () => {
+  it('if a write fails it does not leave a new hub without a token, and throws', () => {
     for (const k in mem) delete mem[k]
     const orig = (localStorage as any).setItem
-    ;(localStorage as any).setItem = (k: string, v: string) => { if (k === 'quorum.hub') throw new Error('lleno'); mem[k] = v }
+    ;(localStorage as any).setItem = (k: string, v: string) => { if (k === 'quorum.hub') throw new Error('full'); mem[k] = v }
     try {
-      expect(() => setHub('http://otro:2', 'tok2')).toThrow('no se pudo guardar el token en este dispositivo')
+      expect(() => setHub('http://other:2', 'tok2')).toThrow('could not save the token on this device')
     } finally {
       ;(localStorage as any).setItem = orig
     }
@@ -50,32 +50,32 @@ describe('setHub', () => {
   })
 })
 
-describe('propuestas', () => {
-  it('listProposals arma ticket, status y limit', async () => {
+describe('proposals', () => {
+  it('listProposals builds ticket, status and limit', async () => {
     const f = vi.fn(async () => new Response('[]', { status: 200 }))
     vi.stubGlobal('fetch', f)
     const { listProposals } = await import('./api')
     await listProposals()
-    await listProposals({ ticket: 't 1', status: 'pendiente', limit: 5 })
+    await listProposals({ ticket: 't 1', status: 'pending', limit: 5 })
     expect((f.mock.calls[0] as any)[0]).toBe('http://h:1/api/proposals')
-    expect((f.mock.calls[1] as any)[0]).toBe('http://h:1/api/proposals?ticket=t+1&status=pendiente&limit=5')
+    expect((f.mock.calls[1] as any)[0]).toBe('http://h:1/api/proposals?ticket=t+1&status=pending&limit=5')
   })
-  it('loadProposals trae las pendientes y las 50 recientes sin repetir', async () => {
-    const prop = (id: string, status = 'pendiente') => ({ id, ticketId: 't', kind: 'comment', body: '', status, error: '', createdAt: 1 })
+  it('loadProposals fetches the pending ones and the 50 most recent without repeats', async () => {
+    const prop = (id: string, status = 'pending') => ({ id, ticketId: 't', kind: 'comment', body: '', status, error: '', createdAt: 1 })
     const f = vi.fn(async (u: string) => new Response(JSON.stringify(
-      u.includes('status=pendiente') ? [prop('a'), prop('b')] : [prop('b'), prop('c', 'aprobada')]), { status: 200 }))
+      u.includes('status=pending') ? [prop('a'), prop('b')] : [prop('b'), prop('c', 'approved')]), { status: 200 }))
     vi.stubGlobal('fetch', f)
     const { loadProposals } = await import('./api')
     const got = await loadProposals()
     expect(got.map((p) => p.id)).toEqual(['a', 'b', 'c'])
     const urls = f.mock.calls.map((c: any) => c[0])
-    expect(urls).toContain('http://h:1/api/proposals?status=pendiente&limit=1000')
+    expect(urls).toContain('http://h:1/api/proposals?status=pending&limit=1000')
     expect(urls).toContain('http://h:1/api/proposals?limit=50')
   })
 })
 
 describe('terminal api', () => {
-  it('codifica el panel (lleva ":") y usa los verbos correctos', async () => {
+  it('encodes the pane (it contains ":") and uses the right verbs', async () => {
     const calls: [string, any][] = []
     vi.stubGlobal('fetch', async (u: string, i?: RequestInit) => { calls.push([u, i]); return new Response('', { status: 202 }) })
     vi.stubGlobal('localStorage', { getItem: () => '', setItem() {}, removeItem() {} })
@@ -90,5 +90,19 @@ describe('terminal api', () => {
       'GET /api/machines/m%201/terminals/w1%3A2/read?lines=40',
       'DELETE /api/machines/m%201/terminals/w1%3A2',
     ].map((x) => x.replace('GET', 'undefined')))
+  })
+})
+
+describe('createView', () => {
+  it('posts sessionId and path', async () => {
+    const f = vi.fn(async () => new Response('{"url":"/v/abc/x.html"}', { status: 200 }))
+    vi.stubGlobal('fetch', f)
+    vi.stubGlobal('localStorage', { getItem: (k: string) => (k === 'quorum.hub' ? 'http://h:1' : 'tok'), setItem() {}, removeItem() {} })
+    const { createView } = await import('./api')
+    await expect(createView('vps 1', 's1', '/p/x.html')).resolves.toEqual({ url: '/v/abc/x.html' })
+    const [u, init] = f.mock.calls[0] as any
+    expect(u).toBe('http://h:1/api/machines/vps%201/views')
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(init.body)).toEqual({ sessionId: 's1', path: '/p/x.html' })
   })
 })

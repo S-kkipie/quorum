@@ -23,12 +23,12 @@ import (
 const (
 	ghMaxBody     = 20000
 	ghMaxComments = 5
-	ghMaxFetches  = 30 // tope de peticiones de comentarios por sync
+	ghMaxFetches  = 30 // cap on comment requests per sync
 	ghTimeout     = 3 * time.Minute
 	ghMaxStdout   = 64 << 20
 )
 
-// ghRunner ejecuta `gh` con el entorno del conector y devuelve su stdout.
+// ghRunner runs `gh` with the connector's environment and returns its stdout.
 type ghRunner func(ctx context.Context, env []string, args ...string) ([]byte, error)
 
 type githubConnector struct {
@@ -48,7 +48,7 @@ func init() {
 func newGitHub(cfg proto.ConnectorConfig, token string, env []string, run ghRunner) (*githubConnector, error) {
 	repo := strings.TrimSpace(cfg.Settings["repo"])
 	if repo == "" {
-		return nil, errors.New("GitHub: falta el repo (owner/nombre)")
+		return nil, errors.New("GitHub: missing repo (owner/name)")
 	}
 	return &githubConnector{
 		repo:           repo,
@@ -59,16 +59,16 @@ func newGitHub(cfg proto.ConnectorConfig, token string, env []string, run ghRunn
 	}, nil
 }
 
-// errNoGh: gh no está ni en el PATH del hub ni en el de su shell de login.
-var errNoGh = errors.New("GitHub: no encontré el comando gh en el hub")
+// errNoGh: gh is neither on the hub's PATH nor on that of its login shell.
+var errNoGh = errors.New("GitHub: gh command not found on the hub")
 
-// ghLoginScript ejecuta gh con los argumentos como parámetros posicionales ("$@"):
-// nunca se interpolan en el texto del script.
+// ghLoginScript runs gh with the arguments as positional parameters ("$@"):
+// they are never interpolated into the script text.
 const ghLoginScript = `exec gh "$@"`
 
-// ghCommand decide cómo lanzar gh. Fuera de Windows va por un shell de login
-// (bash -lc) para que apliquen los shims de whoas también bajo systemd; en Windows
-// (o sin bash) se ejecuta gh del PATH directamente.
+// ghCommand decides how to launch gh. Outside Windows it goes through a login shell
+// (bash -lc) so the whoas shims apply under systemd too; on Windows
+// (or without bash) gh from the PATH is run directly.
 func ghCommand(goos string, lookPath func(string) (string, error), args []string) (name string, argv []string, err error) {
 	if goos != "windows" {
 		if bash, e := lookPath("bash"); e == nil {
@@ -84,11 +84,11 @@ func ghCommand(goos string, lookPath func(string) (string, error), args []string
 
 var ghRouteOnce sync.Once
 
-// logGhRoute deja en el log, una vez, por dónde se resuelve gh.
+// logGhRoute logs, once, how gh is resolved.
 func logGhRoute(ctx context.Context, name string, env []string) {
 	ghRouteOnce.Do(func() {
 		if filepath.Base(name) != "bash" {
-			log.Printf("connectors: gh directo (%s)", name)
+			log.Printf("connectors: gh direct (%s)", name)
 			return
 		}
 		cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -98,13 +98,13 @@ func logGhRoute(ctx context.Context, name string, env []string) {
 		out, _ := c.Output()
 		where := strings.TrimSpace(string(out))
 		if where == "" {
-			where = "no encontrado"
+			where = "not found"
 		}
-		log.Printf("connectors: gh por shell de login (%s -lc): %s", name, where)
+		log.Printf("connectors: gh via login shell (%s -lc): %s", name, where)
 	})
 }
 
-// defaultGhRunner ejecuta gh (ver ghCommand) con timeout, tope de stdout y grupo de procesos.
+// defaultGhRunner runs gh (see ghCommand) with a timeout, a stdout cap and a process group.
 func defaultGhRunner(timeout time.Duration) ghRunner {
 	return func(ctx context.Context, env []string, args ...string) ([]byte, error) {
 		name, argv, err := ghCommand(runtime.GOOS, exec.LookPath, args)
@@ -122,18 +122,18 @@ func defaultGhRunner(timeout time.Duration) ghRunner {
 		setupProcessGroup(cmd)
 		runErr := cmd.Run()
 		if out.overflow {
-			return nil, errors.New("respuesta demasiado grande")
+			return nil, errors.New("response too large")
 		}
 		if runErr != nil {
 			if errors.Is(cctx.Err(), context.DeadlineExceeded) {
-				return nil, fmt.Errorf("tiempo de espera agotado (%s)", timeout)
+				return nil, fmt.Errorf("timed out (%s)", timeout)
 			}
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
 			var ee *exec.ExitError
 			if errors.As(runErr, &ee) && ee.ExitCode() == 127 && filepath.Base(name) == "bash" {
-				return nil, errNoGh // exec de bash: gh no está en el PATH del shell de login
+				return nil, errNoGh // bash exec: gh is not on the login shell's PATH
 			}
 			if s := clip(errb.buf.String(), maxStderr); s != "" {
 				return nil, errors.New(s)
@@ -158,11 +158,11 @@ func (g *githubConnector) friendly(err error) string {
 	case strings.HasPrefix(msg, "GitHub:"):
 		return msg
 	case strings.Contains(msg, "HTTP 401") || strings.Contains(strings.ToLower(msg), "authentication"):
-		return "GitHub: credenciales inválidas (revisa el perfil de whoas)"
+		return "GitHub: invalid credentials (check the whoas profile)"
 	case strings.Contains(msg, "HTTP 404"):
-		return fmt.Sprintf("GitHub: repositorio no encontrado (%s)", g.repo)
+		return fmt.Sprintf("GitHub: repository not found (%s)", g.repo)
 	case errors.Is(err, exec.ErrNotFound):
-		return "GitHub: no encontré el comando gh en el hub"
+		return "GitHub: gh command not found on the hub"
 	}
 	return "GitHub: " + clip(msg, maxStderr)
 }
@@ -191,7 +191,7 @@ type ghComment struct {
 	} `json:"user"`
 }
 
-// decodePages lee los arrays JSON concatenados que produce `gh api --paginate`.
+// decodePages reads the concatenated JSON arrays that `gh api --paginate` produces.
 func decodePages[T any](data []byte) ([]T, error) {
 	var all []T
 	dec := json.NewDecoder(bytes.NewReader(data))
@@ -201,19 +201,20 @@ func decodePages[T any](data []byte) ([]T, error) {
 			if errors.Is(err, io.EOF) {
 				return all, nil
 			}
-			return nil, fmt.Errorf("GitHub: respuesta inválida: %v", err)
+			return nil, fmt.Errorf("GitHub: invalid response: %v", err)
 		}
 		all = append(all, page...)
 	}
 }
 
+// The "en curso" and "bloqueado" labels are deliberate external label names (repos may already use them), not untranslated text.
 var ghStatusLabels = []struct {
 	status string
 	names  []string
 }{
-	{"en_curso", []string{"en curso", "in progress"}},
-	{"en_review", []string{"review", "in review"}},
-	{"bloqueado", []string{"blocked", "bloqueado"}},
+	{"in_progress", []string{"en curso", "in progress"}},
+	{"in_review", []string{"review", "in review"}},
+	{"blocked", []string{"blocked", "bloqueado"}},
 }
 
 func (g *githubConnector) rawStatus(is ghIssue) string {
@@ -235,7 +236,7 @@ func (g *githubConnector) rawStatus(is ghIssue) string {
 }
 
 func (g *githubConnector) List(ctx context.Context, since int64) ([]proto.Ticket, error) {
-	// Primer sync: solo abiertos (los cerrados históricos pueden ser miles).
+	// First sync: open only (closed historical ones can be thousands).
 	q := "state=open&per_page=100"
 	if since > 0 {
 		q = "state=all&since=" + time.UnixMilli(since).UTC().Format(time.RFC3339) + "&per_page=100"
@@ -268,7 +269,7 @@ func (g *githubConnector) List(ctx context.Context, since int64) ([]proto.Ticket
 		if is.State == "open" && fetches < ghMaxFetches {
 			fetches++
 			cs, err := g.comments(ctx, is.Number)
-			if err == nil { // un fallo aislado no aborta el sync: Comments nil conserva los guardados
+			if err == nil { // an isolated failure does not abort the sync: nil Comments keeps the stored ones
 				t.Comments = cs
 			}
 		}
@@ -284,7 +285,7 @@ func clipRunes(s string, n int) string {
 	return s
 }
 
-// comments devuelve los últimos 5 comentarios (el endpoint los entrega del más viejo al más nuevo).
+// comments returns the latest 5 comments (the endpoint delivers them oldest to newest).
 func (g *githubConnector) comments(ctx context.Context, n int) ([]proto.TicketComment, error) {
 	path := fmt.Sprintf("repos/%s/issues/%d/comments?per_page=100", g.repo, n)
 	out, err := g.gh(ctx, "api", "--paginate", path)
@@ -314,34 +315,34 @@ func (g *githubConnector) SetStatus(ctx context.Context, externalID, status stri
 	base := "repos/" + g.repo + "/issues/" + externalID
 	var err error
 	switch status {
-	case "hecho":
+	case "done":
 		if _, err = g.gh(ctx, "api", "-X", "PATCH", base, "-f", "state=closed"); err == nil {
 			err = g.removeLabels(ctx, base, "")
 		}
-	case "por_hacer":
+	case "todo":
 		if _, err = g.gh(ctx, "api", "-X", "PATCH", base, "-f", "state=open"); err == nil {
 			err = g.removeLabels(ctx, base, "")
 		}
-	case "en_curso", "en_review", "bloqueado":
+	case "in_progress", "in_review", "blocked":
 		label := ghSetLabels[status]
 		if _, err = g.gh(ctx, "api", "-X", "POST", base+"/labels", "-f", "labels[]="+label); err == nil {
 			err = g.removeLabels(ctx, base, label)
 		}
 	default:
-		return fmt.Errorf("GitHub: estado desconocido %q", status)
+		return fmt.Errorf("GitHub: unknown status %q", status)
 	}
 	return err
 }
 
-var ghSetLabels = map[string]string{"en_curso": "en curso", "en_review": "review", "bloqueado": "blocked"}
+var ghSetLabels = map[string]string{"in_progress": "en curso", "in_review": "review", "blocked": "blocked"}
 
-// removeLabels quita las labels de estado salvo keep; un 404 (la label no estaba) se ignora.
+// removeLabels removes the status labels except keep; a 404 (the label was not there) is ignored.
 func (g *githubConnector) removeLabels(ctx context.Context, base, keep string) error {
 	for _, l := range []string{"en curso", "review", "blocked"} {
 		if l == keep {
 			continue
 		}
-		if _, err := g.gh(ctx, "api", "-X", "DELETE", base+"/labels/"+url.PathEscape(l)); err != nil && !strings.Contains(err.Error(), "no encontrado") {
+		if _, err := g.gh(ctx, "api", "-X", "DELETE", base+"/labels/"+url.PathEscape(l)); err != nil && !strings.Contains(err.Error(), "not found") {
 			return err
 		}
 	}

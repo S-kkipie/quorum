@@ -14,7 +14,7 @@ import (
 	"github.com/S-kkipie/quorum/internal/proto"
 )
 
-// Store es lo que el sincronizador necesita del almacén (lo implementa *store.Store).
+// Store is what the syncer needs from the store (implemented by *store.Store).
 type Store interface {
 	ListProjects() ([]proto.Project, error)
 	GetProject(id string) (proto.Project, error)
@@ -30,22 +30,22 @@ const (
 	maxIntervalMin     = 60
 )
 
-// Syncer sincroniza periódicamente los tickets de cada proyecto con su conector.
+// Syncer periodically syncs each project's tickets with its connector.
 type Syncer struct {
 	st      Store
 	pub     func(proto.Envelope)
 	newConn func(cfg proto.ConnectorConfig, token string, env []string) (Connector, error)
 	now     func() time.Time
-	// OnChange se llama tras una sincronización que cambió tickets.
+	// OnChange is called after a sync that changed tickets.
 	OnChange func(projectID string)
 	tick     time.Duration
 
 	mu      sync.Mutex
-	wmu     sync.Mutex // serializa las escrituras de tickets con Invalidate
+	wmu     sync.Mutex // serializes ticket writes with Invalidate
 	base    context.Context
 	running map[string]bool
-	gen     map[string]int  // sube con Invalidate: el conector del proyecto cambió
-	again   map[string]bool // llegó un SyncNow mientras otra sincronización corría
+	gen     map[string]int  // rises with Invalidate: the project's connector changed
+	again   map[string]bool // a SyncNow arrived while another sync was running
 }
 
 func NewSyncer(st Store, pub func(proto.Envelope)) *Syncer {
@@ -63,7 +63,7 @@ func clampInterval(m int) time.Duration {
 	return time.Duration(m) * time.Minute
 }
 
-// Start lanza la goroutine periódica y vuelve enseguida; para al cancelarse ctx.
+// Start launches the periodic goroutine and returns right away; stops when ctx is cancelled.
 func (s *Syncer) Start(ctx context.Context) {
 	s.mu.Lock()
 	s.base = ctx
@@ -86,7 +86,7 @@ func (s *Syncer) Start(ctx context.Context) {
 func (s *Syncer) syncDue(ctx context.Context) {
 	ps, err := s.st.ListProjects()
 	if err != nil {
-		log.Printf("sync: listar proyectos: %v", err)
+		log.Printf("sync: list projects: %v", err)
 		return
 	}
 	now := s.now()
@@ -100,14 +100,14 @@ func (s *Syncer) syncDue(ctx context.Context) {
 		id := p.ID
 		go func() {
 			if err := s.sync(ctx, id); err != nil {
-				log.Printf("sync: proyecto %s: %v", id, err)
+				log.Printf("sync: project %s: %v", id, err)
 			}
 		}()
 	}
 }
 
-// SyncNow sincroniza ya el proyecto y devuelve el error de la sincronización. Si ya hay
-// una en curso para ese proyecto la deja marcada para repetirse al terminar (nil).
+// SyncNow syncs the project now and returns the sync error. If one is already
+// running for that project it marks it to repeat when done (nil).
 func (s *Syncer) SyncNow(projectID string) error {
 	s.mu.Lock()
 	ctx := s.base
@@ -115,9 +115,9 @@ func (s *Syncer) SyncNow(projectID string) error {
 	return s.syncAgain(ctx, projectID, true)
 }
 
-// Invalidate cambia el origen del conector: ejecuta fn (que borra los datos del origen
-// viejo) excluyendo las escrituras de las sincronizaciones, y lo que traiga una que ya
-// estuviera en curso contra el origen viejo se descarta.
+// Invalidate changes the connector's source: it runs fn (which deletes the old source's
+// data) excluding the syncs' writes, and whatever a sync already
+// running against the old source brings back is discarded.
 func (s *Syncer) Invalidate(projectID string, fn func() error) error {
 	s.wmu.Lock()
 	defer s.wmu.Unlock()
@@ -173,7 +173,7 @@ func (s *Syncer) syncOnce(ctx context.Context, id string) error {
 	if p.Connector.Kind == "" || p.Connector.Kind == "none" {
 		return ErrNoConnector
 	}
-	start := s.now().UnixMilli() // antes de consultar: lo que cambie durante el fetch se verá en la siguiente
+	start := s.now().UnixMilli() // before querying: what changes during the fetch will be seen on the next one
 	err = s.fetch(ctx, p, g)
 	if errors.Is(err, errStale) {
 		return nil
@@ -185,7 +185,7 @@ func (s *Syncer) syncOnce(ctx context.Context, id string) error {
 		s.wmu.Lock()
 		if s.current(id, g) {
 			if e := s.st.SetSyncResult(id, err.Error(), s.now().UnixMilli()); e != nil {
-				log.Printf("sync: guardar resultado de %s: %v", id, e)
+				log.Printf("sync: save result of %s: %v", id, e)
 			}
 		}
 		s.wmu.Unlock()
@@ -207,10 +207,10 @@ func (s *Syncer) syncOnce(ctx context.Context, id string) error {
 	return nil
 }
 
-// errStale: el conector cambió durante la consulta; se descarta lo traído.
-var errStale = errors.New("el conector cambió durante la sincronización")
+// errStale: the connector changed during the query; what was fetched is discarded.
+var errStale = errors.New("the connector changed during the sync")
 
-// fetch obtiene los tickets, los normaliza y los guarda; el error deja los tickets como estaban.
+// fetch gets the tickets, normalizes and stores them; on error the tickets stay as they were.
 func (s *Syncer) fetch(ctx context.Context, p proto.Project, g int) (err error) {
 	var token string
 	defer func() {
@@ -238,13 +238,13 @@ func (s *Syncer) fetch(ctx context.Context, p proto.Project, g int) (err error) 
 	custom := map[string]string{}
 	if raw := p.Connector.Settings["statusMap"]; raw != "" {
 		if err := json.Unmarshal([]byte(raw), &custom); err != nil {
-			return fmt.Errorf("statusMap inválido: %v", err)
+			return fmt.Errorf("invalid statusMap: %v", err)
 		}
 	}
 	out := make([]proto.Ticket, 0, len(ts))
 	for _, t := range ts {
 		if t.ExternalID == "" {
-			return errors.New("el conector devolvió un ticket sin externalId")
+			return errors.New("the connector returned a ticket without externalId")
 		}
 		if t.RawStatus == "" {
 			t.RawStatus = t.Status
@@ -276,7 +276,7 @@ func (s *Syncer) publishProject(id string) {
 	if err != nil {
 		return
 	}
-	pl, _ := json.Marshal(p) // Project no lleva token
+	pl, _ := json.Marshal(p) // Project carries no token
 	s.pub(proto.Envelope{Type: "project_upsert", Payload: pl})
 }
 
@@ -292,8 +292,8 @@ func (s *Syncer) publishTickets(id string) {
 	s.pub(proto.Envelope{Type: "tickets", Payload: pl})
 }
 
-// BuildEnv es el entorno con que se lanzan los conectores (lecturas y escrituras):
-// el del proceso más WHOAS_PROFILE del trabajo.
+// BuildEnv is the environment the connectors are launched with (reads and writes):
+// the process's plus the workspace's WHOAS_PROFILE.
 func BuildEnv(st interface {
 	ListWorkspaces() ([]proto.Workspace, error)
 }, workspaceID string) []string {
@@ -308,7 +308,7 @@ func BuildEnv(st interface {
 	return env
 }
 
-// Redact oculta el token en msg.
+// Redact hides the token in msg.
 func Redact(msg, token string) string { return redact(msg, token) }
 
 type tkey struct {

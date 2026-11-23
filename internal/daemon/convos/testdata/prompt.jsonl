@@ -1,6 +1,6 @@
 {"type":"user","message":{"role":"user","content":"<command-name>/clear</command-name>"}}
-{"type":"user","isMeta":true,"message":{"role":"user","content":"Caveat: nota interna"}}
-{"type":"user","message":{"role":"user","content":"Quiero que revises a fondo todo el módulo de facturación y me digas qué partes están rotas y cómo se arreglan"}}
+{"type":"user","isMeta":true,"message":{"role":"user","content":"Caveat: internal note"}}
+{"type":"user","message":{"role":"user","content":"I want you to thoroughly review the whole billing module and tell me which parts are broken and how to fix them"}}
 {"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Read","input":{}}]}}
-esto no es json {{{
-{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Ya lo revisé."}]}}
+this is not json {{{
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Already reviewed."}]}}

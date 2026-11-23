@@ -22,7 +22,7 @@ func TestRotatingLogKeepsOneOld(t *testing.T) {
 	require.NoError(t, err)
 	old, err := os.ReadFile(p + ".1")
 	require.NoError(t, err)
-	// 2 líneas por fichero: tras 7 escrituras quedan la 7ª y (en .1) la 5ª y 6ª
+	// 2 lines per file: after 7 writes the 7th remains and (in .1) the 5th and 6th
 	require.Len(t, cur, 40)
 	require.Len(t, old, 80)
 	_, err = os.Stat(p + ".2")
@@ -39,17 +39,17 @@ func TestRotateLogAtSpawn(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 200, st.Size())
 	require.NoError(t, os.WriteFile(p, make([]byte, 50), 0o600))
-	rotateLog(p, 100) // bajo el tope: no rota
+	rotateLog(p, 100) // under the cap: does not rotate
 	_, err = os.Stat(p)
 	require.NoError(t, err)
 }
 
-// Revisión: si el renombre falla no se reabre el fichero en cada escritura; se
+// retries after renameRetry.
 // reintenta pasado renameRetry.
 func TestRotatingLogBacksOffAfterFailedRename(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "quorumd.log")
-	require.NoError(t, os.MkdirAll(filepath.Join(p+".1", "x"), 0o700)) // .1 es un directorio no vacío: Rename falla
+	require.NoError(t, os.MkdirAll(filepath.Join(p+".1", "x"), 0o700)) // .1 is a non-empty directory: Rename fails
 	clock := time.Unix(1000, 0)
 	l := newRotatingLog(p, 100)
 	l.now = func() time.Time { return clock }
@@ -58,7 +58,7 @@ func TestRotatingLogBacksOffAfterFailedRename(t *testing.T) {
 		_, err := l.Write(line)
 		require.NoError(t, err)
 	}
-	require.Equal(t, 2, l.opens) // la inicial y la del único intento fallido
+	require.Equal(t, 2, l.opens) // the initial one and the single failed attempt
 	require.NoError(t, os.RemoveAll(p+".1"))
 	clock = clock.Add(renameRetry)
 	_, err := l.Write(line)

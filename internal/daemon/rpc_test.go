@@ -18,7 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Los tests nunca deben tocar el herdr real de la PC.
+// Tests must never touch the PC's real herdr.
 func TestMain(m *testing.M) {
 	dir, _ := os.MkdirTemp("", "qd")
 	os.Setenv("HERDR_SOCKET_PATH", filepath.Join(dir, "no-herdr.sock"))
@@ -39,7 +39,7 @@ func fakeUp(t *testing.T) *herdrtest.Fake {
 	return f
 }
 
-// startLink arranca un hub falso y el enlace; devuelve el hub y el registro.
+// startLink starts a fake hub and the link; returns the hub and the registry.
 func startLink(t *testing.T, host *Host) (*fakeHub, *Registry) {
 	fastBackoff(t)
 	fh := &fakeHub{}
@@ -160,11 +160,11 @@ func TestLaunchFallsBackOnlyWhenHerdrUnavailable(t *testing.T) {
 	viaRun, _ := stubLaunch(t)
 	h := hostFor(t, fakeUp(t).Socket)
 	launchHerdr = func(_ context.Context, _ *herdr.Client, _ *launch.Workspaces, r proto.LaunchRequest) (proto.LaunchResult, error) {
-		return proto.LaunchResult{ReqID: r.ReqID, Error: "no se pudo", Via: "herdr"}, &herdr.Error{Code: "boom"}
+		return proto.LaunchResult{ReqID: r.ReqID, Error: "failed", Via: "herdr"}, &herdr.Error{Code: "boom"}
 	}
 	res := h.launch(context.Background(), proto.LaunchRequest{ReqID: "r1"})
-	require.Equal(t, "no se pudo", res.Error)
-	require.Equal(t, 0, *viaRun) // fallo de herdr: definitivo, sin segundo lanzamiento
+	require.Equal(t, "failed", res.Error)
+	require.Equal(t, 0, *viaRun) // herdr failure: final, no second launch
 
 	launchHerdr = func(_ context.Context, _ *herdr.Client, _ *launch.Workspaces, r proto.LaunchRequest) (proto.LaunchResult, error) {
 		return proto.LaunchResult{ReqID: r.ReqID}, launch.ErrHerdrUnavailable
@@ -176,12 +176,12 @@ func TestLaunchFallsBackOnlyWhenHerdrUnavailable(t *testing.T) {
 
 func TestRPCUnknownMethod(t *testing.T) {
 	fh, _ := startLink(t, noHerdrHost(t))
-	rp, _ := json.Marshal(proto.RPC{ReqID: "q1", Method: "nada"})
+	rp, _ := json.Marshal(proto.RPC{ReqID: "q1", Method: "nothing"})
 	fh.send(t, proto.Envelope{Type: "rpc", Payload: rp})
 	var res proto.RPCResult
 	require.NoError(t, json.Unmarshal(fh.waitEnv(t, "rpc_result").Payload, &res))
 	require.Equal(t, "q1", res.ReqID)
-	require.Equal(t, "método desconocido", res.Error)
+	require.Equal(t, "unknown method", res.Error)
 }
 
 func TestRPCDispatchesHandler(t *testing.T) {

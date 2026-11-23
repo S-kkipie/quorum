@@ -12,27 +12,27 @@ import (
 	"time"
 )
 
-// failLimiter acota los intentos fallidos de /api/pair y /api/link por IP remota
-// (por minuto) para que un código de 6 dígitos no se pueda adivinar a fuerza bruta
-// sin que un tercero bloquee a todos con unos pocos intentos.
+// failLimiter bounds failed attempts at /api/pair and /api/link per remote IP
+// (per minute) so a 6-digit code cannot be brute-forced
+// without a third party being able to lock everyone out with a few attempts.
 type failLimiter struct {
 	mu    sync.Mutex
-	max   int // por clave
-	total int // techo global (todas las claves): rotar IPs no multiplica el ritmo
+	max   int // per key
+	total int // global ceiling (all keys): rotating IPs does not multiply the rate
 	win   time.Duration
 	times map[string][]time.Time
 	all   []time.Time
 	now   func() time.Time
 }
 
-// maxLimiterKeys acota el mapa; si se llena, las IPs nuevas comparten la clave global.
+// maxLimiterKeys bounds the map; if it fills up, new IPs share the global key.
 const maxLimiterKeys = 4096
 
 func newFailLimiter() *failLimiter {
 	return &failLimiter{max: 10, total: 30, win: time.Minute, times: map[string][]time.Time{}, now: time.Now}
 }
 
-func (l *failLimiter) trim(key string) []time.Time { // con l.mu tomado
+func (l *failLimiter) trim(key string) []time.Time { // with l.mu held
 	cut := l.now().Add(-l.win)
 	ts := l.times[key]
 	i := 0
@@ -48,7 +48,7 @@ func (l *failLimiter) trim(key string) []time.Time { // con l.mu tomado
 	return ts
 }
 
-func (l *failLimiter) trimAll() { // con l.mu tomado
+func (l *failLimiter) trimAll() { // with l.mu held
 	cut := l.now().Add(-l.win)
 	i := 0
 	for i < len(l.all) && !l.all[i].After(cut) {
@@ -57,7 +57,7 @@ func (l *failLimiter) trimAll() { // con l.mu tomado
 	l.all = l.all[i:]
 }
 
-// blocked: ya hubo max fallos de key, o total fallos en conjunto, en la ventana.
+// blocked: there were already max failures for key, or total failures overall, in the window.
 func (l *failLimiter) blocked(key string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -75,7 +75,7 @@ func (l *failLimiter) fail(key string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if _, ok := l.times[key]; !ok && len(l.times) >= maxLimiterKeys {
-		for k := range l.times { // limpia las claves vencidas antes de rendirse
+		for k := range l.times { // drop expired keys before giving up
 			l.trim(k)
 		}
 		if len(l.times) >= maxLimiterKeys {
@@ -87,10 +87,10 @@ func (l *failLimiter) fail(key string) {
 	l.all = append(l.all, l.now())
 }
 
-// clientKey identifica al cliente para el limitador: su IP remota. Si la conexión
-// viene de loopback (proxy local, p. ej. tailscale serve) se usa la ÚLTIMA entrada de
-// X-Forwarded-For: la que añadió ese proxy de confianza; las anteriores las pone el
-// cliente y se pueden falsificar. Sin IP reconocible, la clave global "".
+// clientKey identifies the client for the limiter: its remote IP. If the connection
+// comes from loopback (local proxy, e.g. tailscale serve) the LAST entry of
+// X-Forwarded-For is used: the one added by that trusted proxy; the earlier ones are set by the
+// client and can be forged. With no recognizable IP, the global key "".
 func clientKey(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
@@ -115,16 +115,16 @@ func clientKey(r *http.Request) string {
 type ctxKey struct{}
 type tokKey struct{}
 
-// tokenRecheck: cada cuánto un WebSocket vivo (app o máquina) vuelve a validar su
-// token. `quorum-hub revoke` corre en otro proceso y solo toca la BD, así que el
-// servidor no se entera: la conexión de un token revocado se cierra en la próxima
-// comprobación (como mucho tokenRecheck después). En nanosegundos; los tests lo acortan.
+// tokenRecheck: how often a live WebSocket (app or machine) revalidates its
+// token. `quorum-hub revoke` runs in another process and only touches the DB, so the
+// server does not find out: a revoked token's connection is closed at the next
+// check (at most tokenRecheck later). In nanoseconds; tests shorten it.
 var tokenRecheck atomic.Int64
 
 func init() { tokenRecheck.Store(int64(60 * time.Second)) }
 
-// watchToken cierra la conexión (llamando a closeFn) si el token del contexto deja
-// de validar; termina con ctx.
+// watchToken closes the connection (calling closeFn) if the context's token stops
+// validating; ends with ctx.
 func (s *Server) watchToken(ctx context.Context, kind string, closeFn func()) {
 	tok, _ := ctx.Value(tokKey{}).(string)
 	t := time.NewTicker(time.Duration(tokenRecheck.Load()))
@@ -142,7 +142,7 @@ func (s *Server) watchToken(ctx context.Context, kind string, closeFn func()) {
 	}
 }
 
-// NewToken genera 32 bytes aleatorios en base64url sin relleno.
+// NewToken generates 32 random bytes in unpadded base64url.
 func NewToken() (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
@@ -151,7 +151,7 @@ func NewToken() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
-// AuthName devuelve el nombre autenticado (dispositivo o máquina) del contexto.
+// AuthName returns the authenticated name (device or machine) of the context.
 func AuthName(ctx context.Context) string {
 	n, _ := ctx.Value(ctxKey{}).(string)
 	return n
@@ -190,6 +190,6 @@ func (s *Server) require(kind string, allowQuery bool, h http.Handler) http.Hand
 				return
 			}
 		}
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "no autorizado"})
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 	})
 }

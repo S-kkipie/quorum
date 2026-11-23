@@ -15,7 +15,7 @@ import (
 const (
 	clientBuffer    = 256
 	clientReadLimit = 64 << 10
-	// maxPending: lo que se guarda para un cliente mientras recibe su snapshot.
+	// maxPending: what is kept for a client while it receives its snapshot.
 	maxPending = 4096
 )
 
@@ -26,14 +26,14 @@ type queued struct {
 
 type liveClient struct {
 	ws   *websocket.Conn
-	send chan proto.Envelope // vale nil mientras waiting
-	// waiting: aún se escribe su snapshot; lo publicado se guarda en pending (con su
-	// número) y no en send, así un snapshot grande no lo deja por lento.
+	send chan proto.Envelope // nil while waiting
+	// waiting: its snapshot is still being written; what is published is kept in pending (with its
+	// number) and not in send, so a large snapshot does not make it count as slow.
 	waiting bool
 	pending []queued
-	// frames: la última foto (term_frame) de cada panel, por máquina+"\x00"+panel.
-	// Nunca pasa por send ni pending: una foto nueva pisa la anterior y jamás deja
-	// al cliente por lento. frameSig avisa al escritor (capacidad 1).
+	// frames: the latest picture (term_frame) of each pane, per machine+"\x00"+pane.
+	// It never goes through send or pending: a new picture overwrites the old one and never
+	// makes the client count as slow. frameSig wakes the writer (capacity 1).
 	frames   map[string]proto.Envelope
 	frameSig chan struct{}
 }
@@ -42,7 +42,7 @@ func newLiveClient(ws *websocket.Conn) *liveClient {
 	return &liveClient{ws: ws, waiting: true, frameSig: make(chan struct{}, 1)}
 }
 
-// frameKey: máquina y panel de un term_frame.
+// frameKey: machine and pane of a term_frame.
 func frameKey(env proto.Envelope) string {
 	var tf struct {
 		Pane string `json:"pane"`
@@ -51,7 +51,7 @@ func frameKey(env proto.Envelope) string {
 	return env.Machine + "\x00" + tf.Pane
 }
 
-// takeFrames entrega y vacía las últimas fotos pendientes del cliente.
+// takeFrames hands over and empties the client's latest pending pictures.
 func (l *Live) takeFrames(c *liveClient) []proto.Envelope {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -66,16 +66,16 @@ func (l *Live) takeFrames(c *liveClient) []proto.Envelope {
 	return out
 }
 
-// Live reparte los envelopes publicados a las apps conectadas por /api/live.
+// Live distributes the published envelopes to the apps connected via /api/live.
 type Live struct {
 	srv     *Server
 	mu      sync.Mutex
 	clients map[*liveClient]struct{}
-	seq     uint64 // número de cada envelope publicado (bajo mu)
+	seq     uint64 // number of each published envelope (under mu)
 }
 
-// inSnapshot: tipos cuyo estado vigente ya trae el snapshot; una copia encolada antes
-// de leerlo es vieja y reenviarla tras él resucitaría estado (p. ej. una sesión renombrada).
+// inSnapshot: types whose current state the snapshot already carries; a copy queued before
+// reading it is stale and resending it after it would resurrect state (e.g. a renamed session).
 func inSnapshot(t string) bool {
 	return t == "session_upsert" || t == "machine_status" || t == "workspace_upsert" || t == "project_upsert"
 }
@@ -84,19 +84,19 @@ func newLive(s *Server) *Live {
 	return &Live{srv: s, clients: map[*liveClient]struct{}{}}
 }
 
-// Publish alimenta el rastreador de asks y difunde a todos los clientes sin bloquear.
+// Publish feeds the ask tracker and broadcasts to all clients without blocking.
 func (l *Live) Publish(env proto.Envelope) {
 	var si proto.SessionInfo
 	if env.Type == "session_upsert" && json.Unmarshal(env.Payload, &si) == nil && si.PreviousID != "" {
 		if si.PreviousID == si.ID || l.srv.sessionLive(si.PreviousID) {
-			// El id anterior vive por su cuenta (p. ej. `claude --resume` del id viejo
-			// tras /clear): no hay renombre que aplicar ni que contar a las apps.
+			// The previous id lives on its own (e.g. `claude --resume` of the old id
+			// after /clear): there is no rename to apply or to report to the apps.
 			si.PreviousID = ""
 			env.Payload, _ = json.Marshal(si)
 		}
 	}
 	if env.Type == "term_frame" {
-		// coalescing: solo la última foto por panel; nunca se encola más de una.
+		// coalescing: only the latest picture per pane; never more than one is queued.
 		key := frameKey(env)
 		l.mu.Lock()
 		for c := range l.clients {
@@ -171,24 +171,24 @@ func (l *Live) snapshot() []proto.Envelope {
 	return out
 }
 
-// add registra el cliente y devuelve el snapshot que debe recibir antes que su cola,
-// con el número de publicación vigente al leerlo. El cliente se registra primero y
-// el snapshot se lee después, fuera del candado (las consultas a la BD no frenan
-// cada Publish); lo publicado entretanto queda en pending.
+// add registers the client and returns the snapshot it must receive before its queue,
+// with the publication number current when it was read. The client is registered first and
+// the snapshot is read afterwards, outside the lock (DB queries do not slow
+// every Publish); what is published in the meantime stays in pending.
 func (l *Live) add(ws *websocket.Conn) (*liveClient, []proto.Envelope, uint64) {
 	c := newLiveClient(ws)
 	l.mu.Lock()
 	l.clients[c] = struct{}{}
 	l.mu.Unlock()
 	l.mu.Lock()
-	snapSeq := l.seq // todo lo publicado hasta aquí ya está en el store que lee el snapshot
+	snapSeq := l.seq // everything published up to here is already in the store the snapshot reads
 	l.mu.Unlock()
 	return c, l.snapshot(), snapSeq
 }
 
-// ready termina el snapshot del cliente: descarta de pending las copias viejas
-// (número <= snapSeq) de lo que el snapshot ya trae, y pasa el resto a un canal con
-// sitio para todo. Devuelve el canal (nil si el cliente ya no está).
+// ready finishes the client's snapshot: drops from pending the stale copies
+// (number <= snapSeq) of what the snapshot already carries, and moves the rest to a channel with
+// room for everything. Returns the channel (nil if the client is gone).
 func (l *Live) ready(c *liveClient, snapSeq uint64) chan proto.Envelope {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -226,7 +226,7 @@ func (s *Server) handleLive(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	c, snap, snapSeq := s.live.add(ws)
 	defer ws.CloseNow()
-	go s.watchToken(ctx, "device", func() { ws.Close(websocket.StatusPolicyViolation, "token revocado"); cancel() })
+	go s.watchToken(ctx, "device", func() { ws.Close(websocket.StatusPolicyViolation, "token revoked"); cancel() })
 	defer s.live.remove(c)
 	go func() {
 		defer cancel()
@@ -251,7 +251,7 @@ func (s *Server) handleLive(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 			case <-c.frameSig:
-				// primero lo normal ya encolado (en orden), luego las últimas fotos
+				// first the normal already-queued ones (in order), then the latest pictures
 				for drained := false; !drained; {
 					select {
 					case env := <-send:
@@ -279,6 +279,6 @@ func (s *Server) handleLive(w http.ResponseWriter, r *http.Request) {
 		if err := wsjson.Read(ctx, ws, &m); err != nil {
 			return
 		}
-		log.Printf("hub: mensaje de app ignorado: %q", m.Type)
+		log.Printf("hub: app message ignored: %q", m.Type)
 	}
 }

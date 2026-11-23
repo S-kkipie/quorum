@@ -1,5 +1,5 @@
-// Package convos lista las conversaciones anteriores de Claude Code de una
-// carpeta de proyecto, leyendo los JSONL de ~/.claude/projects.
+// Package convos lists the previous Claude Code conversations of a
+// project folder, reading the JSONL files in ~/.claude/projects.
 package convos
 
 import (
@@ -19,16 +19,16 @@ import (
 )
 
 const (
-	maxFile      = 200 << 20 // ficheros más grandes se ignoran
-	maxLine      = 1 << 20   // líneas más largas se saltan
-	maxTitle     = 80        // runas del título sacado del primer prompt
-	maxPrompt    = 500       // runas de FirstPrompt (acota el tamaño de la respuesta)
+	maxFile      = 200 << 20 // larger files are ignored
+	maxLine      = 1 << 20   // longer lines are skipped
+	maxTitle     = 80        // runes of the title taken from the first prompt
+	maxPrompt    = 500       // runes of FirstPrompt (bounds the response size)
 	maxCacheSize = 4096
 )
 
-// Dir es la carpeta donde Claude Code guarda las conversaciones de root:
-// ~/.claude/projects/<root con todo carácter no [A-Za-z0-9] cambiado por '-'>.
-// Como Claude Code, cambia caracteres (no bytes): "é" da un solo '-'.
+// Dir is the folder where Claude Code stores the conversations of root:
+// ~/.claude/projects/<root with every non-[A-Za-z0-9] character replaced by '-'>.
+// Like Claude Code, it replaces characters (not bytes): "é" yields a single '-'.
 func Dir(home, root string) string {
 	var sb strings.Builder
 	for _, r := range root {
@@ -49,7 +49,7 @@ type cacheKey struct {
 
 var (
 	cacheMu sync.Mutex
-	cache   = map[string]cached{} // por path
+	cache   = map[string]cached{} // by path
 )
 
 type cached struct {
@@ -57,9 +57,9 @@ type cached struct {
 	c   proto.Conversation
 }
 
-// List devuelve como máximo max conversaciones de dir, las más recientes primero
-// (por mtime). Las que no tienen mensajes se omiten. live marca las que están
-// abiertas ahora. Si dir no existe devuelve una lista vacía sin error.
+// List returns at most max conversations from dir, most recent first
+// (by mtime). Those with no messages are omitted. live marks the ones
+// currently open. If dir does not exist it returns an empty list without error.
 func List(dir string, live map[string]bool, max int) ([]proto.Conversation, error) {
 	out := []proto.Conversation{}
 	ents, err := os.ReadDir(dir)
@@ -105,7 +105,7 @@ func List(dir string, live map[string]bool, max int) ([]proto.Conversation, erro
 	return out, nil
 }
 
-// load lee (o saca de la caché) la conversación de path.
+// load reads (or takes from the cache) the conversation at path.
 func load(path string, info fs.FileInfo) (proto.Conversation, bool) {
 	key := cacheKey{path, info.Size(), info.ModTime().UnixNano()}
 	cacheMu.Lock()
@@ -129,7 +129,7 @@ func load(path string, info fs.FileInfo) (proto.Conversation, bool) {
 
 	cacheMu.Lock()
 	if len(cache) >= maxCacheSize {
-		cache = map[string]cached{} // tope simple: se vacía y se vuelve a llenar
+		cache = map[string]cached{} // simple cap: empty it and refill
 	}
 	cache[path] = cached{key, c}
 	cacheMu.Unlock()
@@ -153,7 +153,7 @@ type line struct {
 	} `json:"message"`
 }
 
-// parse arma la conversación (sin ID ni fechas) a partir del JSONL.
+// parse builds the conversation (without ID or dates) from the JSONL.
 func parse(r io.Reader) (proto.Conversation, error) {
 	var c proto.Conversation
 	var custom, ai, summary string
@@ -206,7 +206,7 @@ func parse(r io.Reader) (proto.Conversation, error) {
 	return c, nil
 }
 
-// pick se queda con el último valor no vacío (un título nuevo reemplaza al anterior).
+// pick keeps the last non-empty value (a new title replaces the previous one).
 func pick(cur, v string) string {
 	if v = strings.TrimSpace(v); v != "" {
 		return v
@@ -214,7 +214,7 @@ func pick(cur, v string) string {
 	return cur
 }
 
-// hasText dice si el contenido de una línea user/assistant lleva texto de verdad.
+// hasText reports whether the content of a user/assistant line carries real text.
 func hasText(typ string, content json.RawMessage) bool {
 	ok := func(s string) bool {
 		return strings.TrimSpace(s) != "" && (typ != "user" || !transcript.SkipUserText(s))
@@ -243,7 +243,7 @@ func clipRunes(s string, n int) string {
 	return strings.TrimSpace(string(r[:n]))
 }
 
-// readLine lee una línea completa; devuelve vacía las que exceden maxLine.
+// readLine reads a whole line; returns empty for lines that exceed maxLine.
 func readLine(br *bufio.Reader) ([]byte, error) {
 	var buf []byte
 	tooBig := false

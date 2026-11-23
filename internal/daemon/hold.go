@@ -7,18 +7,18 @@ import (
 	"time"
 )
 
-// HoldMax es lo más que dura `quorumd hold`: algo más que los 20 min que un hook
-// tool.check puede quedar retenido por sus llamadas `$` (el mod lo mata antes).
+// HoldMax is the longest `quorumd hold` lasts: a bit more than the 20 min a tool.check
+// hook can stay held by its `$` calls (the mod kills it earlier).
 const HoldMax = 25 * time.Minute
 
-// holdPollEvery es cada cuánto Hold mira si su padre murió.
+// holdPollEvery is how often Hold checks whether its parent died.
 const holdPollEvery = 2 * time.Second
 
-// Hold espera sin hacer nada hasta que ctx termine, pase max o muera el padre. El mod
-// lo lanza con `$.process.spawn` desde tool.check: un `$` en curso no gasta los 10 s
-// propios del hook, así la espera de un permiso desde el dispositivo puede durar minutos.
-// Si el padre (el proceso de Claude Code) muere, el hijo queda huérfano y su ppid
-// cambia (Linux/mac): termina en vez de esperar los 25 min. En Windows solo rige max.
+// Hold waits doing nothing until ctx ends, max passes or the parent dies. The mod
+// launches it with `$.process.spawn` from tool.check: a running `$` does not spend the hook's
+// own 10 s, so waiting for a permission from the device can take minutes.
+// If the parent (the Claude Code process) dies, the child is orphaned and its ppid
+// changes (Linux/mac): it exits instead of waiting the 25 min. On Windows only max applies.
 func Hold(ctx context.Context, max time.Duration) {
 	var ppid func() int
 	if runtime.GOOS != "windows" {

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { defaultDeviceName, hubUrl, pair } from '../lib/api'
 
 export default function Pair({ onPaired }: { onPaired: () => void }) {
-  // Servido por el hub (mismo origen) la dirección puede quedar vacía.
+  // When served by the hub (same origin) the address can stay empty.
   const [hub, setHub] = useState(hubUrl() || (location.protocol.startsWith('http') && !import.meta.env.DEV ? location.origin : ''))
   const [code, setCode] = useState('')
   const [name, setName] = useState(defaultDeviceName())
@@ -17,7 +17,7 @@ export default function Pair({ onPaired }: { onPaired: () => void }) {
       await pair(hub, code, name)
       onPaired()
     } catch (x) {
-      setErr(x instanceof TypeError ? 'no se pudo conectar con el hub' : (x as Error).message)
+      setErr(x instanceof TypeError ? 'could not connect to the hub' : (x as Error).message)
     } finally {
       setBusy(false)
     }
@@ -28,22 +28,22 @@ export default function Pair({ onPaired }: { onPaired: () => void }) {
     <main className="flex min-h-full items-center justify-center p-4">
       <form onSubmit={submit} className="w-full max-w-sm space-y-4">
         <h1 className="text-2xl font-semibold tracking-tight">Quorum</h1>
-        <p className="text-sm text-zinc-400">Empareja este dispositivo con tu hub. Genera un código en el hub con <code className="text-zinc-300">quorum-hub pair</code>.</p>
+        <p className="text-sm text-zinc-400">Pair this device with your hub. Generate a code on the hub with <code className="text-zinc-300">quorum-hub pair</code>.</p>
         <label className="block space-y-1 text-sm">
-          <span className="text-zinc-400">Dirección del hub</span>
-          <input className={input} value={hub} onChange={(e) => setHub(e.target.value)} placeholder="http://mi-hub:7420" autoCapitalize="none" autoCorrect="off" />
+          <span className="text-zinc-400">Hub address</span>
+          <input className={input} value={hub} onChange={(e) => setHub(e.target.value)} placeholder="http://my-hub:7420" autoCapitalize="none" autoCorrect="off" />
         </label>
         <label className="block space-y-1 text-sm">
-          <span className="text-zinc-400">Código</span>
+          <span className="text-zinc-400">Code</span>
           <input className={input + ' font-mono tracking-widest'} value={code} onChange={(e) => setCode(e.target.value)} autoComplete="one-time-code" required />
         </label>
         <label className="block space-y-1 text-sm">
-          <span className="text-zinc-400">Nombre del dispositivo</span>
+          <span className="text-zinc-400">Device name</span>
           <input className={input} value={name} onChange={(e) => setName(e.target.value)} required />
         </label>
         {err && <p role="alert" className="text-sm text-red-400">{err}</p>}
         <button disabled={busy || !code.trim()} className="w-full rounded-md bg-blue-600 px-3 py-2 text-sm font-medium hover:bg-blue-500 disabled:opacity-50">
-          {busy ? 'Emparejando…' : 'Emparejar'}
+          {busy ? 'Pairing…' : 'Pair'}
         </button>
       </form>
     </main>

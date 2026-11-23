@@ -18,15 +18,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// fastTerm acorta los intervalos del vigilante.
+// fastTerm shortens the watcher's intervals.
 func fastTerm(t *testing.T, lease time.Duration) {
 	oP, oS, oL := termPoll, termSize, termLease
 	termPoll, termSize, termLease = 5*time.Millisecond, 20*time.Millisecond, lease
 	t.Cleanup(func() { termPoll, termSize, termLease = oP, oS, oL })
 }
 
-// termFake es un herdr falso con un workspace w1 y un panel w1:p1 en /proj;
-// tab.create agrega paneles nuevos a pane.list.
+// termFake is a fake herdr with a workspace w1 and a pane w1:p1 in /proj;
+// tab.create adds new panes to pane.list.
 type termFake struct {
 	*herdrtest.Fake
 	mu    sync.Mutex
@@ -80,7 +80,7 @@ func (f *termFake) removePane(id string) {
 	}
 }
 
-// recycle simula que herdr reinició y reusó el id del panel para otra terminal.
+// recycle simulates herdr restarting and reusing the pane's id for another terminal.
 func (f *termFake) recycle(id string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -143,7 +143,7 @@ func termOpen(t *testing.T, h *Host, root string, isNew bool) openRes {
 	return r
 }
 
-// frames saca de la cola los term_frame que haya ahora mismo.
+// frames takes from the queue the term_frame events there are right now.
 func frames(reg *Registry) []proto.TermFrame {
 	var out []proto.TermFrame
 	for {
@@ -169,20 +169,20 @@ func TestTermOpenReuses(t *testing.T) {
 	require.Equal(t, a, b)
 	require.Equal(t, 1, f.count("tab.create"))
 
-	// queda recordado en disco: otro Host con el mismo fichero lo reusa
+	// it stays remembered on disk: another Host with the same file reuses it
 	h2 := termHost(t, f.Socket)
 	h2.Terms.Path = h.Terms.Path
 	require.Equal(t, "w1:t1", termOpen(t, h2, "/proj", false).Pane)
 	require.Equal(t, 1, f.count("tab.create"))
 
-	// el tab.create va sin robar el foco, en /proj y con label "terminal"
+	// the tab.create goes without stealing focus, in /proj and with label "terminal"
 	for _, c := range f.Calls() {
 		if c.Method == "tab.create" {
 			require.JSONEq(t, `{"workspace_id":"w1","cwd":"/proj","label":"terminal","focus":false}`, string(c.Params))
 		}
 	}
 
-	// si el panel recordado ya no existe, abre otro
+	// if the remembered pane no longer exists, it opens another
 	f.removePane("w1:t1")
 	require.Equal(t, "w1:t2", termOpen(t, h, "/proj", false).Pane)
 }
@@ -194,9 +194,9 @@ func TestTermOpenNewCreatesTab(t *testing.T) {
 	b := termOpen(t, h, "/proj", true)
 	require.NotEqual(t, a.Pane, b.Pane)
 	require.Equal(t, 2, f.count("tab.create"))
-	// la siguiente sin new reusa la última
+	// the next one without new reuses the last
 	require.Equal(t, b.Pane, termOpen(t, h, "/proj", false).Pane)
-	// ambas son de Quorum: se pueden cerrar
+	// both are Quorum's: they can be closed
 	ctx := context.Background()
 	_, err := call(t, ctx, h, NewRegistry("m1"), "term_close", map[string]any{"pane": a.Pane})
 	require.NoError(t, err)
@@ -209,18 +209,18 @@ func TestTermOpenFreshWorkspace(t *testing.T) {
 	f.Handle("workspace.list", func(json.RawMessage) (any, string) { return map[string]any{"workspaces": []any{}}, "" })
 	f.Handle("workspace.create", func(json.RawMessage) (any, string) {
 		f.mu.Lock()
-		f.panes = append(f.panes, map[string]any{"pane_id": "w9:p1", "workspace_id": "w9", "terminal_id": "term_w9", "cwd": "/otro"})
+		f.panes = append(f.panes, map[string]any{"pane_id": "w9:p1", "workspace_id": "w9", "terminal_id": "term_w9", "cwd": "/other"})
 		f.mu.Unlock()
 		return map[string]any{"workspace": map[string]any{"workspace_id": "w9"}, "root_pane": map[string]any{"pane_id": "w9:p1"}}, ""
 	})
 	h := termHost(t, f.Socket)
-	require.Equal(t, "w9:p1", termOpen(t, h, "/otro", false).Pane)
+	require.Equal(t, "w9:p1", termOpen(t, h, "/other", false).Pane)
 	require.Equal(t, 0, f.count("tab.create"))
 	_, err := call(t, context.Background(), h, NewRegistry("m1"), "term_close", map[string]any{"pane": "w9:p1"})
 	require.NoError(t, err)
 }
 
-// readSeq hace que pane.read devuelva los textos en orden y luego repita el último.
+// readSeq makes pane.read return the texts in order and then repeat the last one.
 func readSeq(f *termFake, texts ...string) *atomic.Int32 {
 	var n atomic.Int32
 	f.Handle("pane.read", func(json.RawMessage) (any, string) {
@@ -253,15 +253,15 @@ func TestTermWatchEmitsOnlyOnChange(t *testing.T) {
 	require.Equal(t, proto.TermFrame{Pane: "w1:p1", Cols: 80, Rows: 24, ANSI: "uno"}, got[0])
 	require.Equal(t, "dos", got[1].ANSI)
 
-	// renovar el lease no arranca un segundo vigilante; reenvía el frame actual
-	// una sola vez (ver TestTermWatchResendsOnRenew)
+	// renewing the lease does not start a second watcher; it resends the current frame
+	// only once (see TestTermWatchResendsOnRenew)
 	watch(t, ctx, h, reg, "w1:p1")
 	n := reads.Load()
 	time.Sleep(50 * time.Millisecond)
 	got = frames(reg)
 	require.Len(t, got, 1)
 	require.Equal(t, "dos", got[0].ANSI)
-	require.Less(t, reads.Load()-n, int32(20)) // ~10 lecturas en 50 ms con un solo vigilante
+	require.Less(t, reads.Load()-n, int32(20)) // ~10 reads in 50 ms with a single watcher
 }
 
 func TestTermWatchEnvelope(t *testing.T) {
@@ -276,7 +276,7 @@ func TestTermWatchEnvelope(t *testing.T) {
 		require.Equal(t, "term_frame", e.Type)
 		require.Equal(t, "m1", e.Machine)
 	case <-time.After(2 * time.Second):
-		t.Fatal("sin frame")
+		t.Fatal("no frame")
 	}
 }
 
@@ -286,9 +286,9 @@ func TestTermWatchClosed(t *testing.T) {
 	var reads atomic.Int32
 	f.Handle("pane.read", func(json.RawMessage) (any, string) {
 		if reads.Add(1) > 2 {
-			return nil, "pane_not_found" // el código real de herdr 0.9.5
+			return nil, "pane_not_found" // herdr 0.9.5's real code
 		}
-		return map[string]any{"read": map[string]any{"text": "hola"}}, ""
+		return map[string]any{"read": map[string]any{"text": "hello"}}, ""
 	})
 	h := termHost(t, f.Socket)
 	reg := NewRegistry("m1")
@@ -299,15 +299,15 @@ func TestTermWatchClosed(t *testing.T) {
 		return len(got) == 2
 	}, 3*time.Second, 5*time.Millisecond)
 	require.Equal(t, proto.TermFrame{Pane: "w1:p1", Closed: true}, got[1])
-	// el vigilante terminó: no lee más
+	// the watcher ended: it reads no more
 	n := reads.Load()
 	time.Sleep(50 * time.Millisecond)
 	require.Equal(t, n, reads.Load())
 	require.Equal(t, 0, h.watching())
 }
 
-// Al reabrir la vista, la app descarta frames viejos: cada term_watch hace que
-// el vigilante vuelva a mandar el frame actual aunque no haya cambiado.
+// When the view is reopened, the app discards old frames: each term_watch makes
+// the watcher send the current frame again even if it has not changed.
 func TestTermWatchResendsOnRenew(t *testing.T) {
 	fastTerm(t, time.Minute)
 	f := newTermFake(t)
@@ -323,7 +323,7 @@ func TestTermWatchResendsOnRenew(t *testing.T) {
 	}, 3*time.Second, 5*time.Millisecond)
 	n := reads.Load()
 	require.Eventually(t, func() bool { return reads.Load() >= n+5 }, 3*time.Second, 5*time.Millisecond)
-	require.Empty(t, frames(reg)) // sin cambios, sin frames
+	require.Empty(t, frames(reg)) // no changes, no frames
 	watch(t, ctx, h, reg, "w1:p1")
 	require.Eventually(t, func() bool {
 		got = append(got, frames(reg)...)
@@ -343,7 +343,7 @@ func TestTermWatchLeaseExpires(t *testing.T) {
 	reg := NewRegistry("m1")
 	ctx := linkCtx(t)
 	watch(t, ctx, h, reg, "w1:p1")
-	// renovar antes de que venza lo extiende
+	// renewing before it expires extends it
 	time.Sleep(50 * time.Millisecond)
 	watch(t, ctx, h, reg, "w1:p1")
 	time.Sleep(50 * time.Millisecond)
@@ -353,7 +353,7 @@ func TestTermWatchLeaseExpires(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	require.Equal(t, n, reads.Load())
 
-	// tras vencer, otro term_watch arranca un vigilante nuevo y manda la pantalla otra vez
+	// after expiring, another term_watch starts a new watcher and sends the screen again
 	frames(reg)
 	watch(t, ctx, h, reg, "w1:p1")
 	require.Eventually(t, func() bool { return len(frames(reg)) == 1 }, 2*time.Second, 5*time.Millisecond)
@@ -374,7 +374,7 @@ func TestTermWatchStopsWithLink(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	require.Equal(t, n, reads.Load())
 
-	// un enlace nuevo vuelve a vigilar el mismo panel
+	// a new link watches the same pane again
 	frames(reg)
 	watch(t, linkCtx(t), h, reg, "w1:p1")
 	require.Eventually(t, func() bool { return len(frames(reg)) == 1 }, 2*time.Second, 5*time.Millisecond)
@@ -391,10 +391,10 @@ func TestTermFrameTruncated(t *testing.T) {
 	require.LessOrEqual(t, len(got), termFrameMax)
 	require.True(t, strings.HasSuffix(got, "FINAL"))
 	require.True(t, strings.HasSuffix(s, got))
-	require.Equal(t, byte('\n'), s[len(s)-len(got)-1]) // corta en un límite de línea
+	require.Equal(t, byte('\n'), s[len(s)-len(got)-1]) // cut at a line boundary
 	require.Equal(t, "corto", trimFront("corto", termFrameMax))
 
-	// también en el vigilante
+	// also in the watcher
 	fastTerm(t, time.Minute)
 	f := newTermFake(t)
 	readSeq(f, s)
@@ -458,16 +458,16 @@ func TestTermCloseOnlyOwn(t *testing.T) {
 	h := termHost(t, f.Socket)
 	ctx, reg := context.Background(), NewRegistry("m1")
 	_, err := call(t, ctx, h, reg, "term_close", map[string]any{"pane": "w1:p1"})
-	require.EqualError(t, err, "Quorum solo cierra terminales que abrió")
+	require.EqualError(t, err, "Quorum only closes terminals it opened")
 	require.Equal(t, 0, f.count("pane.close"))
 
 	own := termOpen(t, h, "/proj", false).Pane
 	_, err = call(t, ctx, h, reg, "term_close", map[string]any{"pane": own})
 	require.NoError(t, err)
 	require.Equal(t, 1, f.count("pane.close"))
-	// ya cerrado: deja de ser suyo
+	// already closed: it is no longer its own
 	_, err = call(t, ctx, h, reg, "term_close", map[string]any{"pane": own})
-	require.EqualError(t, err, "Quorum solo cierra terminales que abrió")
+	require.EqualError(t, err, "Quorum only closes terminals it opened")
 	require.Equal(t, 1, f.count("pane.close"))
 }
 
@@ -476,14 +476,14 @@ func TestTermDisabled(t *testing.T) {
 	off := termHost(t, f.Socket)
 	off.TerminalOn = false
 	none := termHost(t, filepath.Join(t.TempDir(), "none.sock"))
-	for h, want := range map[*Host]string{off: "la terminal está desactivada en esta máquina", none: "herdr no responde en esta máquina"} {
+	for h, want := range map[*Host]string{off: "terminal is disabled on this machine", none: "herdr is not responding on this machine"} {
 		for _, m := range []string{"term_open", "term_watch", "term_input", "term_read", "term_close"} {
 			_, err := call(t, context.Background(), h, NewRegistry("m1"), m, map[string]any{"pane": "w1:p1", "root": "/proj"})
 			require.EqualError(t, err, want, m)
 		}
 	}
 	for _, c := range f.Calls() {
-		require.Equal(t, "workspace.list", c.Method) // solo se comprobó si herdr responde
+		require.Equal(t, "workspace.list", c.Method) // only checked whether herdr answers
 	}
 }
 
@@ -494,7 +494,7 @@ func TestConversationsRPC(t *testing.T) {
 	t.Cleanup(func() { userHome = old })
 	dir := filepath.Join(home, ".claude", "projects", "-proj-x")
 	require.NoError(t, os.MkdirAll(dir, 0o700))
-	line := `{"type":"user","message":{"role":"user","content":"hola"}}` + "\n"
+	line := `{"type":"user","message":{"role":"user","content":"hello"}}` + "\n"
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "s1.jsonl"), []byte(line), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "s2.jsonl"), []byte(line), 0o600))
 
@@ -533,7 +533,7 @@ func TestRPCPerCallTimeout(t *testing.T) {
 	case err := <-done:
 		require.ErrorIs(t, err, context.DeadlineExceeded)
 	case <-time.After(2 * time.Second):
-		t.Fatal("el handler no se cortó")
+		t.Fatal("the handler was not cut off")
 	}
 }
 
@@ -542,11 +542,11 @@ func TestTermCloseRefusesReusedPaneID(t *testing.T) {
 	h := termHost(t, f.Socket)
 	ctx, reg := context.Background(), NewRegistry("m1")
 	own := termOpen(t, h, "/proj", false).Pane
-	f.recycle(own) // mismo id, otra terminal (p. ej. herdr reinició)
+	f.recycle(own) // same id, another terminal (e.g. herdr restarted)
 	_, err := call(t, ctx, h, reg, "term_close", map[string]any{"pane": own})
-	require.EqualError(t, err, "Quorum solo cierra terminales que abrió")
+	require.EqualError(t, err, "Quorum only closes terminals it opened")
 	require.Equal(t, 0, f.count("pane.close"))
-	// y quedó olvidado: tampoco se reusa al abrir
+	// and it was forgotten: it is not reused on open either
 	require.NotEqual(t, own, termOpen(t, h, "/proj", false).Pane)
 }
 
@@ -562,10 +562,10 @@ func TestTermOpenDoesNotReuseRecycledID(t *testing.T) {
 func TestTermCloseIgnoresLegacyEntries(t *testing.T) {
 	f := newTermFake(t)
 	h := termHost(t, f.Socket)
-	// formato viejo: ids sin terminal_id → no son cerrables
+	// old format: ids without terminal_id → not closable
 	require.NoError(t, os.WriteFile(h.Terms.Path, []byte(`{"byRoot":{"/proj":"w1:p1"},"owned":["w1:p1"]}`), 0o600))
 	_, err := call(t, context.Background(), h, NewRegistry("m1"), "term_close", map[string]any{"pane": "w1:p1"})
-	require.EqualError(t, err, "Quorum solo cierra terminales que abrió")
+	require.EqualError(t, err, "Quorum only closes terminals it opened")
 	require.Equal(t, 0, f.count("pane.close"))
 	require.NotEqual(t, "w1:p1", termOpen(t, h, "/proj", false).Pane)
 }
@@ -585,12 +585,12 @@ func TestRPCTimeoutMessage(t *testing.T) {
 	var res proto.RPCResult
 	require.NoError(t, json.Unmarshal(e.Payload, &res))
 	require.Equal(t, "q9", res.ReqID)
-	require.Equal(t, "la operación tardó demasiado en la máquina", res.Error)
+	require.Equal(t, "the operation took too long on the machine", res.Error)
 	require.Equal(t, 9*time.Second, old)
 }
 
-// Revisión final: el frame de cierre no es descartable; con la cola llena espera
-// a que haya sitio en vez de perderse.
+// Final review: the close frame is not droppable; with a full queue it waits
+// for room instead of getting lost.
 func TestTermWatchClosedNotDroppable(t *testing.T) {
 	fastTerm(t, time.Minute)
 	f := newTermFake(t)
@@ -601,7 +601,7 @@ func TestTermWatchClosedNotDroppable(t *testing.T) {
 		reg.out <- proto.Envelope{Type: "x"}
 	}
 	watch(t, linkCtx(t), h, reg, "w1:p1")
-	time.Sleep(100 * time.Millisecond) // el vigilante ya está esperando sitio
+	time.Sleep(100 * time.Millisecond) // the watcher is already waiting for room
 	var got []proto.TermFrame
 	require.Eventually(t, func() bool {
 		got = append(got, frames(reg)...)

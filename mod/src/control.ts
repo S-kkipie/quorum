@@ -3,37 +3,37 @@ import type { Link } from './link'
 import { permissionRace } from './permission'
 import type { Ask, Command } from './proto.gen'
 
-// la carrera de permisos vive en permission.ts; sus topes se reexportan aquí
+// the permission race lives in permission.ts; its caps are re-exported here
 export { BUDGET_MARGIN_MS, HOLD_MAX_MS } from './permission'
-/** Mantiene un `$` del hook en curso hasta que `until` se resuelva (lo arma register.ts). */
+/** Keeps a hook `$` in flight until `until` resolves (register.ts builds it). */
 export type KeepAlive = (until: Promise<unknown>) => void
-/** Tras TaskStop, cuánto se espera antes de /exit (que si no abre un diálogo). */
+/** After TaskStop, how long to wait before /exit (which otherwise opens a dialog). */
 export const CLOSE_SETTLE_MS = 1500
-export const SERVICE_INFO = 'Sesión de servicio: Quorum no la controla'
-/** Herramientas que siempre piden a la persona: tool.check no las enruta. */
+export const SERVICE_INFO = 'Service session: Quorum does not control it'
+/** Tools that always ask the person: tool.check does not route them. */
 export const NEVER_ASK = new Set(['AskUserQuestion', 'ExitPlanMode'])
 
 export type Decision = { decision: string; reason?: string; answers?: Record<string, string> | null }
 export type Verdict = { decision: 'allow' | 'ask' | 'deny'; reason?: string; [k: string]: unknown }
 type Emitter = Pick<Link, 'emit' | 'update'>
-/** `by` null: se resuelve sin emitir ask_resolved (el hub ya emitió el suyo). */
+/** `by` null: resolves without emitting ask_resolved (the hub already emitted its own). */
 type Waiter = { kind: string; agentId?: string; settle: (d: Decision | undefined, by: string | null, why: SettleWhy) => void }
-/** Por qué se cerró un ask: decidió un dispositivo, venció o se retiró. */
+/** Why an ask closed: a device decided, it expired or it was withdrawn. */
 export type SettleWhy = 'decided' | 'timeout' | 'withdrawn'
 export type AskOpts = {
-  /** Recibe el askId nuevo (para retirarlo después con `withdraw`). */
+  /** Receives the new askId (to withdraw it later with `withdraw`). */
   onId?: (askId: string) => void
-  /** Subagente que pregunta: sus asks se retiran al terminar él (`withdrawAgent`). */
+  /** Subagent asking: its asks are withdrawn when it finishes (`withdrawAgent`). */
   agentId?: string
-  /** Por qué se cerró, justo antes de resolver. */
+  /** Why it closed, right before resolving. */
   onEnd?: (why: SettleWhy) => void
 }
 
 /**
- * Preguntas al dispositivo. `ask` emite `ask` + status needs_you y resuelve con la
- * decisión del dispositivo, o undefined si vence o se retira (respondió la terminal,
- * se cortó el turno o se cierra la sesión).
- * Al resolverse por cualquier vía emite `ask_resolved{by}` y, sin otras abiertas,
+ * Questions to the device. `ask` emits `ask` + status needs_you and resolves with the
+ * device's decision, or undefined if it expires or is withdrawn (the terminal answered,
+ * the turn was cut or the session closes).
+ * When resolved by any path it emits `ask_resolved{by}` and, with none others open,
  * status working.
  */
 export class Asks {
@@ -46,12 +46,12 @@ export class Asks {
   ) {}
 
   private emit(kind: string, data: unknown): void {
-    try { this.getLink()?.emit({ kind, data } as never) } catch { /* nunca hacia Claude Code */ }
+    try { this.getLink()?.emit({ kind, data } as never) } catch { /* never toward Claude Code */ }
   }
 
   private status(state: 'needs_you' | 'working'): void {
     this.emit('status', { state })
-    try { this.getLink()?.update({ state }) } catch { /* idem */ }
+    try { this.getLink()?.update({ state }) } catch { /* same */ }
   }
 
   ask(a: Omit<Ask, 'askId'>, waitMs: number, opts: AskOpts = {}): Promise<Decision | undefined> {
@@ -62,7 +62,7 @@ export class Asks {
         if (!this.waiting.delete(askId)) return
         if (by !== null) this.emit('ask_resolved', { askId, by })
         if (this.waiting.size === 0) this.status('working')
-        try { opts.onEnd?.(why) } catch { /* idem */ }
+        try { opts.onEnd?.(why) } catch { /* same */ }
         resolve(d)
       }
       this.waiting.set(askId, { kind: a.kind, agentId: opts.agentId, settle })
@@ -73,9 +73,9 @@ export class Asks {
   }
 
   /**
-   * Decisión llegada del dispositivo. El hub ya publicó y guardó su propio
-   * ask_resolved con el nombre del dispositivo (el autoritativo): aquí no se emite
-   * otro; solo se libera la espera y, si no quedan abiertas, status working.
+   * Decision arrived from the device. The hub already published and stored its own
+   * ask_resolved with the device name (the authoritative one): none is emitted here;
+   * the wait is only released and, if none remain open, status working.
    */
   resolve(askId: string, decision: Decision): boolean {
     const w = this.waiting.get(askId)
@@ -84,17 +84,17 @@ export class Asks {
     return true
   }
 
-  /** La terminal respondió primero: la copia del dispositivo se retira. */
+  /** The terminal answered first: the device's copy is withdrawn. */
   withdraw(askId: string): void {
     this.waiting.get(askId)?.settle(undefined, 'terminal', 'withdrawn')
   }
 
-  /** Retira todas las abiertas de un tipo (p. ej. permisos al volver a la terminal). */
+  /** Withdraws all open ones of a kind (e.g. permissions on returning to the terminal). */
   withdrawKind(kind: string): void {
     for (const [id, w] of [...this.waiting]) if (w.kind === kind) this.withdraw(id)
   }
 
-  /** Retira las abiertas de un subagente (terminó su turno). */
+  /** Withdraws the open ones of a subagent (its turn ended). */
   withdrawAgent(agentId: string): void {
     for (const [id, w] of [...this.waiting]) if (w.agentId === agentId) this.withdraw(id)
   }
@@ -119,19 +119,19 @@ export type ControlDeps = {
   newId?: () => string
 }
 
-/** Lo que el hook tool.check presta a la carrera de permisos. */
+/** What the tool.check hook lends to the permission race. */
 export type PermissionHook = {
-  /** `$.ui.ask(q, { options: ['Permitir','Denegar'], header: 'Permiso' })` del propio hook. */
+  /** `$.ui.ask(q, { options: ['Allow','Deny'], header: 'Permission' })` of the hook itself. */
   termAsk: (q: string) => Promise<unknown>
   /**
-   * Si hay quien conteste `$.ui.ask` (`$.session.surfaces()` no vacío; vacío en
-   * una corrida -p). Se consulta solo cuando corre la carrera. Sin ella, se asume que sí.
+   * Whether someone can answer `$.ui.ask` (`$.session.surfaces()` non-empty; empty in
+   * a -p run). Queried only when the race runs. Without it, assumed true.
    */
   hasTerminal?: () => Promise<boolean>
   /** `next.signal` */
   signal?: AbortSignal
   keepAlive?: KeepAlive
-  /** Línea en el transcript (`$.ui.log`). */
+  /** Line in the transcript (`$.ui.log`). */
   log?: (msg: string) => void
 }
 
@@ -148,46 +148,46 @@ function randomId(): string {
 }
 
 /**
- * Control de la sesión desde Quorum: órdenes del dispositivo, permisos y preguntas.
- * Pura: todo lo de `$` llega por `deps`, así que se prueba con fakes.
+ * Session control from Quorum: device commands, permissions and questions.
+ * Pure: everything from `$` arrives via `deps`, so it is tested with fakes.
  */
 export function makeControl(deps: ControlDeps) {
   let turnId: string | undefined
   const midTurn: string[] = []
   const fromDevice: string[] = []
-  const tasks = new Set<string>() // tareas de fondo y subagentes vivos que se conocen
+  const tasks = new Set<string>() // known live background tasks and subagents
   const asks = new Asks(deps.getLink, deps.sleep, deps.newId ?? randomId)
 
   const link = () => { try { return deps.getLink() } catch { return undefined } }
-  /** Sesión de trabajo controlable (no servicio). */
+  /** Controllable work session (not service). */
   const controllable = () => { const l = link(); return !!l && l.role !== 'service' }
-  const emit = (kind: string, data: unknown) => { try { link()?.emit({ kind, data } as never) } catch { /* nunca hacia Claude Code */ } }
+  const emit = (kind: string, data: unknown) => { try { link()?.emit({ kind, data } as never) } catch { /* never toward Claude Code */ } }
   const info = (text: string) => emit('info', { text })
 
-  /** Envía el prompt como del dispositivo; false si el submit falló. */
+  /** Sends the prompt as from the device; false if the submit failed. */
   const submitDevice = async (text: string): Promise<boolean> => {
     fromDevice.push(text)
     if (fromDevice.length > FROM_DEVICE_MAX) fromDevice.shift()
     return deps.submit(text).then(() => true, err => {
-      // no habrá turn.start con este texto: que no tape uno igual escrito en la terminal
+      // there will be no turn.start with this text: don't let it mask an identical one typed in the terminal
       const i = fromDevice.lastIndexOf(text)
       if (i >= 0) fromDevice.splice(i, 1)
-      info(`No se pudo enviar el prompt: ${String((err as Error)?.message ?? err)}`)
+      info(`Could not send the prompt: ${String((err as Error)?.message ?? err)}`)
       return false
     })
   }
 
   async function close(): Promise<void> {
-    info('Cerrando la sesión desde Quorum')
+    info('Closing the session from Quorum')
     asks.withdrawKind('permission')
     const ids = [...tasks]
     tasks.clear()
-    // /exit con trabajo de fondo vivo abre un diálogo que nadie en el dispositivo
-    // puede contestar: se detiene primero lo que se conoce (sin bloquear si falla).
+    // /exit with live background work opens a dialog nobody on the device
+    // can answer: what is known is stopped first (without blocking if it fails).
     await Promise.all(ids.map(id => deps.stopTask(id).catch(() => undefined)))
     if (ids.length) await deps.sleep(CLOSE_SETTLE_MS).catch(() => undefined)
     if (turnId) await deps.abort(turnId).catch(() => undefined)
-    await deps.exit().catch(err => info(`No se pudo cerrar: ${String((err as Error)?.message ?? err)}`))
+    await deps.exit().catch(err => info(`Could not close: ${String((err as Error)?.message ?? err)}`))
   }
 
   function track(e: Call, r: CallResult): void {
@@ -207,7 +207,7 @@ export function makeControl(deps: ControlDeps) {
     const summary = (Array.isArray(questions) ? questions : [])
       .map(q => String((q as { question?: unknown })?.question ?? '')).join(' · ').slice(0, 200)
     let askId = ''
-    // sin vencimiento: el presupuesto de tool.call no corre mientras next(e) está en vuelo
+    // no expiry: the tool.call budget does not run while next(e) is in flight
     const device = asks.ask({ kind: 'question', tool: e.tool, summary, detail: '', questions }, Infinity, { onId: id => { askId = id } })
     const terminal = run()
     const first = await Promise.race([
@@ -221,14 +221,14 @@ export function makeControl(deps: ControlDeps) {
     }
     const d = first.d
     if (d?.decision === 'allow' && d.answers) return { result: { questions, answers: d.answers } }
-    if (d?.decision === 'deny') return { deny: 'El usuario canceló la pregunta desde Quorum.' }
+    if (d?.decision === 'deny') return { deny: 'The user canceled the question from Quorum.' }
     return terminal
   }
 
   return {
     get turnId() { return turnId },
 
-    /** Aplica una orden del dispositivo. */
+    /** Applies a device command. */
     async handle(c: Command): Promise<void> {
       const l = link()
       if (!l) return
@@ -240,17 +240,17 @@ export function makeControl(deps: ControlDeps) {
         case 'prompt': {
           const text = c.text ?? ''
           if (!text.trim()) return
-          // el hub no publica el prompt: el user del dispositivo sale de aquí, una vez
+          // the hub does not publish the prompt: the device's user event comes from here, once
           emit('user', { text })
           if (c.mode === 'now' && turnId) { midTurn.push(text); return }
           if (c.mode === 'interrupt' && turnId) {
-            // los 'now' aún sin entregar van delante, en el mismo prompt (no después de él)
+            // 'now' prompts not yet delivered go first, in the same prompt (not after it)
             const nows = midTurn.splice(0)
             const prompt = [...nows, text].join('\n\n')
             await deps.abort(turnId).catch(() => undefined)
-            // si el submit falla, los 'now' se envían solos como prompt en cola (el
-            // texto del interrupt ya avisó con un info); si eso también falla, esperan
-            // al fin del próximo turno
+            // if the submit fails, the 'now' prompts are sent alone as a queued prompt (the
+            // interrupt text already warned with an info); if that also fails, they wait
+            // for the end of the next turn
             if (!(await submitDevice(prompt)) && nows.length) {
               const rest = nows.join('\n\n')
               if (!(await submitDevice(rest))) midTurn.unshift(...nows)
@@ -272,22 +272,22 @@ export function makeControl(deps: ControlDeps) {
       }
     },
 
-    /** turn.start: el turno del hilo principal en curso. */
+    /** turn.start: the current main-thread turn. */
     turnStart(e: { turnId?: string; agentId?: string }): void {
       if (e.agentId !== undefined) return
       turnId = e.turnId
     },
 
-    /** turn.complete: fin de un subagente o del turno principal ('now' sin entregar → submit). */
+    /** turn.complete: end of a subagent or the main turn (undelivered 'now' → submit). */
     turnEnd(e: { agentId?: string }): void {
       if (e.agentId !== undefined) {
         tasks.delete(e.agentId)
-        // sus permisos pendientes murieron con él
+        // its pending permissions died with it
         asks.withdrawAgent(e.agentId)
         return
       }
       turnId = undefined
-      // un permiso que esperaba murió con el turno (Esc, abort, interrupt), también los de subagentes
+      // a waiting permission died with the turn (Esc, abort, interrupt), subagents' too
       asks.withdrawKind('permission')
       for (const t of midTurn.splice(0)) void submitDevice(t)
     },
@@ -296,7 +296,7 @@ export function makeControl(deps: ControlDeps) {
       if (id) tasks.add(id)
     },
 
-    /** Consume el texto si vino del dispositivo (su `user` ya se emitió). */
+    /** Consumes the text if it came from the device (its `user` was already emitted). */
     takeFromDevice(text: string): boolean {
       const i = fromDevice.indexOf(text)
       if (i < 0) return false
@@ -304,7 +304,7 @@ export function makeControl(deps: ControlDeps) {
       return true
     },
 
-    /** Cuerpo de tool.call: carrera de AskUserQuestion, inyección 'now', tareas de fondo. */
+    /** Body of tool.call: AskUserQuestion race, 'now' injection, background tasks. */
     async toolCall<R>(e: Call, run: () => Promise<R>): Promise<R> {
       const main = e.agentId === undefined
       if (main && e.tool === 'AskUserQuestion' && controllable()) {
@@ -312,8 +312,8 @@ export function makeControl(deps: ControlDeps) {
       }
       const r = await run()
       const cr = (r ?? {}) as CallResult
-      try { track(e, cr) } catch { /* nunca hacia Claude Code */ }
-      // solo una llamada real del modelo (con tool_use_id): en un $.tool.call de un plugin el context se pierde
+      try { track(e, cr) } catch { /* never toward Claude Code */ }
+      // only a real model call (with tool_use_id): in a plugin's $.tool.call the context is lost
       if (main && e.tool_use_id !== undefined && midTurn.length && cr.deny === undefined && controllable()) {
         const said = midTurn.splice(0)
         return { ...cr, context: [...(cr.context ?? []), ...said] } as R
@@ -322,17 +322,17 @@ export function makeControl(deps: ControlDeps) {
     },
 
     /**
-     * Después de `next(e)` en tool.check. Un 'ask' de una llamada real (hilo
-     * principal o subagente) corre la carrera (permission.ts): el diálogo de la terminal
-     * (`hook.termAsk`, vía `$.ui.ask`) y la tarjeta en los dispositivos a la vez.
-     * Sin carrera, el veredicto del engine tal cual: allow/deny, consultas `$.tool.check` (sin tool_use_id), AskUserQuestion/ExitPlanMode,
-     * sesión de servicio o sin daemon (sin dispositivos: mejor el diálogo nativo).
+     * After `next(e)` in tool.check. An 'ask' from a real call (main thread
+     * or subagent) runs the race (permission.ts): the terminal dialog
+     * (`hook.termAsk`, via `$.ui.ask`) and the card on the devices at once.
+     * Without a race, the engine's verdict as is: allow/deny, `$.tool.check` queries (no tool_use_id), AskUserQuestion/ExitPlanMode,
+     * service session or no daemon (no devices: the native dialog is better).
      */
     async permission<V extends Verdict>(e: CheckInput, verdict: V, hook: PermissionHook): Promise<V | Verdict> {
       if (verdict.decision !== 'ask' || e.tool_use_id === undefined) return verdict
       if (NEVER_ASK.has(e.tool) || !controllable() || link()?.state === 'no-daemon') return verdict
       let detail = ''
-      try { detail = (JSON.stringify(e.input) ?? '').slice(0, DETAIL_MAX) } catch { /* sin detalle */ }
+      try { detail = (JSON.stringify(e.input) ?? '').slice(0, DETAIL_MAX) } catch { /* no detail */ }
       const terminal = hook.hasTerminal ? await hook.hasTerminal().catch(() => true) : true
       return permissionRace({
         termAsk: terminal ? hook.termAsk : undefined,

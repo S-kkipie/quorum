@@ -7,12 +7,14 @@ const MIN_GAP_MS = 5 * 60_000
 const TIMEOUT_MS = 8000
 
 const INSTRUCTION =
-  'Resume en una frase de máximo 8 palabras, en español, en qué está trabajando esta sesión de programación. Solo la frase. Si no puedes saberlo con el contexto dado, responde exactamente `-`.'
+  'Summarize in a short English phrase (at most 60 characters, no quotes, no trailing period) what this programming session is working on. Only the phrase. If you cannot tell from the given context, answer exactly `-`.'
 
+// Non-answers in English and Spanish (the model may still answer in either language).
 const NON_ANSWER = [
   /no hay (suficiente )?contexto/, /sin contexto/, /contexto insuficiente/, /no (est[aá]|queda|es) claro/,
   /no se puede (determinar|saber|decir)/, /^no (lo )?s[eé]($|[^a-záéíóú])/, /no puedo (determinar|saber)/, /no tengo (suficiente|contexto)/,
-  /no context/, /\bunclear\b/, /cannot determine/, /can'?t (tell|determine)/, /not enough/, /i don'?t know/, /insufficient/,
+  /no context/, /\bunclear\b/, /cannot (determine|tell)/, /can'?t (tell|determine)/, /not enough/, /i don'?t know/, /i'?m not sure/,
+  /insufficient/, /^unknown$/, /^no (information|info)\b/, /^n\/?a$/, /^not (clear|possible)/, /^unable to/,
 ]
 
 const runes = (s: string): string[] => Array.from(s)
@@ -20,13 +22,13 @@ const trimRunes = (s: string, n: number): string => { const r = runes(s); return
 
 export type CtxMsg = { role: string; text: string }
 
-/** Contexto reciente: últimos mensajes con texto, cada uno ≤ 600 runas, total ≤ 4000, el más nuevo al final. */
+/** Recent context: last messages with text, each ≤ 600 runes, total ≤ 4000, newest last. */
 export function buildContext(msgs: readonly CtxMsg[]): string {
   const recent = msgs
     .filter(m => (m.role === 'user' || m.role === 'assistant') && typeof m.text === 'string' && m.text.trim())
     .slice(-CTX_MSGS)
-    .map(m => `${m.role === 'user' ? 'Usuario' : 'Asistente'}: ${trimRunes(m.text.trim(), CTX_MSG_RUNES)}`)
-  // si pasa del total, se descartan los más viejos
+    .map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${trimRunes(m.text.trim(), CTX_MSG_RUNES)}`)
+  // if over the total, the oldest are dropped
   let total = 0
   const kept: string[] = []
   for (let i = recent.length - 1; i >= 0; i--) {
@@ -41,14 +43,14 @@ export function buildContext(msgs: readonly CtxMsg[]): string {
   return kept.join('\n\n')
 }
 
-/** ¿Es una no-respuesta ("-", vacío, "no hay contexto"…)? */
+/** Is it a non-answer ("-", empty, "no context"...)? */
 export function isNonAnswer(s: string): boolean {
   const t = s.trim().toLowerCase()
   if (!t || /^[-–—_.\s]+$/.test(t)) return true
   return NON_ANSWER.some(re => re.test(t))
 }
 
-/** Deja la frase del modelo lista para usar de nombre: sin comillas, punto final ni saltos; ≤ 60. */
+/** Leaves the model's phrase ready to use as a name: no quotes, trailing period or line breaks; ≤ 60. */
 export function cleanRecap(raw: string): string {
   let s = String(raw ?? '').replace(/\s+/g, ' ').trim()
   s = s.replace(/^["'“”‘’«»`]+|["'“”‘’«»`]+$/g, '').trim()
@@ -66,20 +68,20 @@ export type RecapDeps = {
   now: () => number
   update: (recap: string) => void
   sleep: (ms: number) => Promise<void>
-  /** Límite de espera por generación (ms). */
+  /** Wait limit per generation (ms). */
   timeoutMs?: number
-  /** Mensajes recientes del hilo principal; si falta o falla, se usa último prompt + respuesta. */
+  /** Recent messages of the main thread; if missing or failing, last prompt + answer is used. */
   messages?: () => Promise<readonly CtxMsg[]>
 }
 
 /**
- * Genera el recap de la sesión (nombre corto) sin bloquear nada: todo es
- * fire-and-forget y cualquier fallo se ignora.
+ * Generates the session recap (short name) without blocking anything: everything is
+ * fire-and-forget and any failure is ignored.
  */
 export class Recap {
   private lastGen = -Infinity
   private busy = false
-  /** El turno en curso ya está cubierto por la generación del primer prompt. */
+  /** The current turn is already covered by the first-prompt generation. */
   private covered = false
 
   constructor(private deps: RecapDeps) {}
@@ -107,21 +109,21 @@ export class Recap {
       let ctx = ''
       try {
         const msgs = [...((await this.deps.messages?.()) ?? [])]
-        // el prompt (y la respuesta) que disparan el recap siempre van en el contexto
+        // the prompt (and answer) that trigger the recap always go in the context
         const lastOf = (role: string) => msgs.filter(m => m.role === role && m.text?.trim()).at(-1)?.text.trim()
         if (prompt.trim() && msgs.length && lastOf('user') !== prompt.trim()) msgs.push({ role: 'user', text: prompt })
         if (answer.trim() && msgs.length && lastOf('assistant') !== answer.trim()) msgs.push({ role: 'assistant', text: answer })
         ctx = buildContext(msgs)
-      } catch { /* sin contexto: cae al fallback */ }
+      } catch { /* no context: falls back */ }
       const text = ctx
-        ? `${INSTRUCTION}\n\nConversación reciente (lo más nuevo al final):\n${ctx}`
-        : `${INSTRUCTION}\n\nÚltimo mensaje del usuario:\n${prompt.slice(0, IN_MAX)}\n\nRespuesta:\n${answer.slice(0, IN_MAX)}`
+        ? `${INSTRUCTION}\n\nRecent conversation (newest last):\n${ctx}`
+        : `${INSTRUCTION}\n\nLast user message:\n${prompt.slice(0, IN_MAX)}\n\nAnswer:\n${answer.slice(0, IN_MAX)}`
       const limit = this.deps.sleep(this.deps.timeoutMs ?? TIMEOUT_MS).then((): string => { throw new Error('timeout') })
       const raw = await Promise.race([this.deps.complete(text), limit])
       const out = cleanRecap(raw)
       if (out && !isNonAnswer(out)) this.deps.update(out)
     } catch {
-      // sin recap: el nombre cae al de la carpeta
+      // no recap: the name falls back to the folder name
     } finally {
       this.busy = false
     }

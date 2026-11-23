@@ -28,16 +28,16 @@ func TestPaperclipListMaps(t *testing.T) {
 		case "/api/companies/c1/issues":
 			require.Empty(t, r.URL.RawQuery)
 			io.WriteString(w, `[{"id":"i1","identifier":"ACME-1","title":"Uno","description":"d","descriptionTruncated":true,"status":"in_progress","assigneeAgentId":"abcdef123456","projectId":"p1","updatedAt":"2026-01-02T03:04:05Z"},
-			 {"id":"i3","title":"otro","status":"todo","projectId":"zzz"},
-			 {"id":"i4","title":"sin proyecto","status":"todo"},
-			 {"id":"i5","title":"oculto","status":"todo","projectId":"p1","hiddenAt":"2026-01-01T00:00:00Z"},
+			 {"id":"i3","title":"other","status":"todo","projectId":"zzz"},
+			 {"id":"i4","title":"no project","status":"todo"},
+			 {"id":"i5","title":"hidden","status":"todo","projectId":"p1","hiddenAt":"2026-01-01T00:00:00Z"},
 			 {"id":"i2","title":"Dos","status":"cancelled","projectId":"p1","assigneeUserId":"user12345678","url":"http://x/y"}]`)
 		case "/api/issues/i1/comments":
 			io.WriteString(w, `[{"body":"b","createdAt":"2026-01-01T00:00:00Z","authorType":"agent","authorAgentId":"ag1"},
-			 {"body":"borrado","createdAt":"2026-01-01T00:00:00Z","deletedAt":"2026-01-02T00:00:00Z"},
+			 {"body":"deleted","createdAt":"2026-01-01T00:00:00Z","deletedAt":"2026-01-02T00:00:00Z"},
 			 {"body":"sys","createdAt":"2026-01-03T00:00:00Z","authorType":"system"}]`)
 		default:
-			t.Errorf("ruta inesperada %s", r.URL.Path)
+			t.Errorf("unexpected path %s", r.URL.Path)
 		}
 	}))
 	defer srv.Close()
@@ -46,17 +46,17 @@ func TestPaperclipListMaps(t *testing.T) {
 	require.Len(t, ts, 2)
 	require.Equal(t, "i1", ts[0].ExternalID)
 	require.Equal(t, "[ACME-1] Uno", ts[0].Title)
-	require.Equal(t, "d\n\n(descripción recortada en Paperclip)", ts[0].Body)
-	require.Equal(t, "agente abcdef12", ts[0].Assignee)
+	require.Equal(t, "d\n\n(description truncated in Paperclip)", ts[0].Body)
+	require.Equal(t, "agent abcdef12", ts[0].Assignee)
 	require.Equal(t, srv.URL+"/issues/i1", ts[0].URL)
-	require.Equal(t, "en_curso", StatusMap(ts[0].RawStatus, nil))
+	require.Equal(t, "in_progress", StatusMap(ts[0].RawStatus, nil))
 	require.Equal(t, int64(1767323045000), ts[0].UpdatedAt)
 	require.Len(t, ts[0].Comments, 2)
 	require.Equal(t, "ag1", ts[0].Comments[0].Author)
 	require.Equal(t, "system", ts[0].Comments[1].Author)
-	require.Equal(t, "usuario user1234", ts[1].Assignee)
+	require.Equal(t, "user user1234", ts[1].Assignee)
 	require.Equal(t, "http://x/y", ts[1].URL)
-	require.Equal(t, "hecho", StatusMap(ts[1].RawStatus, nil))
+	require.Equal(t, "done", StatusMap(ts[1].RawStatus, nil))
 	require.Nil(t, ts[1].Comments)
 	for _, a := range auth {
 		require.Equal(t, "Bearer sekret", a)
@@ -64,7 +64,7 @@ func TestPaperclipListMaps(t *testing.T) {
 }
 
 func TestPaperclipStatusMapping(t *testing.T) {
-	for raw, want := range map[string]string{"todo": "por_hacer", "backlog": "por_hacer", "in_progress": "en_curso", "in_review": "en_review", "blocked": "bloqueado", "done": "hecho", "cancelled": "hecho"} {
+	for raw, want := range map[string]string{"todo": "todo", "backlog": "todo", "in_progress": "in_progress", "in_review": "in_review", "blocked": "blocked", "done": "done", "cancelled": "done"} {
 		require.Equal(t, want, StatusMap(raw, nil), raw)
 	}
 }
@@ -79,7 +79,7 @@ func TestPaperclipWrites(t *testing.T) {
 	defer srv.Close()
 	p := pcConn(t, srv.URL, "", time.Second)
 	require.NoError(t, p.Comment(context.Background(), "i1", "hola"))
-	require.NoError(t, p.SetStatus(context.Background(), "i1", "en_review"))
+	require.NoError(t, p.SetStatus(context.Background(), "i1", "in_review"))
 	require.Error(t, p.SetStatus(context.Background(), "i1", "xx"))
 	require.Len(t, got, 2)
 	require.Regexp(t, `^POST /api/issues/i1/comments \{"body":"hola","clientRequestId":"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"\}$`, got[0])
@@ -95,10 +95,10 @@ func TestPaperclipErrors(t *testing.T) {
 	defer srv.Close()
 	p := pcConn(t, srv.URL, "", time.Second)
 	_, err := p.List(context.Background(), 0)
-	require.EqualError(t, err, "Paperclip: token inválido")
+	require.EqualError(t, err, "Paperclip: invalid token")
 	code = 404
 	_, err = p.List(context.Background(), 0)
-	require.EqualError(t, err, "Paperclip: no encontrado (/api/companies/c1/issues)")
+	require.EqualError(t, err, "Paperclip: not found (/api/companies/c1/issues)")
 	code = 500
 	_, err = p.List(context.Background(), 0)
 	require.ErrorContains(t, err, "Paperclip: HTTP 500: boom ***")
@@ -115,7 +115,7 @@ func TestPaperclipTimeoutAndSettings(t *testing.T) {
 		require.Error(t, err)
 	}
 	_, err = newPaperclip(proto.ConnectorConfig{Settings: map[string]string{"baseURL": "http://x"}}, "", time.Second)
-	require.EqualError(t, err, "Paperclip: falta baseURL/companyId")
+	require.EqualError(t, err, "Paperclip: missing baseURL/companyId")
 	c, err := New(proto.ConnectorConfig{Kind: "paperclip", Settings: map[string]string{"baseURL": "http://x", "companyId": "c"}}, "t", nil)
 	require.NoError(t, err)
 	require.NotNil(t, c)

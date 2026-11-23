@@ -13,19 +13,19 @@ const (
 	outBlockMax = time.Second
 )
 
-// Registry guarda las sesiones locales, los suscriptores de comandos y la
-// cola de salida hacia el hub.
+// Registry holds the local sessions, the command subscribers and the
+// outgoing queue to the hub.
 type Registry struct {
 	machine string
 	out     chan proto.Envelope
 
-	// emu ordena los cambios de sesión con su envelope: un Upsert y un Gone
-	// concurrentes llegan al hub en el mismo orden en que cambiaron el registro.
+	// emu orders session changes with their envelope: a concurrent Upsert and Gone
+	// reach the hub in the same order in which they changed the registry.
 	emu      sync.Mutex
 	mu       sync.Mutex
 	sessions map[string]proto.SessionInfo
 	subs     map[string]*sub
-	onGone   func(id string) // bajo mu; ver SetOnGone
+	onGone   func(id string) // under mu; see SetOnGone
 }
 
 type sub struct{ ch chan proto.Command }
@@ -39,17 +39,17 @@ func NewRegistry(machine string) *Registry {
 	}
 }
 
-// Out entrega lo que hay que mandar al hub. Es un canal con buffer (1024).
-// Si está lleno: los assistant_delta (reconstruibles desde el mensaje final)
-// se descartan; el resto espera hasta 1 s (plazo compartido por lote) y, si el
-// hub sigue sin consumir, se descarta para no colgar los handlers HTTP.
+// Out delivers what has to be sent to the hub. It is a buffered channel (1024).
+// If full: assistant_delta events (rebuildable from the final message)
+// are dropped; the rest wait up to 1 s (deadline shared per batch) and, if the
+// hub still does not consume, are dropped so as not to hang the HTTP handlers.
 func (r *Registry) Out() <-chan proto.Envelope { return r.out }
 
-// EmitEnvelope encola un envelope genérico (p. ej. launch_result) hacia el hub.
+// EmitEnvelope queues a generic envelope (e.g. launch_result) toward the hub.
 func (r *Registry) EmitEnvelope(e proto.Envelope) { r.emit(e, false, time.Now().Add(outBlockMax)) }
 
-// EmitDroppable encola un envelope que se puede perder (p. ej. term_frame):
-// si la cola está llena se descarta sin esperar.
+// EmitDroppable queues an envelope that may be lost (e.g. term_frame):
+// if the queue is full it is dropped without waiting.
 func (r *Registry) EmitDroppable(e proto.Envelope) { r.emit(e, true, time.Time{}) }
 
 func (r *Registry) emit(e proto.Envelope, droppable bool, deadline time.Time) {
@@ -74,9 +74,9 @@ func (r *Registry) Upsert(si proto.SessionInfo) {
 	r.emu.Lock()
 	defer r.emu.Unlock()
 	r.mu.Lock()
-	// Renombre (/clear, /resume): el id anterior desaparece y su attach termina.
-	// Si ambos ids ya estaban vivos aquí, el previousId es viejo (resume del id
-	// anterior) y se ignora, como hace el hub.
+	// Rename (/clear, /resume): the previous id disappears and its attach ends.
+	// If both ids were already alive here, previousId is stale (resume of the
+	// previous id) and is ignored, as the hub does.
 	renamed := ""
 	if prev := si.PreviousID; prev != "" && prev != si.ID {
 		_, prevLive := r.sessions[prev]
@@ -93,8 +93,8 @@ func (r *Registry) Upsert(si proto.SessionInfo) {
 			}
 		}
 	}
-	// Si este id vuelve (p. ej. `claude --resume` del id viejo tras /clear), ninguna
-	// otra sesión está ya reemplazándolo: el hello no debe volver a mandar ese renombre.
+	// If this id comes back (e.g. `claude --resume` of the old id after /clear), no
+	// other session is already replacing it: the hello must not send that rename again.
 	for id, other := range r.sessions {
 		if id != si.ID && other.PreviousID == si.ID {
 			other.PreviousID = ""
@@ -107,18 +107,18 @@ func (r *Registry) Upsert(si proto.SessionInfo) {
 	dl := time.Now().Add(outBlockMax)
 	r.emit(proto.Envelope{Type: "session_upsert", Machine: r.machine, Session: si.ID, Payload: p}, false, dl)
 	if renamed != "" {
-		// Tras el upsert: si el hub aplicó el renombre el id viejo ya no existe y no
-		// pasa nada; si no lo aplicó, así no queda una sesión fantasma abierta.
+		// After the upsert: if the hub applied the rename the old id no longer exists and
+		// nothing happens; if it did not, this way no phantom open session is left.
 		r.emit(proto.Envelope{Type: "session_gone", Machine: r.machine, Session: renamed}, false, dl)
 	}
 }
 
-// Emit publica un evento de la sesión id, completando Session y TS.
+// Emit publishes an event of session id, filling in Session and TS.
 func (r *Registry) Emit(id string, ev proto.Event) {
 	r.emitEvent(id, ev, time.Now().Add(outBlockMax))
 }
 
-// EmitBatch publica varios eventos con un único plazo total (outBlockMax).
+// EmitBatch publishes several events with a single total deadline (outBlockMax).
 func (r *Registry) EmitBatch(id string, evs []proto.Event) {
 	dl := time.Now().Add(outBlockMax)
 	for _, ev := range evs {
@@ -152,8 +152,8 @@ func (r *Registry) Gone(id string) {
 	}
 }
 
-// SetOnGone registra la función (rápida, no bloqueante) que se llama tras cada
-// Gone; una nueva reemplaza a la anterior.
+// SetOnGone registers the (fast, non-blocking) function called after each
+// Gone; a new one replaces the previous one.
 func (r *Registry) SetOnGone(fn func(id string)) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -170,8 +170,8 @@ func (r *Registry) Snapshot() []proto.SessionInfo {
 	return out
 }
 
-// Subscribe registra el único suscriptor de comandos de la sesión; uno nuevo
-// cierra y reemplaza al anterior. cancel solo afecta a su propia suscripción.
+// Subscribe registers the session's single command subscriber; a new one
+// closes and replaces the previous one. cancel only affects its own subscription.
 func (r *Registry) Subscribe(id string) (<-chan proto.Command, func()) {
 	s := &sub{ch: make(chan proto.Command, 16)}
 	r.mu.Lock()
@@ -190,7 +190,7 @@ func (r *Registry) Subscribe(id string) (<-chan proto.Command, func()) {
 	}
 }
 
-// Send entrega c al suscriptor de la sesión; false si no hay o está saturado.
+// Send delivers c to the session's subscriber; false if there is none or it is saturated.
 func (r *Registry) Send(id string, c proto.Command) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()

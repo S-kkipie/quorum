@@ -77,7 +77,7 @@ func TestSessionRenameOnClear(t *testing.T) {
 func TestSessionRenameMerge(t *testing.T) {
 	s := openMem(t)
 	require.NoError(t, s.UpsertSession(proto.SessionInfo{ID: "old", Machine: "m"}))
-	// /resume de una sesión cerrada: su historial se fusiona con el de la actual
+	// /resume of a closed session: its history merges with the current one's
 	require.NoError(t, s.UpsertSession(proto.SessionInfo{ID: "new", Machine: "m", State: proto.StateClosed}))
 	for _, x := range []struct{ id, d string }{{"old", `"o1"`}, {"old", `"o2"`}, {"new", `"n1"`}} {
 		_, err := s.AppendEvent(proto.Event{Session: x.id, Kind: proto.KindInfo, Data: json.RawMessage(x.d)})
@@ -89,7 +89,7 @@ func TestSessionRenameMerge(t *testing.T) {
 	evs, _ := s.Events("new", 0, 10)
 	require.Len(t, evs, 3)
 	require.EqualValues(t, 3, evs[0].Seq)
-	// más nuevos primero: n1, o2, o1
+	// newest first: n1, o2, o1
 	require.JSONEq(t, `"n1"`, string(evs[0].Data))
 	require.JSONEq(t, `"o2"`, string(evs[1].Data))
 	require.JSONEq(t, `"o1"`, string(evs[2].Data))
@@ -207,7 +207,7 @@ func TestCloseSessionAndExcept(t *testing.T) {
 		require.NoError(t, s.UpsertSession(proto.SessionInfo{ID: id, Machine: "m1", State: proto.StateIdle}))
 	}
 	require.NoError(t, s.UpsertSession(proto.SessionInfo{ID: "z", Machine: "m2", State: proto.StateIdle}))
-	require.NoError(t, s.CloseSession("m2", "a")) // otra máquina: no cambia nada
+	require.NoError(t, s.CloseSession("m2", "a")) // another machine: nothing changes
 	l0, _ := s.ListSessions(false)
 	require.Len(t, l0, 4)
 	ow, ok, err := s.SessionOwner("a")
@@ -238,9 +238,9 @@ func TestUpsertSessionRejectsOtherOwner(t *testing.T) {
 	require.NoError(t, err)
 	defer s.Close()
 	require.NoError(t, s.UpsertSession(proto.SessionInfo{ID: "s1", Machine: "A", Name: "orig", State: proto.StateIdle}))
-	require.ErrorIs(t, s.UpsertSession(proto.SessionInfo{ID: "s1", Machine: "B", Name: "robo"}), ErrNotOwner)
+	require.ErrorIs(t, s.UpsertSession(proto.SessionInfo{ID: "s1", Machine: "B", Name: "theft"}), ErrNotOwner)
 	require.NoError(t, s.UpsertSession(proto.SessionInfo{ID: "s2", Machine: "B"}))
-	// renombrar la sesión de A desde B también se rechaza
+	// renaming A's session from B is also rejected
 	require.ErrorIs(t, s.UpsertSession(proto.SessionInfo{ID: "s3", Machine: "B", PreviousID: "s1"}), ErrNotOwner)
 	l, _ := s.ListSessions(false)
 	for _, x := range l {
@@ -274,17 +274,17 @@ func TestPrependEventsSeqOrderingAndSkip(t *testing.T) {
 	}
 	require.Equal(t, []int64{1, -1, -2, -3}, seqs)
 	require.Equal(t, []int64{0, 30, 20, 10}, tss)
-	// ya rellenada: no cambia nada
+	// already backfilled: nothing changes
 	ins, err = s.PrependEvents("a", mk(99))
 	require.NoError(t, err)
 	require.False(t, ins)
 	evs, _ = s.Events("a", 0, 10)
 	require.Len(t, evs, 4)
-	// AppendEvent sigue en positivos
+	// AppendEvent continues in positives
 	seq, err := s.AppendEvent(proto.Event{Session: "a", Kind: proto.KindInfo})
 	require.NoError(t, err)
 	require.EqualValues(t, 2, seq)
-	// paginación hacia atrás cruzando el cero
+	// pagination backwards crossing zero
 	evs, _ = s.Events("a", -1, 10)
 	require.Len(t, evs, 2)
 	require.EqualValues(t, -2, evs[0].Seq)
@@ -338,7 +338,7 @@ func TestRenameMergeBothBackfilled(t *testing.T) {
 	require.Equal(t, []int64{2, 1, -1, -2}, seqsOf(t, s, "new"))
 }
 
-// Una BD creada antes de previous_id se migra y conserva sus sesiones.
+// A DB created before previous_id is migrated and keeps its sessions.
 func TestMigratesOldSessionsTable(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "old.db")
 	db, err := sql.Open("sqlite", "file:"+path)
@@ -363,8 +363,8 @@ func TestMigratesOldSessionsTable(t *testing.T) {
 	require.Equal(t, "p_9", si.HerdrPane)
 }
 
-// Ruling Q: tras /clear A→B, `claude --resume A` revive A mientras B vive. El
-// previous_id viejo de B no debe reaplicarse ni seguir saliendo en el snapshot/REST.
+// Ruling Q: after /clear A→B, `claude --resume A` revives A while B lives. B's
+// old previous_id must not be reapplied or keep showing up in the snapshot/REST.
 func TestResumedOldIDClearsStalePreviousID(t *testing.T) {
 	s := openMem(t)
 	require.NoError(t, s.UpsertSession(proto.SessionInfo{ID: "A", Machine: "m", State: proto.StateIdle}))
@@ -377,14 +377,14 @@ func TestResumedOldIDClearsStalePreviousID(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "A", si.PreviousID)
 
-	// A vuelve (resume): se inserta vivo y B deja de apuntarle
+	// A comes back (resume): it is inserted alive and B stops pointing to it
 	require.NoError(t, s.UpsertSession(proto.SessionInfo{ID: "A", Machine: "m", State: proto.StateIdle}))
 	si, _ = s.Session("B")
 	require.Empty(t, si.PreviousID)
 	_, err = s.AppendEvent(proto.Event{Session: "A", Kind: proto.KindInfo, Data: json.RawMessage(`"a2"`)})
 	require.NoError(t, err)
 
-	// un upsert/hello que aún trae B.previousId=A no fusiona ni renombra
+	// an upsert/hello that still carries B.previousId=A neither merges nor renames
 	applied, err = s.SaveSession(proto.SessionInfo{ID: "B", PreviousID: "A", Machine: "m", State: proto.StateWorking})
 	require.NoError(t, err)
 	require.Empty(t, applied)
@@ -401,8 +401,8 @@ func TestResumedOldIDClearsStalePreviousID(t *testing.T) {
 	require.JSONEq(t, `"a1"`, string(evs[0].Data))
 }
 
-// Aunque la fila de B conserve previous_id (BD anterior al arreglo), no se publica
-// mientras A exista viva.
+// Even if B's row keeps previous_id (DB from before the fix), it is not published
+// while A exists alive.
 func TestPreviousIDHiddenWhileOldIDLives(t *testing.T) {
 	s := openMem(t)
 	require.NoError(t, s.UpsertSession(proto.SessionInfo{ID: "B", Machine: "m", State: proto.StateIdle}))
@@ -420,7 +420,7 @@ func TestPairIsAtomic(t *testing.T) {
 	s := openMem(t)
 	code, err := s.CreateCode("pair")
 	require.NoError(t, err)
-	// un token que no se puede guardar (tabla bloqueada por un trigger) deja el código vivo
+	// a token that cannot be saved (table locked by a trigger) leaves the code alive
 	_, err = s.db.Exec(`CREATE TRIGGER no_tokens BEFORE INSERT ON tokens BEGIN SELECT RAISE(ABORT,'no'); END`)
 	require.NoError(t, err)
 	_, err = s.Pair("pair", code, "device", "tel", "tok1")
@@ -432,7 +432,7 @@ func TestPairIsAtomic(t *testing.T) {
 	require.Equal(t, "tel", name)
 	_, err = s.Pair("pair", code, "device", "tel", "tok2")
 	require.ErrorIs(t, err, ErrInvalidCode)
-	// segundo dispositivo con el mismo nombre: sufijo
+	// second device with the same name: suffix
 	code2, _ := s.CreateCode("pair")
 	name, err = s.Pair("pair", code2, "device", "tel", "tok2")
 	require.NoError(t, err)
@@ -447,11 +447,11 @@ func TestAddUniqueDeviceTokenOnlyRetriesNameConflict(t *testing.T) {
 	n, err = s.AddUniqueDeviceToken("x", "t2")
 	require.NoError(t, err)
 	require.Equal(t, "x (2)", n)
-	// otro error de constraint (NOT NULL) no se reintenta 9999 veces: sale enseguida
-	_, err = s.db.Exec(`CREATE TRIGGER bad BEFORE INSERT ON tokens BEGIN SELECT RAISE(ABORT,'constraint falso'); END`)
+	// another constraint error (NOT NULL) is not retried 9999 times: it returns right away
+	_, err = s.db.Exec(`CREATE TRIGGER bad BEFORE INSERT ON tokens BEGIN SELECT RAISE(ABORT,'fake constraint'); END`)
 	require.NoError(t, err)
 	_, err = s.AddUniqueDeviceToken("y", "t3")
-	require.ErrorContains(t, err, "constraint falso")
+	require.ErrorContains(t, err, "fake constraint")
 }
 
 func TestCreateCodeRetriesOnlyOnCodeConflict(t *testing.T) {
@@ -465,10 +465,10 @@ func TestCreateCodeRetriesOnlyOnCodeConflict(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "222222", c2)
 	s.genCode = func() (string, error) { return "333333", nil }
-	_, err = s.db.Exec(`CREATE TRIGGER bad BEFORE INSERT ON codes BEGIN SELECT RAISE(ABORT,'constraint falso'); END`)
+	_, err = s.db.Exec(`CREATE TRIGGER bad BEFORE INSERT ON codes BEGIN SELECT RAISE(ABORT,'fake constraint'); END`)
 	require.NoError(t, err)
 	_, err = s.CreateCode("pair")
-	require.ErrorContains(t, err, "constraint falso")
+	require.ErrorContains(t, err, "fake constraint")
 }
 
 func TestOpenPathWithURIChars(t *testing.T) {
@@ -494,32 +494,32 @@ func TestLiveSessionIDs(t *testing.T) {
 
 func TestSessionRecapPersists(t *testing.T) {
 	s := openMem(t)
-	require.NoError(t, s.UpsertSession(proto.SessionInfo{ID: "a", Machine: "m", Recap: "Arreglando el login"}))
+	require.NoError(t, s.UpsertSession(proto.SessionInfo{ID: "a", Machine: "m", Recap: "Fixing the login"}))
 	si, err := s.Session("a")
 	require.NoError(t, err)
-	require.Equal(t, "Arreglando el login", si.Recap)
+	require.Equal(t, "Fixing the login", si.Recap)
 	all, err := s.ListSessions(true)
 	require.NoError(t, err)
-	require.Equal(t, "Arreglando el login", all[0].Recap)
-	// el mod siempre envía su recap vigente: se guarda tal cual
-	require.NoError(t, s.UpsertSession(proto.SessionInfo{ID: "a", Machine: "m", Recap: "Otra cosa"}))
+	require.Equal(t, "Fixing the login", all[0].Recap)
+	// the mod always sends its current recap: it is stored as is
+	require.NoError(t, s.UpsertSession(proto.SessionInfo{ID: "a", Machine: "m", Recap: "Something else"}))
 	si, _ = s.Session("a")
-	require.Equal(t, "Otra cosa", si.Recap)
+	require.Equal(t, "Something else", si.Recap)
 }
 
 func TestSessionRecapNotClearedByEmptyUpsert(t *testing.T) {
 	s := openMem(t)
-	require.NoError(t, s.UpsertSession(proto.SessionInfo{ID: "a", Machine: "m", State: proto.StateIdle, Recap: "Arreglando el login"}))
+	require.NoError(t, s.UpsertSession(proto.SessionInfo{ID: "a", Machine: "m", State: proto.StateIdle, Recap: "Fixing the login"}))
 	require.NoError(t, s.UpsertSession(proto.SessionInfo{ID: "a", Machine: "m", State: proto.StateWorking}))
 	si, _ := s.Session("a")
-	require.Equal(t, "Arreglando el login", si.Recap)
-	// /clear: la sesión nueva (renombre) empieza sin el recap de la conversación anterior
+	require.Equal(t, "Fixing the login", si.Recap)
+	// /clear: the new session (rename) starts without the previous conversation's recap
 	applied, err := s.SaveSession(proto.SessionInfo{ID: "b", PreviousID: "a", Machine: "m", State: proto.StateIdle})
 	require.NoError(t, err)
 	require.Equal(t, "a", applied)
 	si, _ = s.Session("b")
 	require.Equal(t, "", si.Recap)
-	// una sesión nueva sin renombre también empieza vacía
+	// a new session without a rename also starts empty
 	require.NoError(t, s.UpsertSession(proto.SessionInfo{ID: "c", Machine: "m", State: proto.StateIdle}))
 	si, _ = s.Session("c")
 	require.Equal(t, "", si.Recap)
@@ -557,7 +557,7 @@ func TestMachineCapsMigratesOldDB(t *testing.T) {
 	require.Equal(t, proto.MachineCaps{}, ms[0].Caps)
 }
 
-// Plan 3: launchReq y el panel de herdr se guardan, sobreviven a un renombre y se leen.
+// Plan 3: launchReq and the herdr pane are stored, survive a rename and are read back.
 func TestSessionLaunchAndHerdrPersist(t *testing.T) {
 	s := openMem(t)
 	require.NoError(t, s.UpsertSession(proto.SessionInfo{ID: "a", Machine: "m", State: proto.StateIdle,
@@ -565,11 +565,54 @@ func TestSessionLaunchAndHerdrPersist(t *testing.T) {
 	si, err := s.Session("a")
 	require.NoError(t, err)
 	require.Equal(t, [3]string{"r1", "p_1", "w_1"}, [3]string{si.LaunchReq, si.HerdrPane, si.HerdrWorkspace})
-	// /clear: el id nuevo llega con los mismos datos del proceso
+	// /clear: the new id arrives with the same process data
 	require.NoError(t, s.UpsertSession(proto.SessionInfo{ID: "b", PreviousID: "a", Machine: "m", State: proto.StateIdle,
 		LaunchReq: "r1", HerdrPane: "p_1", HerdrWorkspace: "w_1"}))
 	ss, err := s.ListSessions(false)
 	require.NoError(t, err)
 	require.Len(t, ss, 1)
 	require.Equal(t, [4]string{"b", "r1", "p_1", "w_1"}, [4]string{ss[0].ID, ss[0].LaunchReq, ss[0].HerdrPane, ss[0].HerdrWorkspace})
+}
+
+func TestMigrateSpanishStatusesToEnglish(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	s, err := Open(path)
+	require.NoError(t, err)
+	// Simulate a database written before the English migration.
+	for _, q := range []string{
+		`INSERT INTO projects(id,workspace_id,name,kind,settings) VALUES('p1','w','P','exec','{"statusMap":"{\"waiting\":\"bloqueado\",\"x\":\"en_curso\",\"y\":\"done\"}","cmd":"c"}')`,
+		`INSERT INTO projects(id,workspace_id,name,kind,settings) VALUES('p2','w','Q','exec','not json statusMap')`,
+		`INSERT INTO tickets(id,project_id,external_id,title,status) VALUES('t1','p1','1','a','por_hacer'),('t2','p1','2','b','en_review'),('t3','p1','3','c','hecho')`,
+		`INSERT INTO proposals(id,ticket_id,kind,body,status) VALUES('a','t1','status','hecho','pendiente'),('b','t1','comment','hecho','enviando'),('c','t1','status','en_curso','aprobada'),('d','t1','status','x','rechazada'),('e','t1','comment','y','fallida')`,
+	} {
+		_, err := s.db.Exec(q)
+		require.NoError(t, err, q)
+	}
+	require.NoError(t, s.Close())
+
+	for i := 0; i < 2; i++ { // the second pass proves idempotency
+		s, err = Open(path)
+		require.NoError(t, err)
+		got := func(q string) (out []string) {
+			rows, err := s.db.Query(q)
+			require.NoError(t, err)
+			defer rows.Close()
+			for rows.Next() {
+				var v string
+				require.NoError(t, rows.Scan(&v))
+				out = append(out, v)
+			}
+			return out
+		}
+		require.Equal(t, []string{"todo", "in_review", "done"}, got(`SELECT status FROM tickets ORDER BY id`))
+		require.Equal(t, []string{"pending", "sending", "approved", "rejected", "failed"}, got(`SELECT status FROM proposals ORDER BY id`))
+		// Only status proposals have their body rewritten.
+		require.Equal(t, []string{"done", "hecho", "in_progress", "x", "y"}, got(`SELECT body FROM proposals ORDER BY id`))
+		p, err := s.GetProject("p1")
+		require.NoError(t, err)
+		require.JSONEq(t, `{"waiting":"blocked","x":"in_progress","y":"done"}`, p.Connector.Settings["statusMap"])
+		require.Equal(t, "c", p.Connector.Settings["cmd"])
+		require.Equal(t, []string{"not json statusMap"}, got(`SELECT settings FROM projects WHERE id='p2'`))
+		require.NoError(t, s.Close())
+	}
 }

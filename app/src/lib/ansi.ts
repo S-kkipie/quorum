@@ -1,4 +1,4 @@
-/** Parser mínimo de SGR (colores y estilos) para dibujar la foto de la terminal. Sin dependencias. */
+/** Minimal SGR parser (colors and styles) to draw the terminal snapshot. No dependencies. */
 export type Span = { text: string; fg?: string; bg?: string; bold?: boolean; dim?: boolean; italic?: boolean; underline?: boolean; inverse?: boolean }
 
 const BASE = [
@@ -7,7 +7,7 @@ const BASE = [
 ]
 const LEVELS = [0, 95, 135, 175, 215, 255]
 
-/** Paleta xterm de 256 colores. */
+/** xterm 256-color palette. */
 export function xterm256(n: number): string {
   if (n < 16) return BASE[n]
   if (n < 232) {
@@ -56,10 +56,10 @@ function applySgr(st: Style, params: number[]): Style {
   return s
 }
 
-// CSI: ESC [ params intermedios final ; OSC: ESC ] ... (BEL | ESC \) ; otros ESC + 1 carácter
+// CSI: ESC [ params intermediates final ; OSC: ESC ] ... (BEL | ESC \) ; others ESC + 1 character
 const TOKEN = /\x1b\[([0-9;:?<=>]*)[ -/]*([@-~])|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b[@-Z\\-_]?/g
 
-/** Una lista de spans por línea. Divide en \r\n y \n, ignora \r sueltos y descarta lo que no sea SGR. */
+/** One list of spans per line. Splits on \r\n and \n, ignores stray \r and drops anything that is not SGR. */
 export function parseAnsi(input: string): Span[][] {
   const lines: Span[][] = [[]]
   let st: Style = {}

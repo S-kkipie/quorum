@@ -79,7 +79,7 @@ func (f *appFx) turnEnd(t *testing.T, answer string) {
 
 func TestTurnEndsDraftSingleProposal(t *testing.T) {
 	f, ids := propFx(t, "fakew")
-	f.turnEnd(t, "primero")
+	f.turnEnd(t, "first")
 	require.Eventually(t, func() bool { ps, _ := f.st.ListProposals(ids["41"]); return len(ps) == 1 }, 3*time.Second, 20*time.Millisecond)
 	f.turnEnd(t, strings.Repeat("é", 2000))
 	require.Eventually(t, func() bool {
@@ -87,9 +87,9 @@ func TestTurnEndsDraftSingleProposal(t *testing.T) {
 		return len(ps) == 1 && strings.Contains(ps[0].Body, "é")
 	}, 3*time.Second, 20*time.Millisecond)
 	ps, _ := f.st.ListProposals(ids["41"])
-	require.Equal(t, "pendiente", ps[0].Status)
-	require.Equal(t, "Avance (Quorum, m1):\n"+strings.Repeat("é", 1500), ps[0].Body)
-	require.Zero(t, fake.n(), "nada se escribe sin aprobar")
+	require.Equal(t, "pending", ps[0].Status)
+	require.Equal(t, "Progress (Quorum, m1):\n"+strings.Repeat("é", 1500), ps[0].Body)
+	require.Zero(t, fake.n(), "nothing is written without approval")
 }
 
 func TestApproveEditedBodyAndDouble(t *testing.T) {
@@ -101,15 +101,15 @@ func TestApproveEditedBodyAndDouble(t *testing.T) {
 	codes := make(chan int, 2)
 	for i := 0; i < 2; i++ {
 		go func() {
-			codes <- f.postJSON(t, "/api/proposals/"+ps[0].ID+"/approve", `{"body":"editado"}`, &proto.Proposal{})
+			codes <- f.postJSON(t, "/api/proposals/"+ps[0].ID+"/approve", `{"body":"edited"}`, &proto.Proposal{})
 		}()
 	}
 	a, b := <-codes, <-codes
 	require.ElementsMatch(t, []int{200, 409}, []int{a, b})
-	require.Equal(t, []string{"comment 41 editado"}, fake.snapshot())
+	require.Equal(t, []string{"comment 41 edited"}, fake.snapshot())
 	got, _ := f.st.GetProposal(ps[0].ID)
-	require.Equal(t, "aprobada", got.Status)
-	require.Equal(t, "editado", got.Body)
+	require.Equal(t, "approved", got.Status)
+	require.Equal(t, "edited", got.Body)
 	require.Equal(t, 409, f.postJSON(t, "/api/proposals/"+ps[0].ID+"/reject", `{}`, &map[string]string{}))
 }
 
@@ -121,41 +121,41 @@ func TestApproveFailureAndReject(t *testing.T) {
 	ps, _ := f.st.ListProposals(ids["41"])
 	var got proto.Proposal
 	require.Equal(t, 200, f.postJSON(t, "/api/proposals/"+ps[0].ID+"/approve", ``, &got))
-	require.Equal(t, "fallida", got.Status)
+	require.Equal(t, "failed", got.Status)
 	require.Equal(t, "boom", got.Error)
 
 	var st proto.Proposal
-	require.Equal(t, 201, f.postJSON(t, "/api/tickets/"+ids["41"]+"/proposals", `{"kind":"status","status":"hecho"}`, &st))
+	require.Equal(t, 201, f.postJSON(t, "/api/tickets/"+ids["41"]+"/proposals", `{"kind":"status","status":"done"}`, &st))
 	require.Equal(t, 400, f.postJSON(t, "/api/tickets/"+ids["41"]+"/proposals", `{"kind":"status","status":"nope"}`, &map[string]string{}))
 	var rj proto.Proposal
 	require.Equal(t, 200, f.postJSON(t, "/api/proposals/"+st.ID+"/reject", ``, &rj))
-	require.Equal(t, "rechazada", rj.Status)
+	require.Equal(t, "rejected", rj.Status)
 }
 
 func TestApproveStatusAndNoConnector(t *testing.T) {
 	f, ids := propFx(t, "fakew")
 	var st proto.Proposal
-	require.Equal(t, 201, f.postJSON(t, "/api/tickets/"+ids["41"]+"/proposals", `{"kind":"status","status":"hecho"}`, &st))
+	require.Equal(t, 201, f.postJSON(t, "/api/tickets/"+ids["41"]+"/proposals", `{"kind":"status","status":"done"}`, &st))
 	var got proto.Proposal
 	require.Equal(t, 200, f.postJSON(t, "/api/proposals/"+st.ID+"/approve", ``, &got))
-	require.Equal(t, "aprobada", got.Status)
-	require.Equal(t, []string{"status 41 hecho"}, fake.snapshot())
+	require.Equal(t, "approved", got.Status)
+	require.Equal(t, []string{"status 41 done"}, fake.snapshot())
 
 	f2, ids2 := propFx(t, "")
 	var st2 proto.Proposal
-	require.Equal(t, 201, f2.postJSON(t, "/api/tickets/"+ids2["41"]+"/proposals", `{"kind":"status","status":"hecho"}`, &st2))
+	require.Equal(t, 201, f2.postJSON(t, "/api/tickets/"+ids2["41"]+"/proposals", `{"kind":"status","status":"done"}`, &st2))
 	require.Equal(t, 200, f2.postJSON(t, "/api/proposals/"+st2.ID+"/approve", ``, &got))
-	require.Equal(t, "fallida", got.Status)
-	require.Equal(t, "el proyecto no tiene conector", got.Error)
+	require.Equal(t, "failed", got.Status)
+	require.Equal(t, "the project has no connector", got.Error)
 }
 
 func TestStartupFailsInterruptedProposals(t *testing.T) {
 	f, ids := propFx(t, "fakew")
 	p, err := f.st.CreateProposal(proto.Proposal{TicketID: ids["41"], Kind: "comment", Body: "x"})
 	require.NoError(t, err)
-	require.NoError(t, f.st.TransitionProposal(p.ID, "pendiente", "enviando"))
-	NewServer(f.st) // el arranque limpia lo que quedó enviando
+	require.NoError(t, f.st.TransitionProposal(p.ID, "pending", "sending"))
+	NewServer(f.st) // startup cleans up what was left in sending
 	got, _ := f.st.GetProposal(p.ID)
-	require.Equal(t, "fallida", got.Status)
-	require.Equal(t, "interrumpida; verifica en la ticketera", got.Error)
+	require.Equal(t, "failed", got.Status)
+	require.Equal(t, "interrupted; check the ticket source", got.Error)
 }

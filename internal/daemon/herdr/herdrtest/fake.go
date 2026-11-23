@@ -1,5 +1,5 @@
-// Package herdrtest es un herdr falso para tests: escucha en un socket unix
-// temporal y responde con los handlers registrados.
+// Package herdrtest is a fake herdr for tests: it listens on a temporary
+// unix socket and answers with the registered handlers.
 package herdrtest
 
 import (
@@ -12,13 +12,13 @@ import (
 	"testing"
 )
 
-// Call es una petición recibida por el falso.
+// Call is a request received by the fake.
 type Call struct {
 	Method string
 	Params json.RawMessage
 }
 
-// Fake es un servidor herdr de mentira.
+// Fake is a fake herdr server.
 type Fake struct {
 	Socket string
 
@@ -28,7 +28,7 @@ type Fake struct {
 	calls    []Call
 }
 
-// New arranca el falso y lo cierra al terminar el test.
+// New starts the fake and closes it when the test ends.
 func New(t *testing.T) *Fake {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "hdr")
@@ -47,15 +47,15 @@ func New(t *testing.T) *Fake {
 	return f
 }
 
-// Handle registra el handler de un método. Si devuelve errCode != "", responde
-// un error con ese código; si no, responde result.
+// Handle registers the handler for a method. If it returns errCode != "", it answers
+// with an error with that code; otherwise it answers result.
 func (f *Fake) Handle(method string, fn func(params json.RawMessage) (result any, errCode string)) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.handlers[method] = fn
 }
 
-// Calls devuelve una copia de las peticiones recibidas, en orden.
+// Calls returns a copy of the received requests, in order.
 func (f *Fake) Calls() []Call {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -95,7 +95,7 @@ func (f *Fake) serve(c net.Conn) {
 
 		resp := map[string]any{"id": req.ID}
 		if fn == nil {
-			resp["error"] = map[string]string{"code": "unknown_method", "message": "método sin handler: " + req.Method}
+			resp["error"] = map[string]string{"code": "unknown_method", "message": "method without handler: " + req.Method}
 		} else if res, code := fn(req.Params); code != "" {
 			resp["error"] = map[string]string{"code": code, "message": code}
 		} else {
@@ -108,7 +108,7 @@ func (f *Fake) serve(c net.Conn) {
 	}
 }
 
-// Close detiene el falso y borra su socket (simula que herdr se cerró).
+// Close stops the fake and deletes its socket (simulates herdr closing).
 func (f *Fake) Close() {
 	f.ln.Close()
 	os.Remove(f.Socket)

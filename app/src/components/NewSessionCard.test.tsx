@@ -21,47 +21,47 @@ const onLaunchedDefault = vi.fn()
 const props = { projectId: 'p1', pending: false, onLaunched: onLaunchedDefault, onGuard: guard(onLaunchedDefault), onTerminal: vi.fn() }
 
 describe('NewSessionCard', () => {
-  it('un toque lanza con la máquina, carpeta y modo; avisa onLaunched', async () => {
+  it('one tap launches with the machine, folder and mode; calls onLaunched', async () => {
     const onLaunched = vi.fn()
     render(<NewSessionCard {...props} state={st()} onLaunched={onLaunched} onGuard={guard(onLaunched)} />)
-    fireEvent.click(screen.getByRole('button', { name: 'Nueva sesión' }))
+    fireEvent.click(screen.getByRole('button', { name: 'New session' }))
     await waitFor(() => expect(onLaunched).toHaveBeenCalledWith({ reqId: 'r1', machine: 'vps-1', label: '/srv/repo' }))
     expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({ machine: 'vps-1', dir: '/srv/repo', permissionMode: 'bypass', projectId: 'p1' })
     expect(JSON.parse(mem['quorum.launch.p1'])).toEqual({ machine: 'vps-1', bypass: true })
   })
-  it('con pending queda deshabilitada y no lanza', () => {
+  it('with pending it is disabled and does not launch', () => {
     render(<NewSessionCard {...props} state={st()} pending />)
-    const b = screen.getByRole('button', { name: /Lanzando/ }) as HTMLButtonElement
+    const b = screen.getByRole('button', { name: /Launching/ }) as HTMLButtonElement
     expect(b.disabled).toBe(true)
     fireEvent.click(b)
     expect(fetchMock).not.toHaveBeenCalled()
   })
-  it('doble toque lanza una sola vez', async () => {
+  it('double tap launches only once', async () => {
     render(<NewSessionCard {...props} state={st()} />)
-    const b = screen.getByRole('button', { name: 'Nueva sesión' })
+    const b = screen.getByRole('button', { name: 'New session' })
     fireEvent.click(b)
     fireEvent.click(b)
     await waitFor(() => expect(props.onLaunched).toHaveBeenCalled())
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
-  it('máquina root: "Sin permisos" deshabilitado con el motivo y lanza en default', async () => {
+  it('root machine: "Skip permissions" disabled with the reason, launches in default', async () => {
     render(<NewSessionCard {...props} state={st(caps({ root: true }))} />)
     expect((screen.getByRole('checkbox') as HTMLInputElement).disabled).toBe(true)
-    expect(screen.getByText('Sin permisos no funciona como root')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Nueva sesión' }))
+    expect(screen.getByText('Skip permissions does not work as root')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'New session' }))
     await waitFor(() => expect(fetchMock).toHaveBeenCalled())
     expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body)).permissionMode).toBe('default')
   })
-  it('sin terminal muestra que falta herdr; con terminal, el botón llama onTerminal', () => {
+  it('without terminal it shows herdr is missing; with terminal, the button calls onTerminal', () => {
     const { unmount } = render(<NewSessionCard {...props} state={st()} />)
-    expect(screen.getByText('Terminal no disponible en esta máquina (falta herdr)')).toBeTruthy()
+    expect(screen.getByText('Terminal not available on this machine (herdr missing)')).toBeTruthy()
     unmount()
     const onTerminal = vi.fn()
     render(<NewSessionCard {...props} state={st(caps({ terminal: true }))} onTerminal={onTerminal} />)
     fireEvent.click(screen.getByRole('button', { name: 'Terminal' }))
     expect(onTerminal).toHaveBeenCalledWith('vps-1', '/srv/repo')
   })
-  it('Terminal: doble toque abre una sola vez', async () => {
+  it('Terminal: double tap opens only once', async () => {
     let done: () => void = () => {}
     const onTerminal = vi.fn(() => new Promise<void>((r) => { done = r }))
     render(<NewSessionCard {...props} state={st(caps({ terminal: true }))} onTerminal={onTerminal} />)
@@ -71,13 +71,13 @@ describe('NewSessionCard', () => {
     expect(onTerminal).toHaveBeenCalledTimes(1)
     done()
   })
-  it('sin checkouts: texto y enlace "Otra carpeta…"', () => {
+  it('no checkouts: text and "Another folder…" link', () => {
     render(<NewSessionCard {...props} state={initialState()} />)
-    expect(screen.getByText('Este proyecto todavía no tiene carpeta en ninguna máquina')).toBeTruthy()
-    fireEvent.click(screen.getByText('Otra carpeta…'))
+    expect(screen.getByText('This project has no folder on any machine yet')).toBeTruthy()
+    fireEvent.click(screen.getByText('Another folder…'))
     expect(screen.getByRole('dialog')).toBeTruthy()
   })
-  it('usa la máquina de las preferencias si está en línea', () => {
+  it('uses the preferred machine if it is online', () => {
     mem['quorum.launch.p1'] = JSON.stringify({ machine: 'mac', bypass: false })
     let s = setCheckouts(st(), 'p1', [
       { id: 'c1', projectId: 'p1', machine: 'vps-1', root: '/a', repoUrl: '', branch: '', updatedAt: 1 },

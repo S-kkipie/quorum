@@ -10,13 +10,13 @@ vi.stubGlobal('localStorage', { getItem: () => 'tok', setItem() {}, removeItem()
 afterEach(() => { cleanup(); fetchMock.mockClear() })
 
 describe('WorkspaceForm', () => {
-  it('alta: el POST solo lleva el nombre; color y perfil van en un PATCH', async () => {
+  it('create: the POST only carries the name; color and profile go in a PATCH', async () => {
     const onDone = vi.fn()
     render(<WorkspaceForm onDone={onDone} />)
-    fireEvent.change(screen.getByLabelText('Nombre'), { target: { value: 'ACME' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Color rojo' }))
-    fireEvent.change(screen.getByPlaceholderText('cliente-x'), { target: { value: 'acme' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'ACME' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Color red' }))
+    fireEvent.change(screen.getByPlaceholderText('client-x'), { target: { value: 'acme' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(onDone).toHaveBeenCalled())
     const [[u1, i1], [u2, i2]] = fetchMock.mock.calls
     expect(String(u1)).toContain('/api/workspaces')

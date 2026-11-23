@@ -26,22 +26,22 @@ func TestParseSample(t *testing.T) {
 	want := []proto.EventKind{proto.KindUser, proto.KindAssistant, proto.KindToolStart}
 	for i, k := range want {
 		if evs[i].Kind != k {
-			t.Fatalf("evs[%d].Kind = %s, quería %s", i, evs[i].Kind, k)
+			t.Fatalf("evs[%d].Kind = %s, wanted %s", i, evs[i].Kind, k)
 		}
 	}
 	var u map[string]string
 	json.Unmarshal(evs[0].Data, &u)
-	if u["text"] != "Hola, revisa el archivo de ejemplo" || evs[0].TS != 1767323045678 {
+	if u["text"] != "Hello, review the example file" || evs[0].TS != 1767323045678 {
 		t.Fatalf("user = %v ts=%d", u, evs[0].TS)
 	}
 	var a map[string]string
 	json.Unmarshal(evs[1].Data, &a)
-	if a["text"] != "Voy a leerlo." {
+	if a["text"] != "I will read it." {
 		t.Fatalf("assistant = %v", a)
 	}
 	var ts proto.ToolStart
 	json.Unmarshal(evs[2].Data, &ts)
-	if ts.ID != "toolu_A1" || ts.Name != "Read" || ts.Summary != "/tmp/ejemplo.txt" {
+	if ts.ID != "toolu_A1" || ts.Name != "Read" || ts.Summary != "/tmp/example.txt" {
 		t.Fatalf("tool_start = %+v", ts)
 	}
 }
@@ -49,7 +49,7 @@ func TestParseSample(t *testing.T) {
 func TestParseLimitKeepsLast(t *testing.T) {
 	var sb strings.Builder
 	for _, w := range []string{"uno", "dos", "tres", "cuatro", "cinco"} {
-		sb.WriteString(`{"type":"user","message":{"content":"` + w + "\"}}\nbasura\n")
+		sb.WriteString(`{"type":"user","message":{"content":"` + w + "\"}}\ngarbage\n")
 	}
 	evs, err := Parse(strings.NewReader(sb.String()), 2)
 	if err != nil || len(evs) != 2 {
@@ -58,7 +58,7 @@ func TestParseLimitKeepsLast(t *testing.T) {
 	var d map[string]string
 	json.Unmarshal(evs[0].Data, &d)
 	if d["text"] != "cuatro" {
-		t.Fatalf("primero = %v", d)
+		t.Fatalf("first = %v", d)
 	}
 }
 
@@ -81,5 +81,24 @@ func TestParseClipsLongText(t *testing.T) {
 	json.Unmarshal(evs[0].Data, &d)
 	if len(d["text"]) > MaxText+len("…") || !strings.HasSuffix(d["text"], "…") || !utf8.ValidString(d["text"]) {
 		t.Fatalf("len=%d", len(d["text"]))
+	}
+}
+
+func TestParseToolUseCarriesInput(t *testing.T) {
+	line := `{"type":"assistant","timestamp":"2026-01-02T03:04:05.678Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu1","name":"Edit","input":{"file_path":"/a/b.go","old_string":"foo","new_string":"bar"}}]}}`
+	evs, err := Parse(strings.NewReader(line+"\n"), 500)
+	if err != nil || len(evs) != 1 {
+		t.Fatalf("evs=%v err=%v", evs, err)
+	}
+	var ts proto.ToolStart
+	if err := json.Unmarshal(evs[0].Data, &ts); err != nil {
+		t.Fatal(err)
+	}
+	var in map[string]string
+	if err := json.Unmarshal(ts.Input, &in); err != nil {
+		t.Fatalf("input %s: %v", ts.Input, err)
+	}
+	if in["file_path"] != "/a/b.go" || in["old_string"] != "foo" || in["new_string"] != "bar" {
+		t.Fatalf("input = %v", in)
 	}
 }

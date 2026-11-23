@@ -1,7 +1,7 @@
 /**
- * Llama una API del mod que puede no existir en esta versión de Claude Code
- * (p. ej. `$.session.info` falta en 2.1.325). Si la función no existe, lanza
- * de forma síncrona o su promesa falla, devuelve `fallback` en vez de abortar el hook.
+ * Calls a mod API that may not exist in this Claude Code version
+ * (e.g. `$.session.info` is missing in 2.1.325). If the function does not exist,
+ * throws synchronously or its promise fails, returns `fallback` instead of aborting the hook.
  */
 export function optional<T>(call: () => Promise<T> | T, fallback: T): Promise<T> {
   try {

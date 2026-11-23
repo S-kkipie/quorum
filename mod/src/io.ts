@@ -1,7 +1,7 @@
 import type { EngineInterface } from 'claude-code'
 import type { LinkIO } from './link'
 
-/** Adapta `$` (la API de mods) al LinkIO mínimo que usa Link. */
+/** Adapts `$` (the mods API) to the minimal LinkIO that Link uses. */
 export function makeIO($: EngineInterface): LinkIO {
   return {
     run: async argv => {

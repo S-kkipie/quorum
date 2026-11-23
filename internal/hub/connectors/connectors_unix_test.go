@@ -15,19 +15,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// El timeout mata el grupo de procesos: el nieto no queda vivo.
+// The timeout kills the process group: the grandchild does not stay alive.
 func TestExecTimeoutKillsGrandchild(t *testing.T) {
 	pidfile := filepath.Join(t.TempDir(), "pid")
 	c0, _ := newExec(cfg(t, "orphan", "pidfile", pidfile), "", os.Environ(), 500*time.Millisecond)
 	_, err0 := c0.List(context.Background(), 0)
-	require.ErrorContains(t, err0, "tiempo de espera")
+	require.ErrorContains(t, err0, "timed out")
 	pb, rerr := os.ReadFile(pidfile)
 	require.NoError(t, rerr)
 	pid, _ := strconv.Atoi(strings.TrimSpace(string(pb)))
-	require.Eventually(t, func() bool { return syscall.Kill(pid, 0) != nil }, 3*time.Second, 50*time.Millisecond, "el hijo sigue vivo")
+	require.Eventually(t, func() bool { return syscall.Kill(pid, 0) != nil }, 3*time.Second, 50*time.Millisecond, "the child is still alive")
 }
 
-// gh va por el shell de login: el PATH del perfil aplica y los argumentos llegan intactos.
+// gh goes through the login shell: the profile's PATH applies and the arguments arrive intact.
 func TestDefaultGhRunnerLoginShell(t *testing.T) {
 	home := t.TempDir()
 	bin := filepath.Join(home, "bin")
@@ -40,10 +40,10 @@ func TestDefaultGhRunnerLoginShell(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "api\n-f\n"+arg+"\n", string(out))
 	_, statErr := os.Stat(filepath.Join(home, "pwned"))
-	require.True(t, os.IsNotExist(statErr), "los argumentos no se interpretan")
+	require.True(t, os.IsNotExist(statErr), "the arguments are not interpreted")
 
-	// sin gh en el PATH del perfil: error claro
+	// without gh on the profile's PATH: clear error
 	require.NoError(t, os.WriteFile(filepath.Join(home, ".bash_profile"), []byte("export PATH=/nonexistent\n"), 0o644))
 	_, err = defaultGhRunner(5*time.Second)(context.Background(), env, "api")
-	require.EqualError(t, err, "GitHub: no encontré el comando gh en el hub")
+	require.EqualError(t, err, "GitHub: gh command not found on the hub")
 }

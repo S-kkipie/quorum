@@ -51,7 +51,7 @@ func (s *Server) fail(w http.ResponseWriter, err error, notFound string) {
 		return
 	}
 	log.Printf("hub: api: %v", err)
-	apiErr(w, 500, "error interno")
+	apiErr(w, 500, "internal error")
 }
 
 func (s *Server) handleListWorkspaces(w http.ResponseWriter, r *http.Request) {
@@ -84,13 +84,13 @@ func (s *Server) handlePatchWorkspace(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if cur == nil {
-		apiErr(w, 404, "trabajo no encontrado")
+		apiErr(w, 404, "workspace not found")
 		return
 	}
 	if b.Name != nil {
 		n := strings.TrimSpace(*b.Name)
 		if n == "" {
-			apiErr(w, 400, "falta el nombre del trabajo")
+			apiErr(w, 400, "missing workspace name")
 			return
 		}
 		cur.Name = n
@@ -102,7 +102,7 @@ func (s *Server) handlePatchWorkspace(w http.ResponseWriter, r *http.Request) {
 		cur.WhoasProfile = *b.WhoasProfile
 	}
 	if err := s.st.UpdateWorkspace(*cur); err != nil {
-		s.fail(w, err, "trabajo no encontrado")
+		s.fail(w, err, "workspace not found")
 		return
 	}
 	s.hub.publishWorkspace(*cur)
@@ -113,11 +113,11 @@ func (s *Server) handleDeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	err := s.st.DeleteWorkspace(id)
 	if errors.Is(err, store.ErrNotEmpty) {
-		apiErr(w, 409, "el trabajo tiene proyectos")
+		apiErr(w, 409, "the workspace has projects")
 		return
 	}
 	if err != nil {
-		s.fail(w, err, "trabajo no encontrado")
+		s.fail(w, err, "workspace not found")
 		return
 	}
 	s.hub.publishGoneID("workspace_gone", id)
@@ -139,21 +139,21 @@ func (s *Server) handleListProjects(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGetProject(w http.ResponseWriter, r *http.Request) {
 	p, err := s.st.GetProject(r.PathValue("id"))
 	if err != nil {
-		s.fail(w, err, "proyecto no encontrado")
+		s.fail(w, err, "project not found")
 		return
 	}
 	writeJSON(w, 200, p)
 }
 
-// defaultIntervalMin: intervalo de sincronización si se activa un conector sin indicarlo.
+// defaultIntervalMin: sync interval if a connector is enabled without specifying one.
 const defaultIntervalMin = 5
 
 func validConnector(c proto.ConnectorConfig) string {
 	if c.Kind != "none" && !slices.Contains(connectors.Kinds(), c.Kind) {
-		return "tipo de conector no soportado"
+		return "connector kind not supported"
 	}
 	if c.Kind != "none" && (c.IntervalMin < 1 || c.IntervalMin > 60) {
-		return "el intervalo debe estar entre 1 y 60 minutos"
+		return "the interval must be between 1 and 60 minutes"
 	}
 	return ""
 }
@@ -174,7 +174,7 @@ func (s *Server) handlePatchProject(w http.ResponseWriter, r *http.Request) {
 	}
 	cur, err := s.st.GetProject(r.PathValue("id"))
 	if err != nil {
-		s.fail(w, err, "proyecto no encontrado")
+		s.fail(w, err, "project not found")
 		return
 	}
 	oldRepo := store.NormalizeRepoURL(cur.RepoURL)
@@ -183,14 +183,14 @@ func (s *Server) handlePatchProject(w http.ResponseWriter, r *http.Request) {
 	if b.Name != nil {
 		n := strings.TrimSpace(*b.Name)
 		if n == "" {
-			apiErr(w, 400, "falta el nombre del proyecto")
+			apiErr(w, 400, "missing project name")
 			return
 		}
 		cur.Name = n
 	}
 	if b.WorkspaceID != nil {
 		if *b.WorkspaceID == "" {
-			apiErr(w, 400, "falta el trabajo")
+			apiErr(w, 400, "missing workspace")
 			return
 		}
 		cur.WorkspaceID = *b.WorkspaceID
@@ -225,7 +225,7 @@ func (s *Server) handlePatchProject(w http.ResponseWriter, r *http.Request) {
 	reset := connectorIdentityChanged(oldConn, cur.Connector)
 	var rs store.ConnectorReset
 	if reset {
-		// una sincronización en curso contra el origen viejo no debe guardar nada
+		// a sync in progress against the old source must not store anything
 		err = s.sync.Invalidate(cur.ID, func() (e error) {
 			rs, e = s.st.UpdateProjectResetConnector(cur)
 			return e
@@ -234,9 +234,9 @@ func (s *Server) handlePatchProject(w http.ResponseWriter, r *http.Request) {
 		err = s.st.UpdateProject(cur)
 	}
 	if err != nil {
-		msg := "trabajo no encontrado"
+		msg := "workspace not found"
 		if _, e := s.st.GetProject(cur.ID); errors.Is(e, store.ErrNotFound) {
-			msg = "proyecto no encontrado"
+			msg = "project not found"
 		}
 		s.fail(w, err, msg)
 		return
@@ -246,7 +246,7 @@ func (s *Server) handlePatchProject(w http.ResponseWriter, r *http.Request) {
 	}
 	out, err := s.st.GetProject(cur.ID)
 	if err != nil {
-		s.fail(w, err, "proyecto no encontrado")
+		s.fail(w, err, "project not found")
 		return
 	}
 	s.hub.publishProject(out)
@@ -255,7 +255,7 @@ func (s *Server) handlePatchProject(w http.ResponseWriter, r *http.Request) {
 		if out.Connector.Kind != "none" {
 			go func() {
 				if err := s.sync.SyncNow(out.ID); err != nil {
-					log.Printf("hub: sincronizar %s tras cambiar el conector: %v", out.ID, err)
+					log.Printf("hub: sync %s after changing the connector: %v", out.ID, err)
 				}
 			}()
 		}
@@ -263,8 +263,8 @@ func (s *Server) handlePatchProject(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, out)
 }
 
-// identityKeys son los ajustes que identifican el origen de los tickets: si cambian,
-// los ExternalID guardados ya no apuntan a lo mismo.
+// identityKeys are the settings that identify the ticket source: if they change,
+// the stored ExternalIDs no longer point to the same thing.
 var identityKeys = []string{"repo", "baseURL", "companyId", "projectId", "command"}
 
 func connectorIdentityChanged(a, b proto.ConnectorConfig) bool {
@@ -286,7 +286,7 @@ func connectorIdentityChanged(a, b proto.ConnectorConfig) bool {
 	return false
 }
 
-// afterConnectorReset avisa a las apps de lo que borró el cambio de conector.
+// afterConnectorReset notifies the apps of what the connector change deleted.
 func (h *Hub) afterConnectorReset(p proto.Project, rs store.ConnectorReset) {
 	pl, _ := json.Marshal(struct {
 		ProjectID string         `json:"projectId"`
@@ -310,8 +310,8 @@ func (h *Hub) afterConnectorReset(p proto.Project, rs store.ConnectorReset) {
 	}
 }
 
-// relinkCheckouts desvincula los checkouts del proyecto cuyo remoto ya no coincide
-// y adopta los que ahora sí coinciden.
+// relinkCheckouts unlinks the project's checkouts whose remote no longer matches
+// and adopts those that now do.
 func (h *Hub) relinkCheckouts(p proto.Project) {
 	norm := store.NormalizeRepoURL(p.RepoURL)
 	if cos, err := h.st.ListCheckouts(p.ID); err == nil {
@@ -355,7 +355,7 @@ func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := s.st.DeleteProject(id); err != nil {
-		s.fail(w, err, "proyecto no encontrado")
+		s.fail(w, err, "project not found")
 		return
 	}
 	s.sum.Forget(id)
@@ -373,16 +373,16 @@ func (s *Server) handlePutToken(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	if err := s.st.SetConnectorToken(id, b.Token); err != nil {
-		s.fail(w, err, "proyecto no encontrado")
+		s.fail(w, err, "project not found")
 		return
 	}
 	if p, err := s.st.GetProject(id); err == nil {
-		s.hub.publishProject(p) // hasToken cambió
+		s.hub.publishProject(p) // hasToken changed
 	}
 	w.WriteHeader(204)
 }
 
-// ticketView: el ticket con las sesiones asociadas (y, en el detalle, sus propuestas).
+// ticketView: the ticket with its associated sessions (and, in the detail, its proposals).
 type ticketView struct {
 	proto.Ticket
 	Sessions  []ticketSession   `json:"sessions"`
@@ -405,7 +405,7 @@ func toSessions(ls []proto.SessionTicket) []ticketSession {
 func (s *Server) handleProjectTickets(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if _, err := s.st.GetProject(id); err != nil {
-		s.fail(w, err, "proyecto no encontrado")
+		s.fail(w, err, "project not found")
 		return
 	}
 	ts, err := s.st.ListTickets(id)
@@ -425,11 +425,11 @@ func (s *Server) handleProjectTickets(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, out)
 }
 
-// handleProjectCheckouts: los checkouts guardados del proyecto (máquina, raíz, remoto, rama).
+// handleProjectCheckouts: the project's stored checkouts (machine, root, remote, branch).
 func (s *Server) handleProjectCheckouts(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if _, err := s.st.GetProject(id); err != nil {
-		s.fail(w, err, "proyecto no encontrado")
+		s.fail(w, err, "project not found")
 		return
 	}
 	cos, err := s.st.ListCheckouts(id)
@@ -446,7 +446,7 @@ func (s *Server) handleProjectCheckouts(w http.ResponseWriter, r *http.Request) 
 func (s *Server) handleGetTicket(w http.ResponseWriter, r *http.Request) {
 	t, err := s.st.Ticket(r.PathValue("id"))
 	if err != nil {
-		s.fail(w, err, "ticket no encontrado")
+		s.fail(w, err, "ticket not found")
 		return
 	}
 	ls, err := s.st.TicketSessions(t.ID)
@@ -467,18 +467,18 @@ const (
 	maxProposalLimit     = 1000
 )
 
-// handleListProposals: ?ticket=, ?status= y ?limit= (200 por defecto), recientes primero.
+// handleListProposals: ?ticket=, ?status= and ?limit= (200 by default), newest first.
 func (s *Server) handleListProposals(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	f := store.ProposalFilter{TicketID: q.Get("ticket"), Status: q.Get("status"), Limit: defaultProposalLimit}
 	if f.Status != "" && !store.ValidProposalStatus(f.Status) {
-		apiErr(w, 400, "estado de propuesta inválido")
+		apiErr(w, 400, "invalid proposal status")
 		return
 	}
 	if v := q.Get("limit"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n <= 0 {
-			apiErr(w, 400, "límite inválido")
+			apiErr(w, 400, "invalid limit")
 			return
 		}
 		f.Limit = min(n, maxProposalLimit)

@@ -1,5 +1,7 @@
 package store
 
+import "encoding/json"
+
 const schema = `
 CREATE TABLE IF NOT EXISTS machines (
 	name TEXT PRIMARY KEY,
@@ -69,7 +71,7 @@ func migrate(s *Store) error {
 	if _, err := s.db.Exec(schemaProjects); err != nil {
 		return err
 	}
-	// BDs anteriores: sessions sin previous_id.
+	// Older DBs: sessions without previous_id.
 	var n int
 	if err := s.db.QueryRow(`SELECT count(*) FROM pragma_table_info('sessions') WHERE name='previous_id'`).Scan(&n); err != nil {
 		return err
@@ -79,7 +81,7 @@ func migrate(s *Store) error {
 			return err
 		}
 	}
-	// BDs anteriores: machines sin caps.
+	// Older DBs: machines without caps.
 	if err := s.db.QueryRow(`SELECT count(*) FROM pragma_table_info('machines') WHERE name='caps'`).Scan(&n); err != nil {
 		return err
 	}
@@ -104,7 +106,7 @@ func migrate(s *Store) error {
 			return err
 		}
 	}
-	// Plan 3: con qué lanzamiento y en qué panel de herdr corre la sesión.
+	// Plan 3: which launch and which herdr pane the session runs in.
 	for _, col := range []string{"launch_req", "herdr_pane", "herdr_workspace"} {
 		if err := s.db.QueryRow(`SELECT count(*) FROM pragma_table_info('sessions') WHERE name=?`, col).Scan(&n); err != nil {
 			return err
@@ -115,10 +117,98 @@ func migrate(s *Store) error {
 			}
 		}
 	}
-	return nil
+	return migrateEnglishStatuses(s)
 }
 
-// schemaProjects (Plan 2): trabajos, proyectos, checkouts, tickets y propuestas.
+// Status values were stored in Spanish before the repository was translated.
+var (
+	oldTicketStatuses = map[string]string{
+		"por_hacer": "todo", "en_curso": "in_progress", "en_review": "in_review", "hecho": "done", "bloqueado": "blocked",
+	}
+	oldProposalStatuses = map[string]string{
+		"pendiente": "pending", "enviando": "sending", "aprobada": "approved", "rechazada": "rejected", "fallida": "failed",
+	}
+)
+
+// migrateEnglishStatuses rewrites the old Spanish status values to English: tickets.status,
+// proposals.status, proposals.body of status proposals and the values of each project's
+// connector statusMap setting. It is idempotent: English values are left untouched.
+func migrateEnglishStatuses(s *Store) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for old, nw := range oldTicketStatuses {
+		if _, err := tx.Exec(`UPDATE tickets SET status=? WHERE status=?`, nw, old); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`UPDATE proposals SET body=? WHERE kind='status' AND body=?`, nw, old); err != nil {
+			return err
+		}
+	}
+	for old, nw := range oldProposalStatuses {
+		if _, err := tx.Exec(`UPDATE proposals SET status=? WHERE status=?`, nw, old); err != nil {
+			return err
+		}
+	}
+	rows, err := tx.Query(`SELECT id, settings FROM projects WHERE settings LIKE '%statusMap%'`)
+	if err != nil {
+		return err
+	}
+	type upd struct{ id, settings string }
+	var todo []upd
+	for rows.Next() {
+		var id, settings string
+		if err := rows.Scan(&id, &settings); err != nil {
+			rows.Close()
+			return err
+		}
+		if ns, changed := migrateStatusMapSetting(settings); changed {
+			todo = append(todo, upd{id, ns})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	for _, u := range todo {
+		if _, err := tx.Exec(`UPDATE projects SET settings=? WHERE id=?`, u.settings, u.id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// migrateStatusMapSetting rewrites the Spanish values inside settings["statusMap"] (itself a JSON
+// object stored as a string). Malformed JSON is left as is.
+func migrateStatusMapSetting(settings string) (string, bool) {
+	var m map[string]string
+	if json.Unmarshal([]byte(settings), &m) != nil || m["statusMap"] == "" {
+		return settings, false
+	}
+	var sm map[string]string
+	if json.Unmarshal([]byte(m["statusMap"]), &sm) != nil {
+		return settings, false
+	}
+	changed := false
+	for k, v := range sm {
+		if nw, ok := oldTicketStatuses[v]; ok {
+			sm[k] = nw
+			changed = true
+		}
+	}
+	if !changed {
+		return settings, false
+	}
+	b, _ := json.Marshal(sm)
+	m["statusMap"] = string(b)
+	out, _ := json.Marshal(m)
+	return string(out), true
+}
+
+// schemaProjects (Plan 2): workspaces, projects, checkouts, tickets and proposals.
 const schemaProjects = `
 CREATE TABLE IF NOT EXISTS workspaces (
 	id TEXT PRIMARY KEY,
@@ -189,7 +279,7 @@ CREATE TABLE IF NOT EXISTS proposals (
 	ticket_id TEXT NOT NULL,
 	kind TEXT NOT NULL DEFAULT '',
 	body TEXT NOT NULL DEFAULT '',
-	status TEXT NOT NULL DEFAULT 'pendiente',
+	status TEXT NOT NULL DEFAULT 'pending',
 	error TEXT NOT NULL DEFAULT '',
 	created_at INTEGER NOT NULL DEFAULT 0
 );

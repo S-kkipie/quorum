@@ -8,8 +8,8 @@ import (
 	"time"
 )
 
-// setupProcessGroup pone el conector en su propio grupo y mata el grupo entero al cancelar,
-// para que los scripts hijos no queden colgados.
+// setupProcessGroup puts the connector in its own group and kills the whole group on cancel,
+// so child scripts are not left hanging.
 func setupProcessGroup(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }

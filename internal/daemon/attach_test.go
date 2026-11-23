@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// openAttach abre el stream con un plazo de 5 s: ninguna lectura del test puede colgarse.
+// openAttach opens the stream with a 5 s deadline: no test read can hang.
 func openAttach(t *testing.T, ctx context.Context, url, token string) (*http.Response, *bufio.Reader) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	t.Cleanup(cancel)
@@ -28,7 +28,7 @@ func openAttach(t *testing.T, ctx context.Context, url, token string) (*http.Res
 	return resp, bufio.NewReader(resp.Body)
 }
 
-// readToEOF lee hasta EOF; falla (en vez de colgarse) si el stream no termina en 3 s.
+// readToEOF reads until EOF; fails (instead of hanging) if the stream does not end within 3 s.
 func readToEOF(t *testing.T, r io.Reader) {
 	t.Helper()
 	done := make(chan error, 1)
@@ -37,7 +37,7 @@ func readToEOF(t *testing.T, r io.Reader) {
 	case err := <-done:
 		require.NoError(t, err)
 	case <-time.After(3 * time.Second):
-		t.Fatal("el stream no terminó")
+		t.Fatal("the stream did not finish")
 	}
 }
 
@@ -113,12 +113,12 @@ func TestRunAttachCopiesLinesAndExitCodes(t *testing.T) {
 	require.Equal(t, 2, RunAttach(context.Background(), srv.URL, "tok", "s1", &out, &errb))
 }
 
-// Minor: un stream cortado con error sale con 3 (distinto del cierre limpio, 0).
+// Minor: a stream cut with an error exits with 3 (distinct from a clean close, 0).
 func TestRunAttachStreamErrorExitCode(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
 		w.Write([]byte("{\"type\":\"ping\"}\n"))
-		w.Write(bytes.Repeat([]byte("x"), 9<<20)) // línea > 8 MiB sin salto
+		w.Write(bytes.Repeat([]byte("x"), 9<<20)) // line > 8 MiB with no newline
 	}))
 	defer srv.Close()
 	var out, errb bytes.Buffer

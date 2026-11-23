@@ -1,4 +1,4 @@
-{"type":"summary","summary":"Resumen del trabajo","leafUuid":"x"}
-{"type":"user","message":{"role":"user","content":"primera"}}
-{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"respuesta"}]}}
-{"type":"user","message":{"role":"user","content":"segunda"}}
+{"type":"summary","summary":"Work summary","leafUuid":"x"}
+{"type":"user","message":{"role":"user","content":"first"}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"answer"}]}}
+{"type":"user","message":{"role":"user","content":"second"}}

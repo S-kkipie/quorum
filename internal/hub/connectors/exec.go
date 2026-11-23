@@ -30,7 +30,7 @@ type execConnector struct {
 func newExec(cfg proto.ConnectorConfig, token string, env []string, timeout time.Duration) (*execConnector, error) {
 	argv := strings.Fields(cfg.Settings["command"])
 	if len(argv) == 0 {
-		return nil, errors.New("falta el comando del conector")
+		return nil, errors.New("missing connector command")
 	}
 	return &execConnector{argv: argv, settings: cfg.Settings, token: token, env: env, timeout: timeout}, nil
 }
@@ -51,7 +51,7 @@ type execResponse struct {
 	Error   string         `json:"error"`
 }
 
-// capWriter guarda hasta max bytes; al pasarse corta el proceso.
+// capWriter keeps up to max bytes; when exceeded it kills the process.
 type capWriter struct {
 	buf      bytes.Buffer
 	max      int
@@ -103,23 +103,23 @@ func (e *execConnector) run1(ctx context.Context, req execRequest) (execResponse
 	setupProcessGroup(cmd)
 	runErr := cmd.Run()
 	if out.overflow {
-		return resp, errors.New("respuesta demasiado grande")
+		return resp, errors.New("response too large")
 	}
 	if runErr != nil {
 		if errors.Is(cctx.Err(), context.DeadlineExceeded) {
-			return resp, fmt.Errorf("tiempo de espera agotado (%s)", e.timeout)
+			return resp, fmt.Errorf("timed out (%s)", e.timeout)
 		}
 		if ctx.Err() != nil {
 			return resp, ctx.Err()
 		}
-		msg := fmt.Sprintf("el conector falló: %v", runErr)
+		msg := fmt.Sprintf("the connector failed: %v", runErr)
 		if s := clip(errb.buf.String(), maxStderr); s != "" {
 			msg += ": " + s
 		}
 		return resp, errors.New(msg)
 	}
 	if err := json.Unmarshal(out.buf.Bytes(), &resp); err != nil {
-		msg := "respuesta inválida del conector"
+		msg := "invalid connector response"
 		if s := clip(errb.buf.String(), maxStderr); s != "" {
 			msg += ": " + s
 		}
@@ -145,7 +145,7 @@ func (e *execConnector) ack(ctx context.Context, req execRequest) error {
 		return err
 	}
 	if !resp.OK {
-		return errors.New("respuesta inválida del conector")
+		return errors.New("invalid connector response")
 	}
 	return nil
 }

@@ -1,33 +1,33 @@
 type Spawn = (argv: string[]) => AsyncIterable<unknown>
 /**
- * KeepAlive de una sesión. `spawn` lanza `quorumd hold` con el `$` del hook que
- * espera (solo un `$` del propio hook para su reloj); sin él, `HoldDeps.spawn`.
+ * KeepAlive of a session. `spawn` launches `quorumd hold` with the `$` of the hook that
+ * waits (only a `$` owned by the hook itself counts for its clock); without it, `HoldDeps.spawn`.
  */
 export type Hold = (until: Promise<unknown>, spawn?: Spawn) => void
 
-export const HOLD_WARNING = 'Quorum no pudo esperar a los dispositivos (quorumd hold no disponible); responde aquí'
+export const HOLD_WARNING = 'Quorum could not wait for devices (quorumd hold unavailable); answer here'
 
 export type HoldDeps = {
-  /** spawn por defecto (cuando el hook no presta el suyo). */
+  /** Default spawn (when the hook does not lend its own). */
   spawn: Spawn
-  /** Aviso al dispositivo (evento info). */
+  /** Notice to the device (info event). */
   info(text: string): void
-  /** Línea de depuración en la UI. */
+  /** Debug line in the UI. */
   debug(msg: string): void
 }
 
 /**
- * KeepAlive que sostiene la espera con `quorumd hold`. Si hold no arranca o termina
- * antes de que haya decisión (quorumd viejo, spawn no disponible) avisa una sola vez
- * por instancia: la espera sigue sin sostén y el permiso se responde en la terminal.
+ * KeepAlive that sustains the wait with `quorumd hold`. If hold fails to start or ends
+ * before a decision is made (old quorumd, spawn unavailable) it warns once per
+ * instance: the wait continues unsupported and the permission is answered in the terminal.
  */
 export function makeHold(d: HoldDeps): Hold {
   let warned = false
   const failed = (why: string) => {
     if (warned) return
     warned = true
-    try { d.info(HOLD_WARNING) } catch { /* nunca hacia Claude Code */ }
-    try { d.debug(`quorum: quorumd hold ${why}`) } catch { /* idem */ }
+    try { d.info(HOLD_WARNING) } catch { /* never toward Claude Code */ }
+    try { d.debug(`quorum: quorumd hold ${why}`) } catch { /* same */ }
   }
   return (until, spawn = d.spawn) => {
     const it = spawn(['quorumd', 'hold'])[Symbol.asyncIterator]()
@@ -37,9 +37,9 @@ export function makeHold(d: HoldDeps): Hold {
     void (async () => {
       try {
         for (;;) if ((await Promise.race([it.next(), done])).done) break
-        if (!settled) failed('terminó antes de tiempo')
+        if (!settled) failed('ended early')
       } catch (err) {
-        if (!settled) failed(`no arrancó: ${String((err as Error)?.message ?? err)}`)
+        if (!settled) failed(`failed to start: ${String((err as Error)?.message ?? err)}`)
       } finally {
         void Promise.resolve(it.return?.(undefined as never)).catch(() => {})
       }

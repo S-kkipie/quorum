@@ -1,4 +1,4 @@
-// Package store es la persistencia SQLite del hub.
+// Package store is the hub's SQLite persistence.
 package store
 
 import (
@@ -22,8 +22,8 @@ const (
 	codeTTL             = 10 * time.Minute
 )
 
-// ErrInvalidCode: el código no existe, ya se usó o venció.
-var ErrInvalidCode = errors.New("código inválido, usado o vencido")
+// ErrInvalidCode: the code does not exist, was already used or has expired.
+var ErrInvalidCode = errors.New("invalid, used or expired code")
 
 type Machine struct {
 	Name     string            `json:"name"`
@@ -40,7 +40,7 @@ type Device struct {
 	CreatedAt int64
 }
 
-// Store es seguro para uso concurrente: una única conexión serializa todo.
+// Store is safe for concurrent use: a single connection serializes everything.
 type Store struct {
 	db      *sql.DB
 	now     func() time.Time
@@ -52,15 +52,15 @@ func Open(path string) (*Store, error) {
 	if path == ":memory:" {
 		dsn = "file::memory:?"
 	}
-	// _txlock=immediate: las transacciones toman el candado de escritura al empezar y así
-	// respetan busy_timeout. Con BEGIN diferido, pasar de lectura a escritura con otro
-	// proceso escribiendo (quorum-hub pair/link-code junto a serve) da SQLITE_BUSY al instante.
+	// _txlock=immediate: transactions take the write lock when they start and so
+	// honor busy_timeout. With a deferred BEGIN, going from read to write while another
+	// process is writing (quorum-hub pair/link-code alongside serve) gives SQLITE_BUSY instantly.
 	dsn += "_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_txlock=immediate"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
 	}
-	// Una sola conexión que nunca se descarta: serializa escrituras y mantiene viva la BD ":memory:".
+	// A single connection that is never dropped: serializes writes and keeps the ":memory:" DB alive.
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 	db.SetConnMaxLifetime(0)
@@ -72,8 +72,8 @@ func Open(path string) (*Store, error) {
 	return s, nil
 }
 
-// escapeDSNPath escapa lo que SQLite interpreta en una URI file: ('%', '?', '#'),
-// para que una ruta con esos caracteres no se corte ni se decodifique mal.
+// escapeDSNPath escapes what SQLite interprets in a file: URI ('%', '?', '#'),
+// so a path with those characters is not cut off or decoded wrongly.
 func escapeDSNPath(p string) string {
 	return strings.NewReplacer("%", "%25", "?", "%3F", "#", "%23").Replace(p)
 }
@@ -104,7 +104,7 @@ func (s *Store) UpsertMachine(name, os, env, version string, online bool, caps p
 	return err
 }
 
-// SetMachineCaps actualiza solo las capacidades de una máquina ya registrada.
+// SetMachineCaps updates only the capabilities of an already registered machine.
 func (s *Store) SetMachineCaps(name string, caps proto.MachineCaps) error {
 	cj, _ := json.Marshal(caps)
 	_, err := s.db.Exec(`UPDATE machines SET caps=? WHERE name=?`, string(cj), name)
@@ -125,15 +125,15 @@ func (s *Store) ListMachines() ([]Machine, error) {
 		if err := rows.Scan(&m.Name, &m.OS, &m.Env, &m.Version, &on, &m.LastSeen, &caps); err != nil {
 			return nil, err
 		}
-		_ = json.Unmarshal([]byte(caps), &m.Caps) // vacío o dañado: todo en false
+		_ = json.Unmarshal([]byte(caps), &m.Caps) // empty or corrupt: everything false
 		m.Online = on != 0
 		out = append(out, m)
 	}
 	return out, rows.Err()
 }
 
-// ErrNotOwner: la sesión ya pertenece a otra máquina.
-var ErrNotOwner = errors.New("la sesión pertenece a otra máquina")
+// ErrNotOwner: the session already belongs to another machine.
+var ErrNotOwner = errors.New("the session belongs to another machine")
 
 func ownedByOther(tx *sql.Tx, id, machine string) (bool, error) {
 	var owner string
@@ -144,8 +144,8 @@ func ownedByOther(tx *sql.Tx, id, machine string) (bool, error) {
 	return owner != machine, err
 }
 
-// UpsertSession guarda la sesión; devuelve ErrNotOwner si el id (o PreviousID)
-// ya existe y pertenece a otra máquina. Ver SaveSession.
+// UpsertSession saves the session; returns ErrNotOwner if the id (or PreviousID)
+// already exists and belongs to another machine. See SaveSession.
 func (s *Store) UpsertSession(si proto.SessionInfo) error {
 	_, err := s.SaveSession(si)
 	return err
@@ -159,12 +159,12 @@ func sessionState(tx *sql.Tx, id string) (state string, exists bool, err error) 
 	return state, err == nil, err
 }
 
-// SaveSession guarda la sesión y devuelve el PreviousID que de verdad aplicó ("" si
-// ninguno). Un PreviousID se ignora cuando tanto él como el id siguen vivos (no
-// cerrados): el renombre ya ocurrió y el id viejo volvió por su cuenta (p. ej.
-// `claude --resume A` tras un /clear A→B); reaplicarlo fusionaría dos sesiones vivas.
-// Al guardar una sesión viva se borra el previous_id de las filas que apuntaban a
-// ella: ese id ya no está reemplazado.
+// SaveSession saves the session and returns the PreviousID that was actually applied ("" if
+// none). A PreviousID is ignored when both it and the id are still alive (not
+// closed): the rename already happened and the old id came back on its own (e.g.
+// `claude --resume A` after a /clear A→B); reapplying it would merge two live sessions.
+// When a live session is saved, the previous_id of the rows that pointed to
+// it is cleared: that id is no longer replaced.
 func (s *Store) SaveSession(si proto.SessionInfo) (applied string, err error) {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -199,7 +199,7 @@ func (s *Store) SaveSession(si proto.SessionInfo) (applied string, err error) {
 		}
 		live := func(st string) bool { return st != string(proto.StateClosed) }
 		if prevExists && live(prevState) && idExists && live(idState) {
-			prev = "" // renombre viejo: ambas viven por separado
+			prev = "" // old rename: both live separately
 		}
 	}
 	if prev != "" {
@@ -214,11 +214,11 @@ func (s *Store) SaveSession(si proto.SessionInfo) (applied string, err error) {
 		}
 	}
 	var res sql.Result
-	// previous_id persiste el último renombre (/clear, /resume) para que una app que
-	// estuvo desconectada lo vea en el snapshot o el REST; uno vacío no lo borra.
-	// Un recap vacío tampoco borra el guardado (upsert sin recap aún), salvo en un
-	// renombre (/clear): la fila movida es la de la conversación anterior.
-	// launch_req y el panel de herdr se reemplazan siempre: los manda el proceso vivo.
+	// previous_id persists the latest rename (/clear, /resume) so an app that
+	// was disconnected sees it in the snapshot or the REST API; an empty one does not clear it.
+	// An empty recap does not clear the stored one either (upsert without a recap yet), except in a
+	// rename (/clear): the moved row is the previous conversation's.
+	// launch_req and the herdr pane are always replaced: the live process sends them.
 	res, err = tx.Exec(`INSERT INTO sessions(id,machine,name,cwd,root,model,role,state,context_pct,started_at,updated_at,previous_id,recap,
 		launch_req,herdr_pane,herdr_workspace)
 		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
@@ -235,7 +235,7 @@ func (s *Store) SaveSession(si proto.SessionInfo) (applied string, err error) {
 		return "", err
 	}
 	if n, e := res.RowsAffected(); e == nil && n == 0 {
-		err = ErrNotOwner // el WHERE del upsert rechazó al otro dueño
+		err = ErrNotOwner // the upsert's WHERE rejected the other owner
 		return "", err
 	}
 	if si.State == proto.StateClosed {
@@ -256,8 +256,8 @@ func (s *Store) SaveSession(si proto.SessionInfo) (applied string, err error) {
 	return prev, nil
 }
 
-// renameSession mueve la sesión y sus eventos de old a nw. Si nw ya existe, fusiona:
-// los eventos de old quedan antes de los de nw.
+// renameSession moves the session and its events from old to nw. If nw already exists, it merges:
+// old's events end up before nw's.
 func renameSession(tx *sql.Tx, old, nw string) error {
 	var n int
 	if err := tx.QueryRow(`SELECT count(*) FROM sessions WHERE id=?`, old).Scan(&n); err != nil {
@@ -281,12 +281,12 @@ func renameSession(tx *sql.Tx, old, nw string) error {
 	if oldN == 0 {
 		return nil
 	}
-	// El historial rellenado (seq negativos) del id nuevo se descarta: manda el del viejo.
+	// The backfilled history (negative seq) of the new id is discarded: the old one's wins.
 	if _, err := tx.Exec(`DELETE FROM events WHERE session=? AND seq<0`, nw); err != nil {
 		return err
 	}
-	// Desplaza los eventos del nuevo id tras el máximo positivo del viejo
-	// (en dos pasos para no chocar con la PK). Ninguno acaba en seq 0.
+	// Shifts the new id's events past the old one's positive maximum
+	// (in two steps to avoid clashing with the PK). None ends up at seq 0.
 	if _, err := tx.Exec(`UPDATE events SET seq=-(seq+?) WHERE session=?`, oldMax, nw); err != nil {
 		return err
 	}
@@ -297,8 +297,8 @@ func renameSession(tx *sql.Tx, old, nw string) error {
 	return err
 }
 
-// moveSessionLinks traslada los vínculos con tickets (y los descartes) de old a nw.
-// Ante conflicto gana el confirmado; si ambos tenían un confirmado distinto, queda el de nw.
+// moveSessionLinks moves the ticket links (and dismissals) from old to nw.
+// On conflict the confirmed one wins; if both had a different confirmed one, nw's stays.
 func moveSessionLinks(tx *sql.Tx, old, nw string) error {
 	var keep string
 	if err := tx.QueryRow(`SELECT COALESCE(MIN(ticket_id),'') FROM session_tickets WHERE session_id=? AND confirmed=1`, nw).Scan(&keep); err != nil {
@@ -326,8 +326,8 @@ func moveSessionLinks(tx *sql.Tx, old, nw string) error {
 	return nil
 }
 
-// sessionCols: columnas de una sesión (alias s). previous_id sale vacío si ese id
-// vuelve a existir vivo: el renombre ya no aplica y las apps no deben seguirlo.
+// sessionCols: columns of a session (alias s). previous_id comes out empty if that id
+// exists alive again: the rename no longer applies and the apps must not follow it.
 const sessionCols = `s.id,s.machine,s.name,s.cwd,s.root,s.model,s.role,s.state,s.context_pct,s.started_at,s.updated_at,
 	CASE WHEN s.previous_id<>'' AND EXISTS(SELECT 1 FROM sessions p WHERE p.id=s.previous_id AND p.state<>'closed') THEN '' ELSE s.previous_id END,s.recap,
 	COALESCE((SELECT c.repo_url FROM checkouts c WHERE c.machine=s.machine AND c.root=s.root),''),
@@ -361,20 +361,20 @@ func (s *Store) ListSessions(includeClosed bool) ([]proto.SessionInfo, error) {
 	return out, rows.Err()
 }
 
-// MarkMachineSessionsClosed cierra las sesiones abiertas de la máquina y devuelve sus ids.
+// MarkMachineSessionsClosed closes the machine's open sessions and returns their ids.
 func (s *Store) MarkMachineSessionsClosed(machine string) ([]string, error) {
 	return s.CloseMachineSessionsExcept(machine, nil)
 }
 
-// MarkAllMachinesOffline marca fuera de línea todas las máquinas (arranque del hub:
-// cada una vuelve a quedar en línea con su hello).
+// MarkAllMachinesOffline marks all machines offline (hub startup:
+// each one comes back online with its hello).
 func (s *Store) MarkAllMachinesOffline() error {
 	_, err := s.db.Exec(`UPDATE machines SET online=0`)
 	return err
 }
 
-// AppendEvent guarda e con el siguiente Seq de su sesión y devuelve ese Seq.
-// Los assistant_delta no se persisten (devuelve 0).
+// AppendEvent stores e with the next Seq of its session and returns that Seq.
+// assistant_delta events are not persisted (returns 0).
 func (s *Store) AppendEvent(e proto.Event) (seq int64, err error) {
 	if e.Kind == proto.KindAssistantDelta {
 		return 0, nil
@@ -408,9 +408,9 @@ func (s *Store) AppendEvent(e proto.Event) (seq int64, err error) {
 	return seq, nil
 }
 
-// PrependEvents guarda evs antes de los eventos existentes de la sesión, con Seq
-// negativos ascendentes (-n..-1; AppendEvent solo asigna positivos). Si la sesión
-// ya tiene Seq negativos el historial ya se rellenó y no hace nada.
+// PrependEvents stores evs before the session's existing events, with ascending
+// negative Seq (-n..-1; AppendEvent only assigns positive ones). If the session
+// already has negative Seq the history was already backfilled and it does nothing.
 func (s *Store) PrependEvents(session string, evs []proto.Event) (inserted bool, err error) {
 	if len(evs) == 0 {
 		return false, nil
@@ -448,7 +448,7 @@ func (s *Store) PrependEvents(session string, evs []proto.Event) (inserted bool,
 	return true, nil
 }
 
-// Events devuelve hasta limit eventos con Seq < beforeSeq (0 = sin tope; el historial rellenado tiene Seq negativos), más nuevos primero.
+// Events returns up to limit events with Seq < beforeSeq (0 = no cap; backfilled history has negative Seq), newest first.
 func (s *Store) Events(session string, beforeSeq int64, limit int) ([]proto.Event, error) {
 	q := `SELECT seq,session,ts,kind,data FROM events WHERE session=?`
 	args := []any{session}
@@ -476,7 +476,7 @@ func (s *Store) Events(session string, beforeSeq int64, limit int) ([]proto.Even
 	return out, rows.Err()
 }
 
-// CreateCode genera un código de 6 dígitos de un solo uso, válido 10 minutos.
+// CreateCode generates a single-use 6-digit code, valid for 10 minutes.
 func (s *Store) CreateCode(kind string) (string, error) {
 	now := s.now()
 	if _, err := s.db.Exec(`DELETE FROM codes WHERE expires_at<?`, now.UnixMilli()); err != nil {
@@ -497,9 +497,9 @@ func (s *Store) CreateCode(kind string) (string, error) {
 		} else if n == 1 {
 			return code, nil
 		}
-		// choque con un código vivo o usado: reintenta con otro
+		// clash with a live or used code: retry with another
 	}
-	return "", errors.New("no se pudo generar un código libre")
+	return "", errors.New("could not generate a free code")
 }
 
 type execer interface {
@@ -544,8 +544,8 @@ func (s *Store) CheckToken(kind, token string) (string, bool) {
 	return name, err == nil
 }
 
-// ErrNotFound indica que no existe el token (dispositivo o máquina) pedido.
-var ErrNotFound = errors.New("no encontrado")
+// ErrNotFound says the requested token (device or machine) does not exist.
+var ErrNotFound = errors.New("not found")
 
 func (s *Store) RevokeToken(kind, name string) error {
 	res, err := s.db.Exec(`DELETE FROM tokens WHERE kind=? AND name=?`, kind, name)
@@ -558,8 +558,8 @@ func (s *Store) RevokeToken(kind, name string) error {
 	return nil
 }
 
-// AddUniqueDeviceToken guarda el token de un dispositivo sin pisar a otro:
-// si el nombre existe usa "nombre (2)", "nombre (3)"... y devuelve el final.
+// AddUniqueDeviceToken stores a device's token without overwriting another:
+// if the name exists it uses "name (2)", "name (3)"... and returns the final one.
 func (s *Store) AddUniqueDeviceToken(name, token string) (string, error) {
 	return s.addUniqueDeviceToken(s.db, name, token)
 }
@@ -581,12 +581,12 @@ func (s *Store) addUniqueDeviceToken(db execer, name, token string) (string, err
 			return cand, nil
 		}
 	}
-	return "", errors.New("no se pudo asignar un nombre único")
+	return "", errors.New("could not assign a unique name")
 }
 
-// Pair consume el código y guarda el token en una sola transacción: si guardar el
-// token falla, el código sigue sin usar. Para tokKind "device" el nombre se hace
-// único (ver AddUniqueDeviceToken); devuelve el nombre final.
+// Pair consumes the code and stores the token in a single transaction: if storing the
+// token fails, the code stays unused. For tokKind "device" the name is made
+// unique (see AddUniqueDeviceToken); returns the final name.
 func (s *Store) Pair(codeKind, code, tokKind, name, token string) (string, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -607,7 +607,7 @@ func (s *Store) Pair(codeKind, code, tokKind, name, token string) (string, error
 	return name, tx.Commit()
 }
 
-// LiveSessionIDs devuelve el conjunto de sesiones existentes y no cerradas.
+// LiveSessionIDs returns the set of existing, non-closed sessions.
 func (s *Store) LiveSessionIDs() (map[string]bool, error) {
 	rows, err := s.db.Query(`SELECT id FROM sessions WHERE state<>'closed'`)
 	if err != nil {
@@ -642,13 +642,13 @@ func (s *Store) ListDevices() ([]Device, error) {
 	return out, rows.Err()
 }
 
-// CloseSession marca como cerrada la sesión id, solo si pertenece a machine.
+// CloseSession marks session id as closed, only if it belongs to machine.
 func (s *Store) CloseSession(machine, id string) error {
 	_, err := s.db.Exec(`UPDATE sessions SET state=?, closed_at=? WHERE id=? AND machine=?`, string(proto.StateClosed), time.Now().UnixMilli(), id, machine)
 	return err
 }
 
-// SessionOwner devuelve la máquina dueña de la sesión id (ok=false si no existe).
+// SessionOwner returns the machine that owns session id (ok=false if it does not exist).
 func (s *Store) SessionOwner(id string) (machine string, ok bool, err error) {
 	err = s.db.QueryRow(`SELECT machine FROM sessions WHERE id=?`, id).Scan(&machine)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -657,8 +657,8 @@ func (s *Store) SessionOwner(id string) (machine string, ok bool, err error) {
 	return machine, err == nil, err
 }
 
-// CloseMachineSessionsExcept cierra las sesiones no cerradas de la máquina que no
-// estén en keep y devuelve los ids que cerró.
+// CloseMachineSessionsExcept closes the machine's non-closed sessions that are not
+// in keep and returns the ids it closed.
 func (s *Store) CloseMachineSessionsExcept(machine string, keep []string) ([]string, error) {
 	q := `UPDATE sessions SET state=?, closed_at=? WHERE machine=? AND state<>?`
 	args := []any{string(proto.StateClosed), time.Now().UnixMilli(), machine, string(proto.StateClosed)}
@@ -684,7 +684,7 @@ func (s *Store) CloseMachineSessionsExcept(machine string, keep []string) ([]str
 	return out, rows.Err()
 }
 
-// Session devuelve la sesión id, o ErrNotFound si no existe.
+// Session returns session id, or ErrNotFound if it does not exist.
 func (s *Store) Session(id string) (proto.SessionInfo, error) {
 	var si proto.SessionInfo
 	var role, state string
@@ -699,8 +699,8 @@ func (s *Store) Session(id string) (proto.SessionInfo, error) {
 	return si, err
 }
 
-// OpenAsks devuelve askId -> sesión de los eventos ask de sesiones no cerradas
-// que no tienen un ask_resolved posterior.
+// OpenAsks returns askId -> session of the ask events of non-closed sessions
+// that have no later ask_resolved.
 func (s *Store) OpenAsks() (map[string]string, error) {
 	rows, err := s.db.Query(`SELECT e.session,e.kind,e.data FROM events e JOIN sessions s ON s.id=e.session
 		WHERE s.state<>'closed' AND e.kind IN ('ask','ask_resolved') ORDER BY e.session,e.seq`)
@@ -710,7 +710,7 @@ func (s *Store) OpenAsks() (map[string]string, error) {
 	return scanOpenAsks(rows)
 }
 
-// SessionOpenAsks devuelve los askId abiertos (sin ask_resolved posterior) de una sesión.
+// SessionOpenAsks returns the open askIds (without a later ask_resolved) of a session.
 func (s *Store) SessionOpenAsks(session string) (map[string]string, error) {
 	rows, err := s.db.Query(`SELECT session,kind,data FROM events
 		WHERE session=? AND kind IN ('ask','ask_resolved') ORDER BY seq`, session)
@@ -743,20 +743,20 @@ func scanOpenAsks(rows *sql.Rows) (map[string]string, error) {
 	return out, rows.Err()
 }
 
-// TerminalAuditRow es una fila de la auditoría de terminales.
+// TerminalAuditRow is a row of the terminal audit.
 type TerminalAuditRow struct {
 	At                            int64
 	Device, Machine, Pane, Action string
 }
 
-// AuditTerminal anota quién abrió o cerró un panel de terminal.
+// AuditTerminal records who opened or closed a terminal pane.
 func (s *Store) AuditTerminal(device, machine, pane, action string) error {
 	_, err := s.db.Exec(`INSERT INTO terminal_audit(at, device, machine, pane, action) VALUES(?,?,?,?,?)`,
 		time.Now().UnixMilli(), device, machine, pane, action)
 	return err
 }
 
-// ListTerminalAudit devuelve la auditoría en orden de inserción.
+// ListTerminalAudit returns the audit in insertion order.
 func (s *Store) ListTerminalAudit() ([]TerminalAuditRow, error) {
 	rows, err := s.db.Query(`SELECT at, device, machine, pane, action FROM terminal_audit ORDER BY id`)
 	if err != nil {

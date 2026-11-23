@@ -34,7 +34,7 @@ func TestDistSPAFallbackAndTypes(t *testing.T) {
 		"dist/assets/a.css": {Data: []byte("a{}")},
 	}
 	h := handler(dist, "dist", ph, "placeholder")
-	w := get(h, "/algo/raro")
+	w := get(h, "/some/odd")
 	if w.Code != 200 || !strings.Contains(w.Body.String(), "APP") || w.Header().Get("Cache-Control") != "no-cache" {
 		t.Fatalf("fallback: %d %q %v", w.Code, w.Body.String(), w.Header())
 	}
@@ -47,10 +47,10 @@ func TestDistSPAFallbackAndTypes(t *testing.T) {
 	if w = get(h, "/index.html"); w.Header().Get("Cache-Control") != "no-cache" {
 		t.Fatalf("index cache: %v", w.Header())
 	}
-	if w = get(h, "/assets/falta.js"); w.Code != 404 {
-		t.Fatalf("asset faltante: %d", w.Code)
+	if w = get(h, "/assets/missing.js"); w.Code != 404 {
+		t.Fatalf("missing asset: %d", w.Code)
 	}
 	if w = get(h, "/api/nope"); w.Code != 404 {
-		t.Fatalf("api no debe caer en SPA: %d", w.Code)
+		t.Fatalf("api must not fall into the SPA: %d", w.Code)
 	}
 }

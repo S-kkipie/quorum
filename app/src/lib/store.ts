@@ -4,33 +4,33 @@ import type { Machine, TicketView } from './api'
 export interface AppState {
   machines: Record<string, Machine>
   sessions: Record<string, SessionInfo>
-  /** Orden estable de sesiones: las nuevas al final; nunca se reordena por estado. */
+  /** Stable session order: new ones at the end; never reordered by state. */
   order: string[]
-  /** Eventos por sesión, ordenados por seq ascendente y sin duplicados. */
+  /** Events per session, sorted by ascending seq and without duplicates. */
   events: Record<string, Event[]>
-  /** Texto en streaming del hilo principal por sesión. */
+  /** Streaming text of the main thread per session. */
   live: Record<string, string>
-  /** Texto en streaming de subagentes: liveAgent[sesión][agente]. Se limpia con agent_end. */
+  /** Streaming text of subagents: liveAgent[session][agent]. Cleared on agent_end. */
   liveAgent: Record<string, Record<string, string>>
   asks: Record<string, AskEntry>
-  /** Ids reemplazados vía previousId; seed() nunca los resucita. */
+  /** Ids replaced via previousId; seed() never resurrects them. */
   replaced: Record<string, true>
-  /** prev -> id nuevo, para que la vista abierta siga a la sesión reemplazada. */
+  /** prev -> new id, so the open view follows the replaced session. */
   replacedBy: Record<string, string>
   workspaces: Record<string, Workspace>
   projects: Record<string, Project>
-  /** Tickets por proyecto, en el orden del hub (actualizados primero). */
+  /** Tickets per project, in hub order (most recently updated first). */
   tickets: Record<string, Ticket[]>
-  /** Vínculos sesión↔ticket: links[ticket][sesión] = confirmado (false = sugerencia). */
+  /** Session-ticket links: links[ticket][session] = confirmed (false = suggestion). */
   links: Record<string, Record<string, boolean>>
   proposals: Record<string, Proposal>
-  /** Checkouts guardados en el hub por proyecto (GET /api/projects/{id}/checkouts). */
+  /** Checkouts saved in the hub per project (GET /api/projects/{id}/checkouts). */
   checkouts: Record<string, Checkout[]>
-  /** Sesiones que se vieron trabajando desde que abrió la app (para "listo, esperando tu review"). */
+  /** Sessions seen working since the app opened (for "done, waiting for your review"). */
   worked: Record<string, true>
 }
 
-/** Ask con la sesión a la que pertenece. */
+/** Ask with the session it belongs to. */
 export type AskEntry = Ask & { session: string }
 
 export const initialState = (): AppState => ({
@@ -38,7 +38,7 @@ export const initialState = (): AppState => ({
   workspaces: {}, projects: {}, tickets: {}, links: {}, proposals: {}, checkouts: {}, worked: {},
 })
 
-/** Inserta ev en la lista ordenada por seq, descartando duplicados. */
+/** Inserts ev into the seq-sorted list, discarding duplicates. */
 export function mergeEvents(list: Event[] | undefined, incoming: Event[]): Event[] {
   const last = list?.[list.length - 1]
   if (list && incoming.length === 1 && last && incoming[0].seq > last.seq) return [...list, incoming[0]]
@@ -69,7 +69,7 @@ function onEvent(s: AppState, ev: Event): AppState {
       return { ...s, live: { ...s.live, [id]: (s.live[id] ?? '') + text } }
     }
     case 'assistant':
-      // el mensaje final de un subagente no corta el streaming del hilo principal
+      // a subagent's final message does not cut the main thread's streaming
       return d.agent ? base : { ...base, live: omit(s.live, id) }
     case 'agent_end': {
       const cur = s.liveAgent[id]
@@ -103,16 +103,16 @@ export function reduce(s: AppState, env: Envelope): AppState {
       let replacedBy = s.replacedBy
       let asks = s.asks
       let prev = info.previousId
-      // Un previousId cuyo id sigue vivo junto al id nuevo es un renombre viejo
-      // (p. ej. `claude --resume A` tras /clear A→B): ambas sesiones viven por separado.
+      // A previousId whose id is still alive next to the new id is an old rename
+      // (e.g. `claude --resume A` after /clear A→B): both sessions live separately.
       const alive = (id: string) => !!sessions[id] && sessions[id].state !== 'closed'
       if (prev && alive(prev) && alive(info.id)) prev = ''
-      // Este id está vivo: deja de figurar como reemplazado (y se rompe un ciclo A→B→A).
+      // This id is alive: it stops being listed as replaced (and an A→B→A cycle is broken).
       if (replaced[info.id]) replaced = omit(replaced, info.id)
       if (replacedBy[info.id] !== undefined) replacedBy = omit(replacedBy, info.id)
       if (prev && prev !== info.id) {
-        // Se registra aunque prev no esté en el estado (la app estaba desconectada
-        // durante el /clear): la vista abierta en prev sigue al id nuevo.
+        // Recorded even if prev is not in the state (the app was disconnected
+        // during the /clear): the view open on prev follows the new id.
         if (!replaced[prev]) replaced = { ...replaced, [prev]: true }
         if (replacedBy[prev] !== info.id) replacedBy = { ...replacedBy, [prev]: info.id }
         if (sessions[prev]) sessions = omit(sessions, prev)
@@ -144,7 +144,7 @@ export function reduce(s: AppState, env: Envelope): AppState {
     case 'event':
       return env.payload?.session ? onEvent(s, env.payload as Event) : s
     case 'events':
-      // historial rellenado de una sesión, en un solo envelope
+      // backfilled history of a session, in a single envelope
       return env.session && Array.isArray(env.payload) ? addEvents(s, env.session, env.payload as Event[]) : s
     case 'workspace_upsert': {
       const w = env.payload as Workspace
@@ -159,7 +159,7 @@ export function reduce(s: AppState, env: Envelope): AppState {
     case 'project_gone': {
       const id = env.payload?.id
       if (!id) return s
-      // se van también los vínculos y propuestas de sus tickets
+      // the links and proposals of its tickets go too
       const gone = new Set((s.tickets[id] ?? []).map((t) => t.id))
       const links = Object.fromEntries(Object.entries(s.links).filter(([tid]) => !gone.has(tid)))
       const proposals = Object.fromEntries(Object.entries(s.proposals).filter(([, p]) => !gone.has(p.ticketId)))
@@ -176,7 +176,7 @@ export function reduce(s: AppState, env: Envelope): AppState {
       return p?.id ? { ...s, proposals: { ...s.proposals, [p.id]: p } } : s
     }
     default:
-      return s // hello, launch_result y desconocidos se ignoran
+      return s // hello, launch_result and unknown types are ignored
   }
 }
 
@@ -186,9 +186,9 @@ const evKey = (e: Event) => {
 }
 
 /**
- * Quita del historial rellenado desde el transcript (seq negativos) lo que ya llegó
- * en vivo (seq positivos) mientras se pedía el backfill: todo lo posterior al primer
- * evento en vivo, y lo igual (tipo y texto) hasta 2 s antes.
+ * Removes from the history backfilled from the transcript (negative seq) what already
+ * arrived live (positive seq) while the backfill was requested: everything after the first
+ * live event, and anything identical (kind and text) up to 2 s before.
  */
 export function dropBackfillDuplicates(list: Event[]): Event[] {
   let first = Infinity
@@ -204,15 +204,15 @@ export function dropBackfillDuplicates(list: Event[]): Event[] {
   return out.length === list.length ? list : out
 }
 
-/** Fusiona eventos históricos (backfill/paginación) en el estado. */
+/** Merges historical events (backfill/pagination) into the state. */
 export function addEvents(s: AppState, session: string, evs: Event[]): AppState {
   return { ...s, events: { ...s.events, [session]: dropBackfillDuplicates(mergeEvents(s.events[session], evs)) } }
 }
 
 /**
- * Siembra el estado con la carga REST inicial: solo inserta máquinas y sesiones
- * que aún no existen (nunca pisa datos más frescos del WS ni resucita ids
- * reemplazados por previousId).
+ * Seeds the state with the initial REST load: only inserts machines and sessions
+ * that do not exist yet (never overwrites fresher WS data nor resurrects ids
+ * replaced via previousId).
  */
 export function seed(s: AppState, machines: Machine[], sessions: SessionInfo[]): AppState {
   const ms = { ...s.machines }
@@ -228,16 +228,16 @@ export function seed(s: AppState, machines: Machine[], sessions: SessionInfo[]):
 }
 
 /**
- * Reemplaza máquinas y sesiones por la lista REST (tras reconectar el feed en vivo:
- * lo que cambió mientras la app estaba desconectada, incluidos los /clear vía
- * previousId). A diferencia de seed sí pisa y quita lo que ya no existe; los eventos se conservan.
+ * Replaces machines and sessions with the REST list (after reconnecting the live feed:
+ * what changed while the app was disconnected, including /clear via
+ * previousId). Unlike seed it does overwrite and removes what no longer exists; events are kept.
  */
 export function replaceSessions(s: AppState, machines: Machine[], sessions: SessionInfo[]): AppState {
   const ids = new Set(sessions.map((x) => x.id))
-  // un previousId que también está en la lista es un renombre viejo: no se aplica
+  // a previousId that is also in the list is an old rename: not applied
   sessions = sessions.map((x) => (x.previousId && ids.has(x.previousId) ? { ...x, previousId: '' } : x))
   const prevs = new Set(sessions.map((x) => x.previousId).filter(Boolean))
-  // los prev se quedan en order para que el renombre conserve su posición
+  // prevs stay in order so the rename keeps its position
   let st: AppState = {
     ...s,
     machines: Object.fromEntries(machines.map((m) => [m.name, m])),
@@ -255,7 +255,7 @@ function setLink(s: AppState, l: SessionTicket): AppState {
     return { ...s, links: { ...s.links, [l.ticketId]: omit(cur, l.sessionId) } }
   }
   let links = { ...s.links, [l.ticketId]: { ...cur, [l.sessionId]: !!l.confirmed } }
-  // Una sesión trabaja un solo ticket confirmado a la vez: el hub rebaja los demás.
+  // A session works on a single confirmed ticket at a time: the hub demotes the others.
   if (l.confirmed) {
     for (const [tid, m] of Object.entries(links)) {
       if (tid !== l.ticketId && m[l.sessionId]) links = { ...links, [tid]: { ...m, [l.sessionId]: false } }
@@ -265,8 +265,8 @@ function setLink(s: AppState, l: SessionTicket): AppState {
 }
 
 /**
- * Carga REST de trabajos, proyectos y propuestas. Con replace (al reconectar) la lista
- * REST manda; si no, solo agrega lo que el feed en vivo aún no trajo.
+ * REST load of workspaces, projects and proposals. With replace (on reconnect) the REST
+ * list wins; otherwise it only adds what the live feed has not brought yet.
  */
 export function setProjectsData(s: AppState, d: { workspaces: Workspace[]; projects: Project[]; proposals?: Proposal[] }, replace = false): AppState {
   const byId = <T extends { id: string }>(xs: T[], cur: Record<string, T>) =>
@@ -282,7 +282,7 @@ export function setProjectsData(s: AppState, d: { workspaces: Workspace[]; proje
   }
 }
 
-/** Tickets de un proyecto (REST) con sus vínculos de sesión. */
+/** Tickets of a project (REST) with their session links. */
 export function setTickets(s: AppState, projectId: string, views: TicketView[]): AppState {
   const links = { ...s.links }
   const tickets: Ticket[] = []
@@ -293,7 +293,7 @@ export function setTickets(s: AppState, projectId: string, views: TicketView[]):
   return { ...s, tickets: { ...s.tickets, [projectId]: tickets }, links }
 }
 
-/** Detalle de un ticket (REST): el ticket, sus vínculos y sus propuestas. */
+/** Ticket detail (REST): the ticket, its links and its proposals. */
 export function setTicketDetail(s: AppState, v: TicketView): AppState {
   const { sessions, proposals, ...t } = v
   const list = s.tickets[t.projectId] ?? []
@@ -309,7 +309,7 @@ export function setTicketDetail(s: AppState, v: TicketView): AppState {
   }
 }
 
-/** Checkouts guardados de un proyecto (REST). */
+/** Saved checkouts of a project (REST). */
 export function setCheckouts(s: AppState, projectId: string, cos: Checkout[]): AppState {
   return { ...s, checkouts: { ...s.checkouts, [projectId]: cos } }
 }

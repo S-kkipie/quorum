@@ -18,7 +18,7 @@ import (
 const (
 	draftMaxRunes   = 1500
 	approveTimeout  = 30 * time.Second
-	errNotPending   = "la propuesta ya no está pendiente"
+	errNotPending   = "the proposal is no longer pending"
 	maxProposalBody = 64 * 1024
 )
 
@@ -27,9 +27,9 @@ func (h *Hub) publishProposal(p proto.Proposal) {
 	h.publish(proto.Envelope{Type: "proposal_upsert", Payload: pl})
 }
 
-// draftFromTurnEnd redacta (sin escribir en la ticketera) una propuesta de comentario
-// cuando una sesión con ticket confirmado termina un turno. Solo turn_end del hilo
-// principal llega aquí (los subagentes emiten agent_end).
+// draftFromTurnEnd drafts (without writing to the ticket source) a comment proposal
+// when a session with a confirmed ticket finishes a turn. Only turn_end events of the
+// main thread get here (subagents emit agent_end).
 func (h *Hub) draftFromTurnEnd(ev proto.Event) {
 	var te proto.TurnEnd
 	if json.Unmarshal(ev.Data, &te) != nil || strings.TrimSpace(te.Answer) == "" {
@@ -47,7 +47,7 @@ func (h *Hub) draftFromTurnEnd(ev proto.Event) {
 	if r := []rune(ans); len(r) > draftMaxRunes {
 		ans = string(r[:draftMaxRunes])
 	}
-	body := "Avance (Quorum, " + si.Machine + "):\n" + ans
+	body := "Progress (Quorum, " + si.Machine + "):\n" + ans
 	for _, l := range ls {
 		if l.Confirmed {
 			h.draftComment(l.TicketID, body)
@@ -60,17 +60,17 @@ func (h *Hub) draftComment(ticketID, body string) {
 	defer h.pmu.Unlock()
 	ps, err := h.st.ListProposals(ticketID)
 	if err != nil {
-		log.Printf("hub: propuestas de %s: %v", ticketID, err)
+		log.Printf("hub: proposals of %s: %v", ticketID, err)
 		return
 	}
 	for _, p := range ps {
-		if p.Kind != "comment" || p.Status != "pendiente" {
+		if p.Kind != "comment" || p.Status != "pending" {
 			continue
 		}
 		if err := h.st.UpdateProposalBody(p.ID, body); errors.Is(err, store.ErrNotFound) {
-			continue // dejó de estar pendiente (se está enviando)
+			continue // no longer pending (it is being sent)
 		} else if err != nil {
-			log.Printf("hub: actualizar propuesta %s: %v", p.ID, err)
+			log.Printf("hub: update proposal %s: %v", p.ID, err)
 			return
 		}
 		if up, err := h.st.GetProposal(p.ID); err == nil {
@@ -80,21 +80,21 @@ func (h *Hub) draftComment(ticketID, body string) {
 	}
 	p, err := h.st.CreateProposal(proto.Proposal{TicketID: ticketID, Kind: "comment", Body: body})
 	if err != nil {
-		log.Printf("hub: crear propuesta de %s: %v", ticketID, err)
+		log.Printf("hub: create proposal of %s: %v", ticketID, err)
 		return
 	}
 	h.publishProposal(p)
 }
 
-// handleCreateProposal: el dueño propone un cambio de estado manual.
+// handleCreateProposal: the owner proposes a manual status change.
 func (s *Server) handleCreateProposal(w http.ResponseWriter, r *http.Request) {
 	t, err := s.st.Ticket(r.PathValue("id"))
 	if errors.Is(err, store.ErrNotFound) {
-		apiErr(w, 404, "ticket no encontrado")
+		apiErr(w, 404, "ticket not found")
 		return
 	}
 	if err != nil {
-		apiErr(w, 500, "error interno")
+		apiErr(w, 500, "internal error")
 		return
 	}
 	var b struct {
@@ -105,16 +105,16 @@ func (s *Server) handleCreateProposal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if b.Kind != "status" {
-		apiErr(w, 400, "tipo de propuesta inválido")
+		apiErr(w, 400, "invalid proposal kind")
 		return
 	}
 	if !store.ValidStatus(b.Status) {
-		apiErr(w, 400, "estado inválido")
+		apiErr(w, 400, "invalid status")
 		return
 	}
 	p, err := s.st.CreateProposal(proto.Proposal{TicketID: t.ID, Kind: "status", Body: b.Status})
 	if err != nil {
-		apiErr(w, 500, "error interno")
+		apiErr(w, 500, "internal error")
 		return
 	}
 	s.hub.publishProposal(p)
@@ -123,29 +123,29 @@ func (s *Server) handleCreateProposal(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleRejectProposal(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if _, ok := s.claimProposal(w, id, "rechazada"); !ok {
+	if _, ok := s.claimProposal(w, id, "rejected"); !ok {
 		return
 	}
 	s.respondProposal(w, id)
 }
 
-// claimProposal pasa pendiente -> to de forma atómica en la base (persistente); si la
-// propuesta no existe o ya no está pendiente responde el error.
+// claimProposal moves pending -> to atomically in the database (persistent); if the
+// proposal does not exist or is no longer pending it responds with the error.
 func (s *Server) claimProposal(w http.ResponseWriter, id, to string) (proto.Proposal, bool) {
 	p, err := s.st.GetProposal(id)
 	if errors.Is(err, store.ErrNotFound) {
-		apiErr(w, 404, "propuesta no encontrada")
+		apiErr(w, 404, "proposal not found")
 		return p, false
 	}
 	if err != nil {
-		apiErr(w, 500, "error interno")
+		apiErr(w, 500, "internal error")
 		return p, false
 	}
-	if err := s.st.TransitionProposal(id, "pendiente", to); errors.Is(err, store.ErrNotFound) {
+	if err := s.st.TransitionProposal(id, "pending", to); errors.Is(err, store.ErrNotFound) {
 		apiErr(w, 409, errNotPending)
 		return p, false
 	} else if err != nil {
-		apiErr(w, 500, "error interno")
+		apiErr(w, 500, "internal error")
 		return p, false
 	}
 	return p, true
@@ -154,7 +154,7 @@ func (s *Server) claimProposal(w http.ResponseWriter, id, to string) (proto.Prop
 func (s *Server) respondProposal(w http.ResponseWriter, id string) {
 	p, err := s.st.GetProposal(id)
 	if err != nil {
-		apiErr(w, 500, "error interno")
+		apiErr(w, 500, "internal error")
 		return
 	}
 	s.hub.publishProposal(p)
@@ -170,28 +170,28 @@ func (s *Server) handleApproveProposal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(b.Body) > maxProposalBody {
-		apiErr(w, 400, "el comentario es demasiado largo")
+		apiErr(w, 400, "the comment is too long")
 		return
 	}
 	p, err := s.st.GetProposal(id)
 	if errors.Is(err, store.ErrNotFound) {
-		apiErr(w, 404, "propuesta no encontrada")
+		apiErr(w, 404, "proposal not found")
 		return
 	}
 	if err != nil {
-		apiErr(w, 500, "error interno")
+		apiErr(w, 500, "internal error")
 		return
 	}
 	edited := ""
 	if p.Kind == "comment" && strings.TrimSpace(b.Body) != "" {
 		edited = b.Body
 	}
-	// El claim persiste "enviando" y el cuerpo editado en una sola sentencia atómica.
+	// The claim persists "sending" and the edited body in a single atomic statement.
 	if err := s.st.ClaimProposalSend(id, edited); errors.Is(err, store.ErrNotFound) {
 		apiErr(w, 409, errNotPending)
 		return
 	} else if err != nil {
-		apiErr(w, 500, "error interno")
+		apiErr(w, 500, "internal error")
 		return
 	}
 	body := p.Body
@@ -199,14 +199,14 @@ func (s *Server) handleApproveProposal(w http.ResponseWriter, r *http.Request) {
 		body = edited
 	}
 	sendErr := s.sendProposal(context.WithoutCancel(r.Context()), p, body)
-	status, msg := "aprobada", ""
+	status, msg := "approved", ""
 	if sendErr != nil {
-		status, msg = "fallida", sendErr.Error()
+		status, msg = "failed", sendErr.Error()
 	}
 	if err := s.st.SetProposalStatus(id, status, msg); err != nil {
 		time.Sleep(100 * time.Millisecond)
 		if err2 := s.st.SetProposalStatus(id, status, msg); err2 != nil {
-			log.Printf("hub: propuesta %s: el envío terminó %q pero no se pudo guardar (%v); queda en enviando hasta el próximo arranque", id, status, err2)
+			log.Printf("hub: proposal %s: sending ended %q but could not be saved (%v); it stays in sending until the next start", id, status, err2)
 			p.Body, p.Status, p.Error = body, status, msg
 			s.hub.publishProposal(p)
 			writeJSON(w, 200, p)
@@ -225,25 +225,25 @@ func (s *Server) afterApprove(p proto.Proposal, sendErr error) {
 	if t, err := s.st.Ticket(p.TicketID); err == nil {
 		go func() {
 			if err := s.sync.SyncNow(t.ProjectID); err != nil {
-				log.Printf("hub: sincronizar %s tras cambio de estado: %v", t.ProjectID, err)
+				log.Printf("hub: sync %s after status change: %v", t.ProjectID, err)
 			}
 		}()
 	}
 }
 
-// sendProposal escribe en la ticketera; el error devuelto ya va sin el token.
+// sendProposal writes to the ticket source; the returned error is already free of the token.
 func (s *Server) sendProposal(parent context.Context, p proto.Proposal, body string) (err error) {
 	t, err := s.st.Ticket(p.TicketID)
 	if err != nil {
-		return errors.New("ticket no encontrado")
+		return errors.New("ticket not found")
 	}
 	proj, err := s.st.GetProject(t.ProjectID)
 	if err != nil {
-		return errors.New("proyecto no encontrado")
+		return errors.New("project not found")
 	}
 	token, terr := s.st.ConnectorToken(proj.ID)
 	if terr != nil && !errors.Is(terr, store.ErrNotFound) {
-		return errors.New("error interno")
+		return errors.New("internal error")
 	}
 	defer func() {
 		if err != nil {
@@ -262,5 +262,5 @@ func (s *Server) sendProposal(parent context.Context, p proto.Proposal, body str
 	case "status":
 		return conn.SetStatus(ctx, t.ExternalID, body)
 	}
-	return fmt.Errorf("tipo de propuesta inválido %q", p.Kind)
+	return fmt.Errorf("invalid proposal kind %q", p.Kind)
 }

@@ -11,15 +11,15 @@ proto:
 	mkdir -p app/src
 	cp mod/src/proto.gen.ts app/src/proto.gen.ts
 
-# Los tipos de mods los genera Claude Code al cargar el mod en una sesion interactiva
-# (claude --plugin-dir ./mod); sin ellos el typecheck se omite.
+# Claude Code generates the mod types when it loads the mod in an interactive session
+# (claude --plugin-dir ./mod); without them the typecheck is skipped.
 typecheck:
-	@if [ -f mod/.claude-plugin/types/tsconfig.json ]; then npx -y -p typescript tsc -p mod --noEmit; else echo "skip typecheck (carga el mod una vez: claude --plugin-dir ./mod)"; fi
+	@if [ -f mod/.claude-plugin/types/tsconfig.json ]; then npx -y -p typescript tsc -p mod --noEmit; else echo "skip typecheck (load the mod once: claude --plugin-dir ./mod)"; fi
 
 test: typecheck
 	go test ./...
-	@if command -v claude >/dev/null 2>&1; then claude plugin test mod; else echo "skip mod (claude no está en PATH)"; fi
-	@if [ -f app/package.json ]; then cd app && npx vitest run; else echo "skip app (sin package.json)"; fi
+	@if command -v claude >/dev/null 2>&1; then claude plugin test mod; else echo "skip mod (claude is not in PATH)"; fi
+	@if [ -f app/package.json ]; then cd app && npx vitest run; else echo "skip app (no package.json)"; fi
 
 app:
 	cd app && npm run build

@@ -51,10 +51,10 @@ func TestProjectAPICRUD(t *testing.T) {
 	require.Equal(t, 400, code, b)
 	code, b = f.req(t, "DELETE", "/api/workspaces/"+ws.ID, "")
 	require.Equal(t, 409, code)
-	require.JSONEq(t, `{"error":"el trabajo tiene proyectos"}`, b)
+	require.JSONEq(t, `{"error":"the workspace has projects"}`, b)
 
 	var ws2 proto.Workspace
-	f.reqJSON(t, "POST", "/api/workspaces", `{"name":"otro"}`, 201, &ws2)
+	f.reqJSON(t, "POST", "/api/workspaces", `{"name":"other"}`, 201, &ws2)
 	var ps []proto.Project
 	f.reqJSON(t, "GET", "/api/projects?workspace="+ws2.ID, "", 200, &ps)
 	require.Empty(t, ps)
@@ -68,7 +68,7 @@ func TestProjectAPICRUD(t *testing.T) {
 	code, _ = f.req(t, "GET", "/api/projects/nope", "")
 	require.Equal(t, 404, code)
 
-	// validación del conector
+	// connector validation
 	for _, bad := range []string{
 		`{"connector":{"kind":"jira","intervalMin":5}}`,
 		`{"connector":{"kind":"github","intervalMin":0}}`,
@@ -89,7 +89,7 @@ func TestProjectAPICRUD(t *testing.T) {
 	require.Equal(t, "o/r", got.Connector.Settings["repo"])
 	require.Equal(t, linkRepo, got.RepoURL)
 
-	// repo con credenciales: se limpian
+	// repo with credentials: they are cleaned
 	f.reqJSON(t, "PATCH", "/api/projects/"+p.ID, `{"repoURL":"https://user:pw@github.com/o/r2"}`, 200, &got)
 	require.NotContains(t, got.RepoURL, "pw")
 	require.Equal(t, "o/r", got.Connector.Settings["repo"])
@@ -102,11 +102,11 @@ func TestProjectAPICRUD(t *testing.T) {
 	code, _ = f.req(t, "PUT", "/api/projects/nope/token", `{"token":"x"}`)
 	require.Equal(t, 404, code)
 
-	// tickets y vínculos (cambiar a github borró los del origen anterior: se siembran de nuevo)
+	// tickets and links (switching to github deleted those of the previous source: they are seeded again)
 	f.mach.CloseNow()
 	require.NoError(t, f.st.ReplaceTickets(p.ID, []proto.Ticket{
-		{ExternalID: "41", Title: "login", Status: "por_hacer"}, {ExternalID: "42", Title: "otro", Status: "por_hacer"},
-		{ExternalID: "x1", Title: "[ACME-12] pagos", Status: "por_hacer"},
+		{ExternalID: "41", Title: "login", Status: "todo"}, {ExternalID: "42", Title: "other", Status: "todo"},
+		{ExternalID: "x1", Title: "[ACME-12] payments", Status: "todo"},
 	}))
 	if ts, err := f.st.ListTickets(p.ID); err == nil {
 		for _, tk := range ts {
@@ -138,7 +138,7 @@ func TestProjectAPICRUD(t *testing.T) {
 	code, _ = f.req(t, "GET", "/api/projects/nope/tickets", "")
 	require.Equal(t, 404, code)
 
-	_, err := f.st.CreateProposal(proto.Proposal{TicketID: ids["41"], Kind: "comment", Body: "hola", Status: "pendiente"})
+	_, err := f.st.CreateProposal(proto.Proposal{TicketID: ids["41"], Kind: "comment", Body: "hola", Status: "pending"})
 	require.NoError(t, err)
 	var td struct {
 		ID        string
@@ -158,13 +158,13 @@ func TestProjectAPICRUD(t *testing.T) {
 	f.reqJSON(t, "GET", "/api/proposals?ticket="+ids["42"], "", 200, &pl)
 	require.Empty(t, pl)
 
-	// token vacío lo borra
+	// empty token deletes it
 	code, _ = f.req(t, "PUT", "/api/projects/"+p.ID+"/token", `{"token":""}`)
 	require.Equal(t, 204, code)
 	f.reqJSON(t, "GET", "/api/projects/"+p.ID, "", 200, &got)
 	require.False(t, got.Connector.HasToken)
 
-	// borrar
+	// delete
 	code, _ = f.req(t, "DELETE", "/api/projects/"+p.ID, "")
 	require.Equal(t, 204, code)
 	code, _ = f.req(t, "GET", "/api/projects/"+p.ID, "")
@@ -178,7 +178,7 @@ func TestProjectAPICRUD(t *testing.T) {
 func TestProjectAPILiveAndNoToken(t *testing.T) {
 	f, p, ids := linkFx(t)
 	var out []string
-	_, ch := f.live(t) // antes de poner el token
+	_, ch := f.live(t) // before setting the token
 	types := []string{}
 	for !(slices.Contains(types, "workspace_upsert") && slices.Contains(types, "project_upsert")) {
 		select {
@@ -187,10 +187,10 @@ func TestProjectAPILiveAndNoToken(t *testing.T) {
 			bb, _ := json.Marshal(env)
 			out = append(out, string(bb))
 		case <-time.After(3 * time.Second):
-			t.Fatalf("snapshot incompleto: %v", types)
+			t.Fatalf("incomplete snapshot: %v", types)
 		}
 	}
-	// workspace/project llegan después de máquinas y sesiones
+	// workspace/project arrive after machines and sessions
 	first := min(slices.Index(types, "workspace_upsert"), slices.Index(types, "project_upsert"))
 	for i, ty := range types {
 		if ty == "machine_status" || ty == "session_upsert" {
@@ -203,7 +203,7 @@ func TestProjectAPILiveAndNoToken(t *testing.T) {
 	require.Equal(t, 204, code)
 	_, b := f.req(t, "PATCH", "/api/projects/"+p.ID, `{"connector":{"kind":"exec","intervalMin":5,"settings":{"cmd":"x"}}}`)
 	out = append(out, b)
-	_, err := f.st.CreateProposal(proto.Proposal{TicketID: ids["41"], Kind: "comment", Body: "x", Status: "pendiente"})
+	_, err := f.st.CreateProposal(proto.Proposal{TicketID: ids["41"], Kind: "comment", Body: "x", Status: "pending"})
 	require.NoError(t, err)
 	for _, e := range []string{"GET /api/workspaces", "GET /api/projects", "GET /api/projects/" + p.ID,
 		"GET /api/projects/" + p.ID + "/tickets", "GET /api/tickets/" + ids["41"], "GET /api/proposals?ticket=" + ids["41"],
@@ -213,9 +213,9 @@ func TestProjectAPILiveAndNoToken(t *testing.T) {
 		out = append(out, b)
 	}
 
-	// cambios en vivo
+	// live changes
 	var ws proto.Workspace
-	f.reqJSON(t, "POST", "/api/workspaces", `{"name":"nuevo"}`, 201, &ws)
+	f.reqJSON(t, "POST", "/api/workspaces", `{"name":"new"}`, 201, &ws)
 	f.reqJSON(t, "PATCH", "/api/workspaces/"+ws.ID, `{"name":"n2"}`, 200, nil)
 	f.req(t, "DELETE", "/api/workspaces/"+ws.ID, "")
 	f.req(t, "DELETE", "/api/projects/"+p.ID, "")
@@ -233,10 +233,10 @@ func TestProjectAPILiveAndNoToken(t *testing.T) {
 				sawToken = true
 			}
 		case <-time.After(3 * time.Second):
-			t.Fatalf("faltan envelopes: %v", want)
+			t.Fatalf("missing envelopes: %v", want)
 		}
 	}
-	require.True(t, sawToken, "project_upsert tras poner el token")
+	require.True(t, sawToken, "project_upsert after setting the token")
 	for _, s := range out {
 		require.NotContains(t, s, sentinel)
 	}
@@ -257,10 +257,10 @@ func TestProjectAPIDefaultsAndMessages(t *testing.T) {
 
 	code, b := f.req(t, "PATCH", "/api/projects/"+p.ID, `{"workspaceId":"nope"}`)
 	require.Equal(t, 404, code)
-	require.JSONEq(t, `{"error":"trabajo no encontrado"}`, b)
+	require.JSONEq(t, `{"error":"workspace not found"}`, b)
 	code, b = f.req(t, "PATCH", "/api/projects/nope", `{"name":"x"}`)
 	require.Equal(t, 404, code)
-	require.JSONEq(t, `{"error":"proyecto no encontrado"}`, b)
+	require.JSONEq(t, `{"error":"project not found"}`, b)
 }
 
 func TestProjectAPIRequiresDevice(t *testing.T) {
@@ -279,7 +279,7 @@ func TestProjectCheckoutsAPI(t *testing.T) {
 	require.Empty(t, cos)
 	_, err := f.st.UpsertCheckout(proto.Checkout{ProjectID: p.ID, Machine: "m1", Root: "/srv/r", RepoURL: linkRepo, Branch: "main"})
 	require.NoError(t, err)
-	_, err = f.st.UpsertCheckout(proto.Checkout{Machine: "m1", Root: "/otro", RepoURL: "git@x:o/otro.git"})
+	_, err = f.st.UpsertCheckout(proto.Checkout{Machine: "m1", Root: "/other", RepoURL: "git@x:o/other.git"})
 	require.NoError(t, err)
 	f.reqJSON(t, "GET", "/api/projects/"+p.ID+"/checkouts", "", 200, &cos)
 	require.Len(t, cos, 1)
@@ -289,5 +289,5 @@ func TestProjectCheckoutsAPI(t *testing.T) {
 	require.NotEmpty(t, cos[0].ID)
 	code, b := f.req(t, "GET", "/api/projects/nope/checkouts", "")
 	require.Equal(t, 404, code)
-	require.JSONEq(t, `{"error":"proyecto no encontrado"}`, b)
+	require.JSONEq(t, `{"error":"project not found"}`, b)
 }

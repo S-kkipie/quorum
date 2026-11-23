@@ -7,12 +7,12 @@ afterEach(cleanup)
 const late = { reqId: 'r', machine: 'm1', label: 'x', startedAt: Date.now() - 61000, pane: 'w1:p1' }
 
 describe('Starting', () => {
-  it('pasados 60 s ofrece "Ver en terminal" solo si la máquina tiene terminal', () => {
+  it('after 60 s it offers "View in terminal" only if the machine has a terminal', () => {
     render(<Starting pending={late} terminal onBack={vi.fn()} />)
-    expect(screen.getByText('Claude no se registró en 60 s')).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Ver en terminal' })).toBeTruthy()
+    expect(screen.getByText('Claude did not register within 60 s')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'View in terminal' })).toBeTruthy()
     cleanup()
     render(<Starting pending={late} onBack={vi.fn()} />)
-    expect(screen.queryByRole('button', { name: 'Ver en terminal' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'View in terminal' })).toBeNull()
   })
 })

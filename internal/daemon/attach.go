@@ -11,10 +11,10 @@ import (
 	"time"
 )
 
-// pingInterval es el periodo de las líneas {"type":"ping"}; variable para tests.
+// pingInterval is the period of the {"type":"ping"} lines; a variable for tests.
 var pingInterval = 20 * time.Second
 
-// attachHandler hace streaming NDJSON de los comandos de una sesión al mod.
+// attachHandler streams a session's commands to the mod as NDJSON.
 func attachHandler(reg *Registry) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		fl, ok := w.(http.Flusher)
@@ -22,7 +22,7 @@ func attachHandler(reg *Registry) http.HandlerFunc {
 			http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 			return
 		}
-		// El stream es largo: anula cualquier WriteTimeout del servidor.
+		// The stream is long-lived: override any server WriteTimeout.
 		_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
 		ch, cancel := reg.Subscribe(r.PathValue("id"))
 		defer cancel()
@@ -57,10 +57,10 @@ func attachHandler(reg *Registry) http.HandlerFunc {
 	}
 }
 
-// RunAttach conecta al endpoint attach y copia cada línea a out. Devuelve el
-// código de salida: 0 si el servidor cierra el stream limpiamente, 2 si no puede
-// conectar o recibe un estado distinto de 200, 3 si el stream se corta con error
-// (el mod reconecta en todos los casos).
+// RunAttach connects to the attach endpoint and copies each line to out. It returns the
+// exit code: 0 if the server closes the stream cleanly, 2 if it cannot
+// connect or gets a status other than 200, 3 if the stream breaks with an error
+// (the mod reconnects in every case).
 func RunAttach(ctx context.Context, base, token, session string, out, errw io.Writer) int {
 	req, err := http.NewRequestWithContext(ctx, "GET", base+"/v1/sessions/"+url.PathEscape(session)+"/attach", nil)
 	if err != nil {

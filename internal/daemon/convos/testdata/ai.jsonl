@@ -1,4 +1,4 @@
-{"type":"user","message":{"role":"user","content":"arregla el login"},"sessionId":"ai"}
-{"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","thinking":"..."},{"type":"text","text":"Listo."}]}}
+{"type":"user","message":{"role":"user","content":"fix the login"},"sessionId":"ai"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","thinking":"..."},{"type":"text","text":"Done."}]}}
 {"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}}
-{"type":"ai-title","aiTitle":"Arreglar el login","sessionId":"ai"}
+{"type":"ai-title","aiTitle":"Fix the login","sessionId":"ai"}

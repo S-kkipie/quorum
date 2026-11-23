@@ -1,49 +1,49 @@
 import type { Project, SessionInfo, Ticket } from '../proto.gen'
 import type { AppState } from './store'
 
-/** Estados normalizados en el orden en que se muestran (hecho va plegado al final). */
-export const STATUSES = ['por_hacer', 'en_curso', 'en_review', 'bloqueado', 'hecho'] as const
+/** Normalized statuses in display order (done is folded at the end). */
+export const STATUSES = ['todo', 'in_progress', 'in_review', 'blocked', 'done'] as const
 export const STATUS_LABEL: Record<string, string> = {
-  por_hacer: 'por hacer', en_curso: 'en curso', en_review: 'en review', bloqueado: 'bloqueado', hecho: 'hecho',
+  todo: 'to do', in_progress: 'in progress', in_review: 'in review', blocked: 'blocked', done: 'done',
 }
 
-/** Estados de sesión con su color (lo comparten la lista de sesiones y el tablero). */
+/** Session states with their color (shared by the session list and the board). */
 export const SESSION_STATE: Record<string, { label: string; dot: string; text: string }> = {
-  working: { label: 'trabajando', dot: 'bg-blue-500', text: 'text-blue-400' },
-  needs_you: { label: 'te necesita', dot: 'bg-amber-500', text: 'text-amber-400' },
-  waiting: { label: 'esperando', dot: 'bg-zinc-500', text: 'text-zinc-400' },
-  idle: { label: 'inactiva', dot: 'bg-zinc-500', text: 'text-zinc-400' },
-  closed: { label: 'cerrada', dot: 'bg-zinc-700', text: 'text-zinc-600' },
+  working: { label: 'working', dot: 'bg-blue-500', text: 'text-blue-400' },
+  needs_you: { label: 'needs you', dot: 'bg-amber-500', text: 'text-amber-400' },
+  waiting: { label: 'waiting', dot: 'bg-zinc-500', text: 'text-zinc-400' },
+  idle: { label: 'idle', dot: 'bg-zinc-500', text: 'text-zinc-400' },
+  closed: { label: 'closed', dot: 'bg-zinc-700', text: 'text-zinc-600' },
 }
 
 const toMs = (ts: number) => (ts > 1e12 ? ts : ts * 1000)
 
-/** "hace 12 min", "hace 2 h", "hace 3 d". */
+/** "12 min ago", "2h ago", "3d ago". */
 export function since(ts: number, now = Date.now()): string {
   const m = Math.max(0, Math.floor((now - toMs(ts)) / 60000))
-  if (m < 60) return `hace ${Math.max(1, m)} min`
-  if (m < 1440) return `hace ${Math.floor(m / 60)} h`
-  return `hace ${Math.floor(m / 1440)} d`
+  if (m < 60) return `${Math.max(1, m)} min ago`
+  if (m < 1440) return `${Math.floor(m / 60)}h ago`
+  return `${Math.floor(m / 1440)}d ago`
 }
 
-/** Sesiones vivas (no cerradas, de trabajo) del proyecto, en el orden estable de la lista. */
+/** Live sessions (not closed, work role) of the project, in the stable list order. */
 export function projectSessions(s: AppState, projectId: string): SessionInfo[] {
   return s.order.map((id) => s.sessions[id]).filter((x) => x && x.projectId === projectId && x.role !== 'service' && x.state !== 'closed')
 }
 
-/** Propuestas pendientes por proyecto (vía el ticket al que pertenecen). */
+/** Pending proposals per project (via the ticket they belong to). */
 export function pendingByProject(s: AppState): Record<string, number> {
   const owner: Record<string, string> = {}
   for (const [pid, ts] of Object.entries(s.tickets)) for (const t of ts) owner[t.id] = pid
   const out: Record<string, number> = {}
   for (const p of Object.values(s.proposals)) {
     const pid = owner[p.ticketId]
-    if (p.status === 'pendiente' && pid) out[pid] = (out[pid] ?? 0) + 1
+    if (p.status === 'pending' && pid) out[pid] = (out[pid] ?? 0) + 1
   }
   return out
 }
 
-/** Sesiones asociadas a un ticket: confirmadas y sugeridas. */
+/** Sessions associated with a ticket: confirmed and suggested. */
 export function ticketSessions(s: AppState, ticketId: string): { session: SessionInfo | undefined; id: string; confirmed: boolean }[] {
   return Object.entries(s.links[ticketId] ?? {}).map(([id, confirmed]) => ({ id, confirmed, session: s.sessions[id] }))
 }
@@ -51,23 +51,23 @@ export function ticketSessions(s: AppState, ticketId: string): { session: Sessio
 export type Tone = 'blue' | 'amber' | 'emerald' | 'red' | 'zinc'
 
 /**
- * Estado combinado de un ticket (spec §10): el de la ticketera más el de su sesión
- * confirmada viva, p. ej. "en curso · vps-2 · trabajando hace 12 min".
+ * Combined state of a ticket (spec §10): the ticket source's plus that of its live
+ * confirmed session, e.g. "in progress · vps-2 · working 12 min ago".
  */
 export function ticketLine(s: AppState, t: Ticket, now = Date.now()): { text: string; tone: Tone } {
   const live = ticketSessions(s, t.id)
     .filter((l) => l.confirmed && l.session && l.session.state !== 'closed')
     .map((l) => l.session!)
   const needs = live.find((x) => x.state === 'needs_you')
-  if (needs) return { text: `te necesita · ${needs.machine}`, tone: 'amber' }
+  if (needs) return { text: `needs you · ${needs.machine}`, tone: 'amber' }
   const working = live.find((x) => x.state === 'working')
-  if (working) return { text: `en curso · ${working.machine} · trabajando ${since(working.updatedAt, now)}`, tone: 'blue' }
-  if (t.status === 'en_review') return { text: 'listo, esperando tu review', tone: 'emerald' }
+  if (working) return { text: `in progress · ${working.machine} · working ${since(working.updatedAt, now)}`, tone: 'blue' }
+  if (t.status === 'in_review') return { text: 'done, waiting for your review', tone: 'emerald' }
   const done = live.find((x) => s.worked[x.id])
-  if (done && t.status !== 'hecho') return { text: `listo, esperando tu review · ${done.machine}`, tone: 'emerald' }
+  if (done && t.status !== 'done') return { text: `done, waiting for your review · ${done.machine}`, tone: 'emerald' }
   const label = STATUS_LABEL[t.status] ?? t.status
-  if (live.length) return { text: `${label} · sesión en ${live[0].machine}`, tone: 'zinc' }
-  return { text: label, tone: t.status === 'bloqueado' ? 'red' : 'zinc' }
+  if (live.length) return { text: `${label} · session on ${live[0].machine}`, tone: 'zinc' }
+  return { text: label, tone: t.status === 'blocked' ? 'red' : 'zinc' }
 }
 
 export const TONE_TEXT: Record<Tone, string> = {
@@ -75,8 +75,8 @@ export const TONE_TEXT: Record<Tone, string> = {
 }
 
 /**
- * Checkouts del proyecto (máquina + raíz): los guardados en el hub más los que se
- * deducen de sus sesiones (aún no cargados o recién descubiertos), sin repetir.
+ * Checkouts of the project (machine + root): those saved in the hub plus those
+ * inferred from its sessions (not loaded yet or just discovered), without repeats.
  */
 export function projectCheckouts(s: AppState, projectId: string): { machine: string; root: string; branch: string }[] {
   const seen = new Map<string, { machine: string; root: string; branch: string }>()
@@ -92,7 +92,7 @@ export function projectCheckouts(s: AppState, projectId: string): { machine: str
   return [...seen.values()].sort((a, b) => (a.machine + a.root).localeCompare(b.machine + b.root))
 }
 
-/** Proyectos de un trabajo, por nombre. */
+/** Projects of a workspace, by name. */
 export function workspaceProjects(s: AppState, workspaceId: string): Project[] {
   return Object.values(s.projects).filter((p) => p.workspaceId === workspaceId).sort((a, b) => a.name.localeCompare(b.name))
 }

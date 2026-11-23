@@ -34,13 +34,13 @@ func TestWSURL(t *testing.T) {
 	require.Equal(t, "wss://h.ts.net/api/machine/ws", wsURL("https://h.ts.net"))
 }
 
-// fakeHub es un servidor WS que anota los hello recibidos.
+// fakeHub is a WS server that records the hellos received.
 type fakeHub struct {
 	mu     sync.Mutex
 	hellos []proto.MachineHello
 	auth   []string
 	conns  []*websocket.Conn
-	envs   []proto.Envelope // lo recibido tras el hello
+	envs   []proto.Envelope // what was received after the hello
 }
 
 func (f *fakeHub) handler(w http.ResponseWriter, r *http.Request) {
@@ -98,11 +98,11 @@ func TestReconnectResendsSnapshot(t *testing.T) {
 
 	srv.Close()
 	fh.mu.Lock()
-	for _, c := range fh.conns { // las conexiones WS secuestradas no las cierra httptest
+	for _, c := range fh.conns { // hijacked WS connections are not closed by httptest
 		c.CloseNow()
 	}
 	fh.mu.Unlock()
-	reg.Upsert(proto.SessionInfo{ID: "s2", State: proto.StateIdle}) // sin conexión: se descarta el envelope, no la sesión
+	reg.Upsert(proto.SessionInfo{ID: "s2", State: proto.StateIdle}) // without a connection: the envelope is dropped, not the session
 
 	ln2, err := net.Listen("tcp", addr)
 	require.NoError(t, err)
@@ -148,11 +148,11 @@ func TestCommandReachesSession(t *testing.T) {
 	go RunHubLink(ctx, cfg, reg, noHerdrHost(t))
 
 	require.Eventually(t, func() bool {
-		p, _ := json.Marshal(proto.Command{Type: "prompt", Text: "hola"})
+		p, _ := json.Marshal(proto.Command{Type: "prompt", Text: "hello"})
 		return hs.Hub().SendToMachine("m1", proto.Envelope{Type: "command", Session: "s1", Payload: p})
 	}, 3*time.Second, 20*time.Millisecond)
-	require.Equal(t, "hola", nextPrompt(t, ch).Text)
-	// y lo que emite el registro llega al hub
+	require.Equal(t, "hello", nextPrompt(t, ch).Text)
+	// and what the registry emits reaches the hub
 	reg.Upsert(proto.SessionInfo{ID: "s1", State: proto.StateWorking})
 	require.Eventually(t, func() bool {
 		l, _ := st.ListSessions(false)
@@ -168,7 +168,7 @@ func TestLinkMachineBadCode(t *testing.T) {
 	defer ts.Close()
 	t.Setenv("QUORUM_CONFIG_DIR", t.TempDir())
 	_, err = LinkMachine(context.Background(), Config{Machine: "m1"}, ts.URL, "000000")
-	require.ErrorContains(t, err, "código inválido")
+	require.ErrorContains(t, err, "invalid or expired code")
 }
 
 func TestReloadStartsHubLink(t *testing.T) {
@@ -184,7 +184,7 @@ func TestReloadStartsHubLink(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	lk := &linker{reg: reg, parent: ctx}
-	lk.start(cfg) // sin hub: solo vacía Out()
+	lk.start(cfg) // without a hub: it only drains Out()
 	reload := func() error {
 		c, err := LoadConfig()
 		if err != nil {
@@ -261,10 +261,10 @@ func TestLaunchHandledWithoutBlocking(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return hs.Hub().SendToMachine("m1", proto.Envelope{Type: "launch", Payload: lp})
 	}, 3*time.Second, 20*time.Millisecond)
-	// con el launch bloqueado, el bucle de lectura sigue atendiendo comandos
-	cp, _ := json.Marshal(proto.Command{Type: "prompt", Text: "hola"})
+	// with the launch blocked, the read loop keeps serving commands
+	cp, _ := json.Marshal(proto.Command{Type: "prompt", Text: "hello"})
 	require.True(t, hs.Hub().SendToMachine("m1", proto.Envelope{Type: "command", Session: "s1", Payload: cp}))
-	require.Equal(t, "hola", nextPrompt(t, ch).Text)
+	require.Equal(t, "hello", nextPrompt(t, ch).Text)
 	close(release)
 	deadline := time.After(3 * time.Second)
 	for {
@@ -278,7 +278,7 @@ func TestLaunchHandledWithoutBlocking(t *testing.T) {
 			require.Equal(t, proto.LaunchResult{ReqID: "r1", OK: true}, res)
 			return
 		case <-deadline:
-			t.Fatal("no llegó launch_result")
+			t.Fatal("launch_result did not arrive")
 		}
 	}
 }
@@ -286,14 +286,14 @@ func TestLaunchHandledWithoutBlocking(t *testing.T) {
 func TestBackfillRepliesWithParsedEvents(t *testing.T) {
 	dir := t.TempDir()
 	tp := filepath.Join(dir, "t.jsonl")
-	require.NoError(t, os.WriteFile(tp, []byte(`{"type":"user","message":{"content":"hola"},"timestamp":"2026-01-02T03:04:05Z"}`+"\nbasura\n"), 0o600))
+	require.NoError(t, os.WriteFile(tp, []byte(`{"type":"user","message":{"content":"hello"},"timestamp":"2026-01-02T03:04:05Z"}`+"\ngarbage\n"), 0o600))
 	reg := NewRegistry("m1")
 	reg.Upsert(proto.SessionInfo{ID: "s1", TranscriptPath: tp})
 	reg.Upsert(proto.SessionInfo{ID: "s2", TranscriptPath: "relativo.jsonl"})
-	reg.Upsert(proto.SessionInfo{ID: "s3", TranscriptPath: dir}) // no es archivo regular
+	reg.Upsert(proto.SessionInfo{ID: "s3", TranscriptPath: dir}) // not a regular file
 	txt := filepath.Join(dir, "t.txt")
 	require.NoError(t, os.WriteFile(txt, []byte(`{"type":"user","message":{"content":"x"}}`+"\n"), 0o600))
-	reg.Upsert(proto.SessionInfo{ID: "s4", TranscriptPath: txt}) // sin .jsonl
+	reg.Upsert(proto.SessionInfo{ID: "s4", TranscriptPath: txt}) // without .jsonl
 	drain := func() {
 		for len(reg.Out()) > 0 {
 			<-reg.Out()
@@ -311,7 +311,7 @@ func TestBackfillRepliesWithParsedEvents(t *testing.T) {
 			require.NoError(t, json.Unmarshal(env.Payload, &evs))
 			return evs
 		case <-time.After(3 * time.Second):
-			t.Fatal("sin respuesta")
+			t.Fatal("no response")
 			return nil
 		}
 	}
@@ -326,7 +326,7 @@ func TestBackfillRepliesWithParsedEvents(t *testing.T) {
 }
 
 func TestBackfillOversizedTranscriptFitsBudget(t *testing.T) {
-	big := strings.Repeat("é", 100_000) // 200 KB por mensaje
+	big := strings.Repeat("é", 100_000) // 200 KB per message
 	var sb strings.Builder
 	for i := 0; i < 500; i++ {
 		sb.WriteString(`{"type":"user","message":{"content":"` + big + "\"}}\n")
@@ -350,7 +350,7 @@ func TestBackfillOversizedTranscriptFitsBudget(t *testing.T) {
 	require.True(t, utf8.ValidString(d["text"]))
 }
 
-// nextPrompt espera el siguiente comando del canal.
+// nextPrompt waits for the next command on the channel.
 func nextPrompt(t *testing.T, ch <-chan proto.Command) proto.Command {
 	t.Helper()
 	timeout := time.After(3 * time.Second)
@@ -359,7 +359,7 @@ func nextPrompt(t *testing.T, ch <-chan proto.Command) proto.Command {
 		case c := <-ch:
 			return c
 		case <-timeout:
-			t.Fatal("el comando no llegó (¿bucle de lectura bloqueado?)")
+			t.Fatal("the command did not arrive (read loop blocked?)")
 		}
 	}
 }

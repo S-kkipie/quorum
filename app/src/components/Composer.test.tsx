@@ -14,7 +14,7 @@ const sess = (o: Partial<SessionInfo>): SessionInfo => ({
 
 async function send(s: SessionInfo, label: string) {
   render(<Composer session={s} />)
-  fireEvent.change(screen.getByRole('textbox'), { target: { value: 'hola' } })
+  fireEvent.change(screen.getByRole('textbox'), { target: { value: 'hello' } })
   fireEvent.click(screen.getByRole('button', { name: label }))
   await waitFor(() => expect(fetchMock).toHaveBeenCalled())
   const [url, init] = fetchMock.mock.calls[0]
@@ -24,26 +24,26 @@ async function send(s: SessionInfo, label: string) {
 afterEach(() => { cleanup(); fetchMock.mockClear() })
 
 describe('Composer', () => {
-  it('working: Enviar usa mode now', async () => {
-    const r = await send(sess({ state: 'working' as any }), 'Enviar')
+  it('working: Send uses mode now', async () => {
+    const r = await send(sess({ state: 'working' as any }), 'Send')
     expect(r.url).toContain('/api/sessions/s1/prompt')
-    expect(r.body).toEqual({ text: 'hola', mode: 'now' })
+    expect(r.body).toEqual({ text: 'hello', mode: 'now' })
   })
-  it('idle: Enviar usa mode queue', async () => {
-    expect((await send(sess({ state: 'idle' as any }), 'Enviar')).body.mode).toBe('queue')
+  it('idle: Send uses mode queue', async () => {
+    expect((await send(sess({ state: 'idle' as any }), 'Send')).body.mode).toBe('queue')
   })
-  it('En cola e Interrumpir', async () => {
-    expect((await send(sess({ state: 'working' as any }), 'En cola')).body.mode).toBe('queue')
+  it('Queue and Interrupt', async () => {
+    expect((await send(sess({ state: 'working' as any }), 'Queue')).body.mode).toBe('queue')
     cleanup(); fetchMock.mockClear()
-    expect((await send(sess({ state: 'working' as any }), 'Interrumpir y enviar')).body.mode).toBe('interrupt')
+    expect((await send(sess({ state: 'working' as any }), 'Interrupt and send')).body.mode).toBe('interrupt')
   })
-  it('servicio: deshabilitado', () => {
+  it('service: disabled', () => {
     render(<Composer session={sess({ role: 'service' as any })} />)
-    expect(screen.getByText('Sesión de servicio')).toBeTruthy()
-    expect((screen.getByRole('button', { name: 'Enviar' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.getByText('Service session')).toBeTruthy()
+    expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(true)
   })
-  it('cerrada', () => {
+  it('closed', () => {
     render(<Composer session={sess({ state: 'closed' as any })} />)
-    expect(screen.getByText('Sesión cerrada')).toBeTruthy()
+    expect(screen.getByText('Session closed')).toBeTruthy()
   })
 })

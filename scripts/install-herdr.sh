@@ -1,7 +1,7 @@
 #!/bin/sh
-# Instala herdr (multiplexor de terminal) y su integración con Claude. Idempotente, sin root.
-# Uso: scripts/install-herdr.sh
-# Solo toca ~/.local/bin, ~/.config/systemd/user/herdr-server.service y lo que escriba 'herdr integration'.
+# Installs herdr (terminal multiplexer) and its Claude integration. Idempotent, no root.
+# Usage: scripts/install-herdr.sh
+# Only touches ~/.local/bin, ~/.config/systemd/user/herdr-server.service and whatever 'herdr integration' writes.
 set -eu
 
 MIN="0.9.5"
@@ -9,12 +9,12 @@ DEST="$HOME/.local/bin"
 case ":$PATH:" in *":$DEST:"*) ;; *) PATH="$DEST:$PATH"; export PATH ;; esac
 
 if ! command -v herdr >/dev/null 2>&1; then
-  echo "instalando herdr..."
+  echo "installing herdr..."
   curl -fsSL https://herdr.dev/install.sh | sh
-  command -v herdr >/dev/null 2>&1 || { echo "error: herdr no quedó en PATH ni en $DEST" >&2; exit 1; }
+  command -v herdr >/dev/null 2>&1 || { echo "error: herdr is not in PATH nor in $DEST" >&2; exit 1; }
 fi
 
-# ver_ge A B: éxito si la versión A >= B (numérica, por componentes, POSIX sh).
+# ver_ge A B: succeeds if version A >= B (numeric, per component, POSIX sh).
 ver_ge() {
   _a=$1; _b=$2
   for _i in 1 2 3; do
@@ -28,32 +28,32 @@ ver_ge() {
   return 0
 }
 
-# "herdr 0.9.5" -> 0.9.5 (primer token con forma de versión).
+# "herdr 0.9.5" -> 0.9.5 (first version-shaped token).
 VER="$(herdr --version 2>/dev/null | grep -Eo '[0-9]+(\.[0-9]+)+' | head -n 1 || true)"
-[ -n "$VER" ] || { echo "error: no pude leer la versión de 'herdr --version'" >&2; exit 1; }
-ver_ge "$VER" "$MIN" || { echo "error: herdr $VER es anterior a $MIN; actualízalo" >&2; exit 1; }
-echo "herdr $VER listo"
+[ -n "$VER" ] || { echo "error: could not read the version from 'herdr --version'" >&2; exit 1; }
+ver_ge "$VER" "$MIN" || { echo "error: herdr $VER is older than $MIN; upgrade it" >&2; exit 1; }
+echo "herdr $VER ready"
 
 if [ -d "$HOME/.claude" ]; then
-  herdr integration install claude || echo "aviso: 'herdr integration install claude' falló; revisa 'herdr integration status'" >&2
+  herdr integration install claude || echo "warning: 'herdr integration install claude' failed; check 'herdr integration status'" >&2
 fi
 
-# Si ya hay un servidor respondiendo (p. ej. el herdr del dueño), no se toca nada más.
-# Solo se sondea si el socket existe: así nunca se invoca un CLI que podría arrancar o colgarse.
+# If a server is already responding (e.g. the owner's herdr), nothing else is touched.
+# Only probe if the socket exists: that way we never invoke a CLI that could start or hang.
 SOCK="${HERDR_SOCKET_PATH:-$HOME/.config/herdr/herdr.sock}"
 if [ -S "$SOCK" ]; then
   if command -v timeout >/dev/null 2>&1; then PROBE="timeout 5 herdr"; else PROBE="herdr"; fi
   if $PROBE workspace list >/dev/null 2>&1; then
-    echo "el servidor de herdr ya responde; no toco nada más"
+    echo "the herdr server already responds; leaving everything else alone"
   else
-    echo "aviso: existe el socket $SOCK pero no respondió; puede haber un servidor colgado." >&2
-    echo "  No creo el servicio. Si no corre ningún servidor, borra el socket y vuelve a ejecutar este script." >&2
+    echo "warning: socket $SOCK exists but did not respond; a server may be hung." >&2
+    echo "  Not creating the service. If no server is running, delete the socket and run this script again." >&2
   fi
   exit 0
 fi
 
 if ! command -v systemctl >/dev/null 2>&1 || ! systemctl --user show-environment >/dev/null 2>&1; then
-  echo "sin systemd de usuario: arranca 'herdr server' por tu cuenta"
+  echo "no user systemd: start 'herdr server' yourself"
   exit 0
 fi
 
@@ -75,9 +75,9 @@ WantedBy=default.target
 UNIT
 systemctl --user daemon-reload
 systemctl --user enable --now herdr-server
-echo "servicio herdr-server activado"
+echo "herdr-server service enabled"
 
 if [ "$(loginctl show-user "$(id -un)" -p Linger 2>/dev/null || true)" != "Linger=yes" ]; then
-  echo "aviso: linger está apagado; el servidor se detendrá al cerrar tu última sesión." >&2
-  echo "  actívalo (con permisos de administrador): sudo loginctl enable-linger $(id -un)" >&2
+  echo "warning: linger is off; the server will stop when your last session closes." >&2
+  echo "  enable it (with admin rights): sudo loginctl enable-linger $(id -un)" >&2
 fi

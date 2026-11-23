@@ -21,26 +21,26 @@ function turn(h: ReturnType<typeof makeHandlers>, agentId?: string) {
   h.stepEnd(e, st)
 }
 
-test('summarize: Bash usa command', () => {
+test('summarize: Bash uses command', () => {
   expect(summarize('Bash', { command: 'ls -la' })).toBe('ls -la')
 })
-test('summarize: Read/Write/Edit usan file_path', () => {
+test('summarize: Read/Write/Edit use file_path', () => {
   for (const t of ['Read', 'Write', 'Edit']) expect(summarize(t, { file_path: '/a/b' })).toBe('/a/b')
 })
-test('summarize: Grep/Glob usan pattern', () => {
+test('summarize: Grep/Glob use pattern', () => {
   expect(summarize('Grep', { pattern: 'foo', path: '/x' })).toBe('foo')
   expect(summarize('Glob', { pattern: '**/*.ts' })).toBe('**/*.ts')
 })
-test('summarize: WebFetch usa url', () => {
+test('summarize: WebFetch uses url', () => {
   expect(summarize('WebFetch', { url: 'https://x.dev', prompt: 'p' })).toBe('https://x.dev')
 })
-test('summarize: el resto en k=v hasta 120 chars', () => {
+test('summarize: the rest as k=v up to 120 chars', () => {
   expect(summarize('Other', { a: 'x', n: 2 })).toBe('a=x n=2')
   expect(summarize('Other', { a: 'y'.repeat(300) }).length).toBe(120)
   expect(summarize('Other', null)).toBe('')
 })
 
-test('turno simulado: secuencia exacta de eventos', async () => {
+test('simulated turn: exact event sequence', async () => {
   const f = fakeLink()
   const h = makeHandlers(() => f.link)
   h.turnStart({ text: 'hola' })
@@ -50,25 +50,25 @@ test('turno simulado: secuencia exacta de eventos', async () => {
   h.chunk({}, { kind: 'tool', name: 'Bash', id: 't1' }, st)
   const call = { tool: 'Bash', tool_use_id: 't1', command: 'ls' }
   h.toolStart(call)
-  h.toolEnd(call, { text: 'x'.repeat(5000) }, 12)
+  h.toolEnd(call, { text: 'x'.repeat(9000) }, 12)
   h.stepEnd({}, st)
   h.turnComplete({ answer: 'listo', reason: 'answer', usage: { output_tokens: 7 } }, async () => 42)
   expect(f.kinds()).toEqual(['turn_start', 'user', 'status', 'assistant_delta', 'assistant_delta', 'tool_start', 'tool_end', 'assistant', 'turn_end', 'status'])
   const ts = f.evs.find(e => e.kind === 'tool_start')!
-  expect(ts.data).toEqual({ id: 't1', name: 'Bash', summary: 'ls' })
-  expect(f.evs.find(e => e.kind === 'tool_end')!.data.output.length).toBe(4000)
+  expect(ts.data).toEqual({ id: 't1', name: 'Bash', summary: 'ls', input: { command: 'ls' } })
+  expect(f.evs.find(e => e.kind === 'tool_end')!.data.output.length).toBe(8000)
   expect(f.evs.find(e => e.kind === 'turn_end')!.data).toEqual({ answer: 'listo', reason: 'answer', outputTokens: 7 })
   await flush()
   expect(f.updates).toEqual([{ state: 'working' }, { state: 'idle' }, { contextPct: 42 }])
 })
 
-test('error sin respuesta usa el aviso', () => {
+test('error without an answer uses the notice', () => {
   const f = fakeLink()
   makeHandlers(() => f.link).turnComplete({ answer: '', reason: 'error' })
   expect(f.evs.find(e => e.kind === 'turn_end')!.data.answer).toBe(ERROR_ANSWER)
 })
 
-test('thinking se emite una vez por bloque', () => {
+test('thinking is emitted once per block', () => {
   const f = fakeLink()
   const h = makeHandlers(() => f.link)
   const st = newStep()
@@ -76,7 +76,7 @@ test('thinking se emite una vez por bloque', () => {
   expect(f.kinds()).toEqual(['thinking', 'assistant_delta', 'thinking'])
 })
 
-test('rol service: solo status', async () => {
+test('service role: status only', async () => {
   const f = fakeLink('service')
   const h = makeHandlers(() => f.link)
   h.turnStart({ text: 'x' })
@@ -91,18 +91,18 @@ test('rol service: solo status', async () => {
   expect(f.updates).toEqual([{ state: 'working' }, { state: 'idle' }])
 })
 
-test('sin link: no hace nada ni lanza', () => {
+test('without a link: does nothing and does not throw', () => {
   const h = makeHandlers(() => undefined)
   h.turnStart({ text: 'x' })
   h.turnComplete({ answer: 'r' })
 })
 
-test('un emit que lanza no se propaga', () => {
+test('an emit that throws does not propagate', () => {
   const link = { role: 'work', emit: () => { throw new Error('x') }, update: () => {} } as unknown as Link
   makeHandlers(() => link).turnStart({ text: 'x' })
 })
 
-test('subagente: eventos con agent y sin cambiar el estado', async () => {
+test('subagent: events with agent and without changing the state', async () => {
   const f = fakeLink()
   const h = makeHandlers(() => f.link)
   h.turnStart({ text: 'x', agentId: 'ag1' })
@@ -120,7 +120,7 @@ test('subagente: eventos con agent y sin cambiar el estado', async () => {
   expect(f.updates).toEqual([])
 })
 
-test('contextPct: percent, o tokens/window', () => {
+test('contextPct: percent, or tokens/window', () => {
   expect(contextPct({ context: { percent: 41.6, window: 200000 } })).toBe(42)
   expect(contextPct({ context: { tokens: 50000, window: 200000 } })).toBe(25)
   expect(contextPct({ context: { window: 200000 } })).toBeUndefined()
@@ -128,7 +128,7 @@ test('contextPct: percent, o tokens/window', () => {
 
 const textChunk = (text: string) => ({ kind: 'text', text })
 
-test('stepHook reenvía chunks y el valor de retorno, y emite assistant', async () => {
+test('stepHook forwards chunks and the return value, and emits assistant', async () => {
   const f = fakeLink()
   const h = makeHandlers(() => f.link)
   async function* inner() { yield textChunk('ho'); yield textChunk('la'); return 'RES' }
@@ -144,7 +144,7 @@ test('stepHook reenvía chunks y el valor de retorno, y emite assistant', async 
   expect(f.evs[2].data.text).toBe('hola')
 })
 
-test('stepHook: return() temprano cierra el flujo interno y emite lo parcial', async () => {
+test('stepHook: early return() closes the inner stream and emits the partial text', async () => {
   const f = fakeLink()
   const h = makeHandlers(() => f.link)
   let closed = false
@@ -154,7 +154,7 @@ test('stepHook: return() temprano cierra el flujo interno y emite lo parcial', a
   expect(f.evs.some(e => e.kind === 'assistant' && e.data.text === 'par')).toBe(true)
 })
 
-test('stepHook: throw() se reenvía al flujo interno', async () => {
+test('stepHook: throw() is forwarded to the inner stream', async () => {
   const f = fakeLink()
   const h = makeHandlers(() => f.link)
   let seen: unknown
@@ -168,14 +168,14 @@ test('stepHook: throw() se reenvía al flujo interno', async () => {
   expect(f.kinds()).toContain('assistant')
 })
 
-test('stepHook: un flujo interno que se recupera de throw() queda cerrado', async () => {
+test('stepHook: an inner stream that recovers from throw() ends up closed', async () => {
   const f = fakeLink()
   const h = makeHandlers(() => f.link)
   let closed = false
   async function* inner() {
     try {
-      try { yield textChunk('a') } catch { yield textChunk('recuperado') }
-      yield textChunk('nunca')
+      try { yield textChunk('a') } catch { yield textChunk('recovered') }
+      yield textChunk('never')
     } finally { closed = true }
   }
   const it = stepHook(h, {}, inner())
@@ -186,7 +186,7 @@ test('stepHook: un flujo interno que se recupera de throw() queda cerrado', asyn
   expect(closed).toBe(true)
 })
 
-test('toolHook: si la llamada lanza, tool_end ok:false y se propaga', async () => {
+test('toolHook: if the call throws, tool_end ok:false and it propagates', async () => {
   const f = fakeLink()
   const h = makeHandlers(() => f.link)
   let err: unknown
@@ -197,21 +197,30 @@ test('toolHook: si la llamada lanza, tool_end ok:false y se propaga', async () =
   expect(f.evs[1].data.output).toBe('boom')
 })
 
-test('toolHook devuelve el resultado sin cambios', async () => {
+test('toolHook returns the result unchanged', async () => {
   const f = fakeLink()
   const r = { text: 'ok' }
   expect(await toolHook(makeHandlers(() => f.link), { tool: 'Bash', tool_use_id: 'x' }, async () => r)).toBe(r)
   expect(f.evs[1].data.ok).toBe(true)
 })
 
-// Regresión e2e Plan 2: el diálogo de permiso de Quorum ($.ui.ask = un tool.call de
-// AskUserQuestion con origen plugin) salía en la app como herramienta y como pregunta.
-test('fromPlugin: un $.ui.ask/$.tool.call de un mod no es del modelo', () => {
+// Plan 2 e2e regression: Quorum's permission dialog ($.ui.ask = a tool.call of
+// AskUserQuestion with plugin origin) showed up in the app as a tool and as a question.
+test('fromPlugin: a mod $.ui.ask/$.tool.call is not from the model', () => {
   expect(fromPlugin({ plugin: 'quorum' }, { tool_use_id: 'toolu_plugin_ab12' })).toBe(true)
-  expect(fromPlugin({ plugin: 'otro' }, { tool_use_id: 'x' })).toBe(true)
-  // sin next.origin (builds viejos) se reconoce por el id que pone el engine
+  expect(fromPlugin({ plugin: 'other' }, { tool_use_id: 'x' })).toBe(true)
+  // without next.origin (old builds) it is recognized by the id the engine sets
   expect(fromPlugin(undefined, { tool_use_id: 'toolu_plugin_ca08bb29' })).toBe(true)
   expect(fromPlugin({ plugin: 'engine' }, { tool_use_id: 'toolu_01Y4Zq' })).toBe(false)
   expect(fromPlugin(undefined, { tool_use_id: 'toolu_01Y4Zq' })).toBe(false)
   expect(fromPlugin(undefined, {})).toBe(false)
+})
+
+test('tool_start carries input', () => {
+  const f = fakeLink()
+  const h = makeHandlers(() => f.link)
+  h.toolStart({ tool: 'Edit', tool_use_id: 't9', agentId: 'ag', file_path: '/f', old_string: 'a', new_string: 'b' })
+  const ts = f.evs.find(e => e.kind === 'tool_start')!
+  expect(ts.data.input).toEqual({ file_path: '/f', old_string: 'a', new_string: 'b' })
+  expect(ts.data.id).toBe('t9')
 })

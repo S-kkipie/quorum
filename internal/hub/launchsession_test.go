@@ -18,8 +18,8 @@ type launchSessionPayload struct {
 	SessionID string `json:"sessionId"`
 }
 
-// waitLaunchSession espera un launch_session y devuelve su payload y si antes llegó
-// el session_upsert de esa sesión.
+// waitLaunchSession waits for a launch_session and returns its payload and whether the
+// session_upsert of that session arrived before it.
 func waitLaunchSession(t *testing.T, ch chan proto.Envelope) (launchSessionPayload, bool) {
 	t.Helper()
 	upserted := map[string]bool{}
@@ -37,12 +37,12 @@ func waitLaunchSession(t *testing.T, ch chan proto.Envelope) (launchSessionPaylo
 				return p, upserted[p.SessionID]
 			}
 		case <-timeout:
-			t.Fatal("no llegó launch_session")
+			t.Fatal("launch_session did not arrive")
 		}
 	}
 }
 
-// noLaunchSession comprueba que no llega ningún launch_session en un rato.
+// noLaunchSession checks that no launch_session arrives for a while.
 func noLaunchSession(t *testing.T, ch chan proto.Envelope) {
 	t.Helper()
 	timeout := time.After(200 * time.Millisecond)
@@ -77,16 +77,16 @@ func TestLaunchSessionPublishedByLaunchReq(t *testing.T) {
 	lr := <-f.launches
 	require.Equal(t, proto.LaunchRequest{ReqID: res.ReqID, Dir: "/w/n", PermissionMode: "default", Resume: "abc", Label: "p", Trust: true}, lr)
 
-	// una sesión nueva en la misma carpeta pero sin el reqId no cumple un lanzamiento sin ticket
+	// a new session in the same folder but without the reqId does not fulfill a launch without a ticket
 	f.upsertReq(t, "other", "", "/w/n", "")
 	noLaunchSession(t, ch)
 	require.Equal(t, 1, f.pendingCount())
 
-	// otra carpeta, pero con el reqId: es la sesión lanzada
+	// another folder, but with the reqId: it is the launched session
 	f.upsertReq(t, "s1", "", "/w/elsewhere", res.ReqID)
 	p, after := waitLaunchSession(t, ch)
 	require.Equal(t, launchSessionPayload{ReqID: res.ReqID, SessionID: "s1"}, p)
-	require.True(t, after, "launch_session va después del session_upsert de la sesión")
+	require.True(t, after, "launch_session comes after the session's session_upsert")
 	require.Equal(t, 0, f.pendingCount())
 }
 
@@ -95,7 +95,7 @@ func TestLaunchLabelExplicitAndNoTicketDedup(t *testing.T) {
 	var a, b struct{ ReqID string }
 	require.Equal(t, 202, f.postJSON(t, "/api/launch", `{"machine":"m1","dir":"/w/x","label":"mío","projectId":"`+proj.ID+`"}`, &a))
 	require.Equal(t, "mío", (<-f.launches).Label)
-	// dos lanzamientos sin ticket a la misma carpeta conviven
+	// two launches without a ticket to the same folder coexist
 	require.Equal(t, 202, f.postJSON(t, "/api/launch", `{"machine":"m1","dir":"/w/x"}`, &b))
 	lr := <-f.launches
 	require.Equal(t, "", lr.Label)
@@ -111,12 +111,12 @@ func TestLaunchSessionAfterIDChange(t *testing.T) {
 	var res struct{ ReqID string }
 	require.Equal(t, 202, f.postJSON(t, "/api/launch", `{"machine":"m1","dir":"/w/r","resume":"old"}`, &res))
 	<-f.launches
-	// la sesión retomada llega con otro id que hereda la vieja (PreviousID aplicado)
+	// the resumed session arrives with another id that inherits the old one (PreviousID applied)
 	f.upsertReq(t, "new", "old", "/w/r", res.ReqID)
 	p, after := waitLaunchSession(t, ch)
 	require.Equal(t, launchSessionPayload{ReqID: res.ReqID, SessionID: "new"}, p)
 	require.True(t, after)
-	// un segundo upsert con el mismo reqId no vuelve a publicar
+	// a second upsert with the same reqId does not publish again
 	f.upsertReq(t, "new", "", "/w/r", res.ReqID)
 	noLaunchSession(t, ch)
 }
@@ -142,7 +142,7 @@ func TestTicketLaunchStillLinksByReq(t *testing.T) {
 	lr := <-f.launches
 	require.True(t, lr.Trust)
 	require.Equal(t, "p", lr.Label)
-	// otra carpeta (p. ej. un worktree), pero el reqId la ata al ticket
+	// another folder (e.g. a worktree), but the reqId ties it to the ticket
 	f.upsertReq(t, "tk", "", "/w/elsewhere", res.ReqID)
 	eventually(t, func() bool { return f.linked("tk")[ids["41"]] })
 	p, _ := waitLaunchSession(t, ch)
@@ -156,7 +156,7 @@ func TestTicketLaunchFolderRuleStillPublishes(t *testing.T) {
 	var res struct{ ReqID string }
 	require.Equal(t, 202, f.postJSON(t, "/api/tickets/"+ids["42"]+"/launch", `{"machine":"m1","checkoutRoot":"/w/f"}`, &res))
 	<-f.launches
-	// sin reqId (mod viejo): la regla por carpeta sigue valiendo para tickets
+	// without reqId (old mod): the by-folder rule still holds for tickets
 	f.upsertReq(t, "fold", "", "/w/f", "")
 	eventually(t, func() bool { return f.linked("fold")[ids["42"]] })
 	p, _ := waitLaunchSession(t, ch)
@@ -168,15 +168,15 @@ func TestForeignLaunchReqSkipsFolderRule(t *testing.T) {
 	var res struct{ ReqID string }
 	require.Equal(t, 202, f.postJSON(t, "/api/tickets/"+ids["42"]+"/launch", `{"machine":"m1","checkoutRoot":"/w/g"}`, &res))
 	<-f.launches
-	// una sesión de otro lanzamiento (reqId ajeno) no cumple el del ticket aunque comparta carpeta
-	f.upsertReq(t, "alien", "", "/w/g", "otro-req")
+	// a session from another launch (foreign reqId) does not fulfill the ticket's even if it shares the folder
+	f.upsertReq(t, "alien", "", "/w/g", "other-req")
 	eventually(t, func() bool { _, err := f.st.Session("alien"); return err == nil })
 	time.Sleep(50 * time.Millisecond)
 	require.Empty(t, f.linked("alien"))
 	require.Equal(t, 1, f.pendingCount())
 }
 
-// reconnectHello reconecta la máquina m1 con un hello que trae estas sesiones.
+// reconnectHello reconnects machine m1 with a hello carrying these sessions.
 func (f *appFx) reconnectHello(t *testing.T, ss ...proto.SessionInfo) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -188,7 +188,7 @@ func (f *appFx) reconnectHello(t *testing.T, ss ...proto.SessionInfo) {
 	require.NoError(t, wsjson.Write(context.Background(), c, proto.Envelope{Type: "hello", Machine: "m1", Payload: mustJSON(h)}))
 }
 
-// La sesión lanzada llega primero en el hello de una reconexión: también se ata.
+// The launched session arrives first in a reconnect's hello: it is also tied.
 func TestLaunchSessionFromHello(t *testing.T) {
 	f := newAppFx(t)
 	var res struct{ ReqID string }
@@ -199,11 +199,11 @@ func TestLaunchSessionFromHello(t *testing.T) {
 		StartedAt: time.Now().UnixMilli(), LaunchReq: res.ReqID, HerdrPane: "p_4"})
 	p, after := waitLaunchSession(t, ch)
 	require.Equal(t, launchSessionPayload{ReqID: res.ReqID, SessionID: "h1"}, p)
-	require.True(t, after, "launch_session va después del session_upsert del hello")
+	require.True(t, after, "launch_session comes after the hello's session_upsert")
 	require.Equal(t, 0, f.pendingCount())
 }
 
-// Las sesiones republicadas desde la base (hello, snapshot, REST) conservan el panel de herdr.
+// Sessions republished from the database (hello, snapshot, REST) keep the herdr pane.
 func TestHelloRepublishKeepsHerdrPane(t *testing.T) {
 	f := newAppFx(t)
 	_, ch := f.live(t)

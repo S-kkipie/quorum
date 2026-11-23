@@ -37,13 +37,13 @@ func TestBackfillRequestedOncePerMinute(t *testing.T) {
 		require.Equal(t, "s1", env.Session)
 		require.Equal(t, "m1", env.Machine)
 	case <-time.After(3 * time.Second):
-		t.Fatal("no se pidió el historial")
+		t.Fatal("history was not requested")
 	}
 	f.getEvents(t, "/api/sessions/s1/events")
-	f.getEvents(t, "/api/sessions/s1/events?before=-5") // paginación: no dispara
+	f.getEvents(t, "/api/sessions/s1/events?before=-5") // pagination: does not trigger
 	select {
 	case <-f.backfills:
-		t.Fatal("segundo backfill dentro de 60 s")
+		t.Fatal("second backfill within 60 s")
 	case <-time.After(200 * time.Millisecond):
 	}
 	clock = clock.Add(61 * time.Second)
@@ -51,7 +51,7 @@ func TestBackfillRequestedOncePerMinute(t *testing.T) {
 	select {
 	case <-f.backfills:
 	case <-time.After(3 * time.Second):
-		t.Fatal("no se repitió tras 60 s")
+		t.Fatal("not repeated after 60 s")
 	}
 }
 
@@ -62,7 +62,7 @@ func TestBackfillNotRequestedWithStoredEvents(t *testing.T) {
 	require.Len(t, f.getEvents(t, "/api/sessions/s1/events"), 1)
 	select {
 	case <-f.backfills:
-		t.Fatal("no debía pedirse")
+		t.Fatal("should not have been requested")
 	case <-time.After(200 * time.Millisecond):
 	}
 }
@@ -81,10 +81,10 @@ func TestBackfillResultStoredAndPublished(t *testing.T) {
 	eventually(t, func() bool { e, _ := f.st.Events("s1", 0, 10); return len(e) == 2 })
 	got := f.getEvents(t, "/api/sessions/s1/events")
 	require.Len(t, got, 2)
-	require.EqualValues(t, -1, got[0].Seq) // más nuevos primero
+	require.EqualValues(t, -1, got[0].Seq) // newest first
 	require.EqualValues(t, -2, got[1].Seq)
 	require.Equal(t, "s1", got[0].Session)
-	// un solo envelope "events" con todo el lote, ascendente
+	// a single "events" envelope with the whole batch, ascending
 	env := waitEnv(t, envs, func(e proto.Envelope) bool { return e.Type == "events" || e.Type == "event" })
 	require.Equal(t, "events", env.Type)
 	require.Equal(t, "s1", env.Session)
@@ -97,11 +97,11 @@ func TestBackfillResultStoredAndPublished(t *testing.T) {
 	require.Equal(t, []int64{-2, -1}, seqs)
 }
 
-// Un historial grande no desconecta a las apps: va en un solo envelope.
+// A large history does not disconnect the apps: it goes in a single envelope.
 func TestBigBackfillDoesNotOverflowLiveClients(t *testing.T) {
 	f := newAppFx(t, "s1")
 	_, envs := f.live(t)
-	waitEnv(t, envs, func(e proto.Envelope) bool { return e.Type == "session_upsert" }) // fin del snapshot
+	waitEnv(t, envs, func(e proto.Envelope) bool { return e.Type == "session_upsert" }) // end of the snapshot
 	evs := make([]proto.Event, 500)
 	for i := range evs {
 		evs[i] = userEv("x", int64(i))
@@ -115,7 +115,7 @@ func TestBigBackfillDoesNotOverflowLiveClients(t *testing.T) {
 	f.srv.live.mu.Lock()
 	n := len(f.srv.live.clients)
 	f.srv.live.mu.Unlock()
-	require.Equal(t, 1, n, "el cliente en vivo sigue conectado")
+	require.Equal(t, 1, n, "the live client is still connected")
 }
 
 func TestBackfillResultFromForeignMachineIgnored(t *testing.T) {
@@ -129,9 +129,9 @@ func TestBackfillResultFromForeignMachineIgnored(t *testing.T) {
 	t.Cleanup(func() { c2.CloseNow() })
 	sendHello(t, c2, "m2")
 	eventually(t, func() bool { return online2(f.st, "m2") })
-	p, _ := json.Marshal([]proto.Event{userEv("intruso", 1)})
+	p, _ := json.Marshal([]proto.Event{userEv("intruder", 1)})
 	require.NoError(t, wsjson.Write(ctx, c2, proto.Envelope{Type: "backfill_result", Session: "s1", Payload: p}))
-	// marca: una sesión propia de m2 que llega después
+	// marker: an own session of m2 arriving later
 	require.NoError(t, wsjson.Write(ctx, c2, proto.Envelope{Type: "session_upsert", Session: "s2", Payload: mustJSON(proto.SessionInfo{ID: "s2", State: proto.StateIdle})}))
 	eventually(t, func() bool { _, ok, _ := f.st.SessionOwner("s2"); return ok })
 	evs, _ := f.st.Events("s1", 0, 10)

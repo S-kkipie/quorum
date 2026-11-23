@@ -39,7 +39,7 @@ func (f *appFx) postJSON(t *testing.T, path, body string, v any) int {
 	return resp.StatusCode
 }
 
-// second conecta una segunda máquina (m2) con sesión s2 en root, con repo y rama.
+// second connects a second machine (m2) with session s2 in root, with repo and branch.
 func (f *appFx) second(t *testing.T, id, root, repo string) *websocket.Conn {
 	t.Helper()
 	tok, _ := NewToken()
@@ -80,7 +80,7 @@ func TestSuggestionsAcceptAttachCheckouts(t *testing.T) {
 	require.Equal(t, 2, sug[0].Sessions)
 
 	si, _ := f.st.Session("s1")
-	require.Equal(t, "", si.ProjectID, "el projectId nunca lo dicta el mod")
+	require.Equal(t, "", si.ProjectID, "the projectId is never dictated by the mod")
 	require.Equal(t, "main", si.Branch)
 
 	var ws proto.Workspace
@@ -94,7 +94,7 @@ func TestSuggestionsAcceptAttachCheckouts(t *testing.T) {
 	f.get(t, "/api/projects/suggestions", &sug)
 	require.Len(t, sug, 0)
 
-	// la app ve projectId por session_upsert y por REST
+	// the app sees projectId via session_upsert and via REST
 	got := waitEnv(t, ch, func(e proto.Envelope) bool {
 		var s proto.SessionInfo
 		return e.Type == "session_upsert" && e.Session == "s1" && json.Unmarshal(e.Payload, &s) == nil && s.ProjectID == p.ID
@@ -110,7 +110,7 @@ func TestSuggestionsAcceptAttachCheckouts(t *testing.T) {
 	}
 	require.Equal(t, 2, n)
 
-	// una sesión nueva con el mismo remoto se asocia sola
+	// a new session with the same remote associates itself
 	f.upsert(t, "s4", "/w/r2", "ssh://git@github.com/o/r.git", "x")
 	eventually(t, func() bool { s, err := f.st.Session("s4"); return err == nil && s.ProjectID == p.ID })
 }
@@ -126,7 +126,7 @@ func TestCreateProjectErrors(t *testing.T) {
 	require.Equal(t, 400, code)
 	code, msg = f.postBody("/api/projects", `{"workspaceId":"nope","name":"x"}`)
 	require.Equal(t, 404, code)
-	require.Equal(t, "trabajo no encontrado", msg)
+	require.Equal(t, "workspace not found", msg)
 }
 
 func TestBranchUpdateKeepsRepoWhenModSendsEmpty(t *testing.T) {
@@ -165,7 +165,7 @@ func TestRepoCredentialsNeverStored(t *testing.T) {
 
 func TestEmptyRepoURLNeverAdopts(t *testing.T) {
 	f := newAppFx(t)
-	// checkouts que normalizan a vacío (el store los guarda tal cual, sin proyecto)
+	// checkouts that normalize to empty (the store keeps them as they are, without a project)
 	for i, u := range []string{"", "https://u:p@/", "https://@/"} {
 		_, err := f.st.UpsertCheckout(proto.Checkout{Machine: "m1", Root: "/w/" + string(rune('a'+i)), RepoURL: u})
 		require.NoError(t, err)
@@ -217,6 +217,6 @@ func TestSyncEndpoint(t *testing.T) {
 	p.Connector = proto.ConnectorConfig{Kind: "exec", Settings: map[string]string{"command": "true"}}
 	require.NoError(t, f.st.UpdateProject(p))
 	require.Equal(t, 202, f.postJSON(t, "/api/projects/"+p.ID+"/sync", `{}`, nil))
-	// Espera a que termine la sincronización de fondo antes de cerrar el almacén.
+	// Wait for the background sync to finish before closing the store.
 	require.Eventually(t, func() bool { q, _ := f.st.GetProject(p.ID); return q.SyncedAt != 0 }, 5*time.Second, 20*time.Millisecond)
 }

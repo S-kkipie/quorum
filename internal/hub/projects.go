@@ -12,10 +12,10 @@ import (
 	"github.com/S-kkipie/quorum/internal/proto"
 )
 
-// attachCheckout registra el checkout (machine, root) de la sesión según el repo que
-// reporta el mod, lo asocia al proyecto cuyo RepoURL coincide y rellena en si lo que
-// calcula el hub (ProjectID es siempre del hub, nunca del mod). Sin repo no toca el
-// checkout existente; solo refleja lo que ya hay.
+// attachCheckout registers the session's checkout (machine, root) according to the repo
+// the mod reports, associates it with the project whose RepoURL matches and fills in what
+// the hub computes (ProjectID is always the hub's, never the mod's). Without a repo it does not touch the
+// existing checkout; it only reflects what is already there.
 func (h *Hub) attachCheckout(machine string, si *proto.SessionInfo) {
 	reported := store.StripRepoUserinfo(si.RepoURL)
 	si.ProjectID = ""
@@ -39,10 +39,10 @@ func (h *Hub) attachCheckout(machine string, si *proto.SessionInfo) {
 			log.Printf("hub: checkout de %s:%s: %v", machine, si.Root, err)
 		} else if c.ProjectID != "" && stored.ProjectID == c.ProjectID {
 			if prevErr != nil || prev.ProjectID != c.ProjectID {
-				h.touchProject(c.ProjectID) // asociación nueva
+				h.touchProject(c.ProjectID) // new association
 			}
 		} else if c.ProjectID == "" && stored.ProjectID != "" {
-			// Cambió el remoto: si el proyecto viejo ya no coincide, se desvincula.
+			// The remote changed: if the old project no longer matches, it is unlinked.
 			if p, err := h.st.GetProject(stored.ProjectID); err == nil && p.RepoURL != "" && store.NormalizeRepoURL(p.RepoURL) != norm {
 				_ = h.st.SetCheckoutProject(stored.ID, "")
 			}
@@ -69,12 +69,12 @@ type suggestion struct {
 func (s *Server) handleSuggestions(w http.ResponseWriter, r *http.Request) {
 	cos, err := s.st.AllCheckouts()
 	if err != nil {
-		apiErr(w, 500, "error interno")
+		apiErr(w, 500, "internal error")
 		return
 	}
 	live, err := s.st.ListSessions(false)
 	if err != nil {
-		apiErr(w, 500, "error interno")
+		apiErr(w, 500, "internal error")
 		return
 	}
 	count := map[suggestionRoot]int{}
@@ -111,12 +111,12 @@ func (s *Server) handleCreateWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 	b.Name = strings.TrimSpace(b.Name)
 	if b.Name == "" {
-		apiErr(w, 400, "falta el nombre del trabajo")
+		apiErr(w, 400, "missing workspace name")
 		return
 	}
 	ws, err := s.st.CreateWorkspace(proto.Workspace{Name: b.Name})
 	if err != nil {
-		apiErr(w, 500, "error interno")
+		apiErr(w, 500, "internal error")
 		return
 	}
 	s.hub.publishWorkspace(ws)
@@ -127,7 +127,7 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 	var b struct {
 		WorkspaceID string `json:"workspaceId"`
 		Name        string `json:"name"`
-		RepoURL     string `json:"repoURL"` // también acepta repoUrl (decodificación sin distinguir mayúsculas)
+		RepoURL     string `json:"repoURL"` // also accepts repoUrl (case-insensitive decoding)
 		Connector   *struct {
 			Kind        string            `json:"kind"`
 			Settings    map[string]string `json:"settings"`
@@ -139,11 +139,11 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 	}
 	b.Name = strings.TrimSpace(b.Name)
 	if b.WorkspaceID == "" {
-		apiErr(w, 400, "falta el trabajo")
+		apiErr(w, 400, "missing workspace")
 		return
 	}
 	if b.Name == "" {
-		apiErr(w, 400, "falta el nombre del proyecto")
+		apiErr(w, 400, "missing project name")
 		return
 	}
 	np := proto.Project{WorkspaceID: b.WorkspaceID, Name: b.Name, RepoURL: store.StripRepoUserinfo(b.RepoURL)}
@@ -164,11 +164,11 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 	}
 	p, err := s.st.CreateProject(np)
 	if errors.Is(err, store.ErrNotFound) {
-		apiErr(w, 404, "trabajo no encontrado")
+		apiErr(w, 404, "workspace not found")
 		return
 	}
 	if err != nil {
-		apiErr(w, 500, "error interno")
+		apiErr(w, 500, "internal error")
 		return
 	}
 	if store.NormalizeRepoURL(p.RepoURL) != "" {
@@ -181,8 +181,8 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 201, p)
 }
 
-// adoptCheckouts asocia al proyecto recién creado los checkouts con su mismo remoto
-// y avisa a las apps de las sesiones afectadas (ahora con projectId).
+// adoptCheckouts associates with the newly created project the checkouts with the same remote
+// and notifies the apps of the affected sessions (now with projectId).
 func (h *Hub) adoptCheckouts(p proto.Project) {
 	cos, err := h.st.AllCheckouts()
 	if err != nil {
@@ -197,7 +197,7 @@ func (h *Hub) adoptCheckouts(p proto.Project) {
 	for _, c := range cos {
 		if c.ProjectID == "" && store.NormalizeRepoURL(c.RepoURL) == norm {
 			if err := h.st.SetCheckoutProject(c.ID, p.ID); err != nil {
-				log.Printf("hub: asociar checkout %s: %v", c.ID, err)
+				log.Printf("hub: link checkout %s: %v", c.ID, err)
 				continue
 			}
 			hit[suggestionRoot{c.Machine, c.Root}] = true
@@ -220,24 +220,24 @@ func (h *Hub) adoptCheckouts(p proto.Project) {
 	h.suggestProject(p.ID)
 }
 
-// handleSyncProject lanza una sincronización inmediata (202); el resultado llega por /api/live.
+// handleSyncProject starts an immediate sync (202); the result arrives through /api/live.
 func (s *Server) handleSyncProject(w http.ResponseWriter, r *http.Request) {
 	p, err := s.st.GetProject(r.PathValue("id"))
 	if errors.Is(err, store.ErrNotFound) {
-		apiErr(w, 404, "proyecto no encontrado")
+		apiErr(w, 404, "project not found")
 		return
 	}
 	if err != nil {
-		apiErr(w, 500, "error interno")
+		apiErr(w, 500, "internal error")
 		return
 	}
 	if p.Connector.Kind == "" || p.Connector.Kind == "none" {
-		apiErr(w, 400, "el proyecto no tiene conector")
+		apiErr(w, 400, "the project has no connector")
 		return
 	}
 	go func() {
 		if err := s.sync.SyncNow(p.ID); err != nil {
-			log.Printf("hub: sincronizar %s: %v", p.ID, err)
+			log.Printf("hub: sync %s: %v", p.ID, err)
 		}
 	}()
 	writeJSON(w, 202, map[string]bool{"ok": true})

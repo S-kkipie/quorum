@@ -19,8 +19,8 @@ var (
 	mentionRe     = regexp.MustCompile(`#(\d+)\b`)
 )
 
-// ticketRefs extrae de la rama los ids candidatos: números (ExternalID) e identificadores
-// tipo ACME-12 (título "[ACME-12] ...").
+// ticketRefs extracts the candidate ids from the branch: numbers (ExternalID) and identifiers
+// like ACME-12 (title "[ACME-12] ...").
 func ticketRefs(branch string) []string {
 	var out []string
 	for _, m := range branchNumRe.FindAllStringSubmatch(branch, -1) {
@@ -30,7 +30,7 @@ func ticketRefs(branch string) []string {
 	return out
 }
 
-// findTicket resuelve ref (41, #41, GH-41, ACME-12) a un ticket del proyecto.
+// findTicket resolves ref (41, #41, GH-41, ACME-12) to a project ticket.
 func findTicket(ts []proto.Ticket, ref string) (proto.Ticket, bool) {
 	ref = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(ref), "#"))
 	if ref == "" {
@@ -55,7 +55,7 @@ func (h *Hub) publishLink(machine string, l proto.SessionTicket) {
 	h.publish(proto.Envelope{Type: "session_ticket", Machine: machine, Session: l.SessionID, Payload: p})
 }
 
-// suggest crea (y publica) vínculos sugeridos de la sesión para las refs que existan en su proyecto.
+// suggest creates (and publishes) suggested session links for the refs that exist in its project.
 func (h *Hub) suggest(si proto.SessionInfo, refs []string) {
 	if si.Role == proto.RoleService || si.ProjectID == "" || len(refs) == 0 {
 		return
@@ -71,7 +71,7 @@ func (h *Hub) suggest(si proto.SessionInfo, refs []string) {
 		}
 		created, err := h.st.SuggestSessionTicket(si.ID, t.ID)
 		if err != nil {
-			log.Printf("hub: sugerir ticket de %s: %v", si.ID, err)
+			log.Printf("hub: suggest ticket of %s: %v", si.ID, err)
 			continue
 		}
 		if created {
@@ -80,7 +80,7 @@ func (h *Hub) suggest(si proto.SessionInfo, refs []string) {
 	}
 }
 
-// publishLinks reenvía a las apps los vínculos de la sesión (p. ej. tras un renombre).
+// publishLinks resends the session's links to the apps (e.g. after a rename).
 func (h *Hub) forgetSuggested(id string) {
 	h.mu.Lock()
 	delete(h.sugg, id)
@@ -91,7 +91,7 @@ func (h *Hub) forgetSuggested(id string) {
 func (h *Hub) publishLinks(machine, session string) {
 	ls, err := h.st.SessionTickets(session)
 	if err != nil {
-		log.Printf("hub: vínculos de %s: %v", session, err)
+		log.Printf("hub: links of %s: %v", session, err)
 		return
 	}
 	for _, l := range ls {
@@ -113,9 +113,9 @@ func (h *Hub) suggestFromBranch(si proto.SessionInfo) {
 	}
 }
 
-// suggestProject vuelve a buscar el ticket de la rama de cada sesión viva del proyecto:
-// tras adoptar checkouts (la sesión ya estaba abierta) y cuando una sincronización cambia
-// los tickets (el de la rama puede no existir aún al crear el proyecto).
+// suggestProject looks up again the branch ticket of each live session of the project:
+// after adopting checkouts (the session was already open) and when a sync changes
+// the tickets (the branch's one may not exist yet when the project is created).
 func (h *Hub) suggestProject(projectID string) {
 	if projectID == "" {
 		return
@@ -148,7 +148,7 @@ func (h *Hub) suggestFromTurnEnd(ev proto.Event) {
 	}
 }
 
-// confirmLink confirma el vínculo y publica los cambios (incluido el confirmado anterior, que pasa a sugerido).
+// confirmLink confirms the link and publishes the changes (including the previous confirmed one, which becomes suggested).
 func (h *Hub) confirmLink(si proto.SessionInfo, ticketID string) error {
 	demoted, err := h.st.ConfirmSessionTicket(si.ID, ticketID)
 	if err != nil {
@@ -184,7 +184,7 @@ func (h *Hub) info(si proto.SessionInfo, text string) {
 	h.publish(proto.Envelope{Type: "event", Machine: si.Machine, Session: si.ID, Payload: p})
 }
 
-// onTicketCommand atiende `/quorum ticket <id>` del mod (vacío = desasociar el confirmado).
+// onTicketCommand handles the mod's `/quorum ticket <id>` (empty = unlink the confirmed one).
 func (h *Hub) onTicketCommand(ev proto.Event) {
 	si, err := h.st.Session(ev.Session)
 	if err != nil || si.Role == proto.RoleService {
@@ -200,7 +200,7 @@ func (h *Hub) onTicketCommand(ev proto.Event) {
 		for _, l := range ls {
 			if l.Confirmed {
 				if err := h.dismissLink(si, l.TicketID); err != nil {
-					log.Printf("hub: desasociar %s: %v", si.ID, err)
+					log.Printf("hub: unlink %s: %v", si.ID, err)
 				}
 			}
 		}
@@ -212,26 +212,26 @@ func (h *Hub) onTicketCommand(ev proto.Event) {
 	}
 	t, ok := findTicket(ts, ref)
 	if !ok {
-		h.info(si, "No encontré el ticket "+ref+" en este proyecto")
+		h.info(si, "Ticket "+ref+" not found in this project")
 		return
 	}
 	if err := h.confirmLink(si, t.ID); err != nil {
-		log.Printf("hub: asociar %s: %v", si.ID, err)
+		log.Printf("hub: link %s: %v", si.ID, err)
 	}
 }
 
 func (s *Server) handleLinkTicket(w http.ResponseWriter, r *http.Request) {
 	si, err := s.st.Session(r.PathValue("id"))
 	if errors.Is(err, store.ErrNotFound) {
-		apiErr(w, 404, "sesión no encontrada")
+		apiErr(w, 404, "session not found")
 		return
 	}
 	if err != nil {
-		apiErr(w, 500, "error interno")
+		apiErr(w, 500, "internal error")
 		return
 	}
 	if si.Role == proto.RoleService {
-		apiErr(w, 409, "sesión de servicio")
+		apiErr(w, 409, "service session")
 		return
 	}
 	var b struct {
@@ -251,11 +251,11 @@ func (s *Server) handleLinkTicket(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !ok {
-		apiErr(w, 404, "el ticket no es de este proyecto")
+		apiErr(w, 404, "the ticket does not belong to this project")
 		return
 	}
 	if err := s.hub.confirmLink(si, b.TicketID); err != nil {
-		apiErr(w, 500, "error interno")
+		apiErr(w, 500, "internal error")
 		return
 	}
 	writeJSON(w, 200, proto.SessionTicket{SessionID: si.ID, TicketID: b.TicketID, Confirmed: true})
@@ -264,22 +264,22 @@ func (s *Server) handleLinkTicket(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleUnlinkTicket(w http.ResponseWriter, r *http.Request) {
 	si, err := s.st.Session(r.PathValue("id"))
 	if errors.Is(err, store.ErrNotFound) {
-		apiErr(w, 404, "sesión no encontrada")
+		apiErr(w, 404, "session not found")
 		return
 	}
 	if err != nil {
-		apiErr(w, 500, "error interno")
+		apiErr(w, 500, "internal error")
 		return
 	}
 	tid := r.URL.Query().Get("ticketId")
 	if tid == "" {
-		apiErr(w, 400, "falta ticketId")
+		apiErr(w, 400, "missing ticketId")
 		return
 	}
 	known := false
 	ls, err := s.st.SessionTickets(si.ID)
 	if err != nil {
-		apiErr(w, 500, "error interno")
+		apiErr(w, 500, "internal error")
 		return
 	}
 	for _, l := range ls {
@@ -288,7 +288,7 @@ func (s *Server) handleUnlinkTicket(w http.ResponseWriter, r *http.Request) {
 	if !known && si.ProjectID != "" {
 		ts, err := s.st.ListTickets(si.ProjectID)
 		if err != nil {
-			apiErr(w, 500, "error interno")
+			apiErr(w, 500, "internal error")
 			return
 		}
 		for _, t := range ts {
@@ -296,11 +296,11 @@ func (s *Server) handleUnlinkTicket(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !known {
-		apiErr(w, 404, "el ticket no es de este proyecto")
+		apiErr(w, 404, "the ticket does not belong to this project")
 		return
 	}
 	if err := s.hub.dismissLink(si, tid); err != nil {
-		apiErr(w, 500, "error interno")
+		apiErr(w, 500, "internal error")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

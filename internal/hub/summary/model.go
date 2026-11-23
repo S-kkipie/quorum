@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-// Model genera texto a partir de un prompt.
+// Model generates text from a prompt.
 type Model interface {
 	Complete(ctx context.Context, prompt string) (string, error)
 }
@@ -31,7 +31,7 @@ const (
 	ccapiMaxTokens = 120
 )
 
-// DefaultTokenFile es ~/.config/ccapi/token (respeta XDG_CONFIG_HOME).
+// DefaultTokenFile is ~/.config/ccapi/token (honors XDG_CONFIG_HOME).
 func DefaultTokenFile() string {
 	if x := os.Getenv("XDG_CONFIG_HOME"); x != "" {
 		return filepath.Join(x, "ccapi", "token")
@@ -54,7 +54,7 @@ func readToken(path string) string {
 	return strings.TrimSpace(string(b))
 }
 
-// ccapi habla con la API local compatible con Anthropic.
+// ccapi talks to the local Anthropic-compatible API.
 type ccapi struct {
 	url, key string
 	hc       *http.Client
@@ -102,7 +102,7 @@ func (c *ccapi) Complete(ctx context.Context, prompt string) (string, error) {
 		} `json:"content"`
 	}
 	if err := json.Unmarshal(b, &r); err != nil || len(r.Content) == 0 {
-		return "", errors.New("ccapi: respuesta inválida")
+		return "", errors.New("ccapi: invalid response")
 	}
 	return r.Content[0].Text, nil
 }
@@ -123,15 +123,15 @@ func (l *limitBuf) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// claudeCLI ejecuta `claude -p --model haiku` (por shell de login para que apliquen los shims de whoas).
+// claudeCLI runs `claude -p --model haiku` (through a login shell so the whoas shims apply).
 type claudeCLI struct{}
 
-// cliEnv marca la sesión del resumidor como servicio (CCAPI_SERVER=1: sin recap ni control)
-// y apaga Quorum en ella (QUORUM_DISABLE=1: el mod no la registra).
+// cliEnv marks the summarizer's session as a service (CCAPI_SERVER=1: no recap or control)
+// and turns Quorum off in it (QUORUM_DISABLE=1: the mod does not register it).
 var cliEnv = []string{"CCAPI_SERVER=1", "QUORUM_DISABLE=1"}
 
-// cliCommand arma el comando en un directorio temporal neutro (no el cwd del hub);
-// cleanup lo borra.
+// cliCommand builds the command in a neutral temporary directory (not the hub's cwd);
+// cleanup deletes it.
 func cliCommand(ctx context.Context, prompt string) (cmd *exec.Cmd, cleanup func(), err error) {
 	dir, err := os.MkdirTemp("", "quorum-summary-")
 	if err != nil {
@@ -168,7 +168,7 @@ func (claudeCLI) Complete(ctx context.Context, prompt string) (string, error) {
 	return out.buf.String(), nil
 }
 
-// Auto elige ccapi si responde GET /v1/models con el token (decisión cacheada 5 min); si no, la CLI.
+// Auto picks ccapi if GET /v1/models answers with the token (decision cached 5 min); otherwise the CLI.
 type Auto struct {
 	URL, TokenFile string
 	HTTP           *http.Client
@@ -181,7 +181,7 @@ type Auto struct {
 	checked bool
 }
 
-// NewAuto crea el selector; url o tokenFile vacíos toman los valores por defecto.
+// NewAuto creates the selector; empty url or tokenFile take the defaults.
 func NewAuto(url, tokenFile string) *Auto {
 	if url == "" {
 		url = DefaultCCAPI
@@ -215,13 +215,13 @@ func (a *Auto) Complete(ctx context.Context, prompt string) (string, error) {
 			return out, nil
 		}
 		a.mu.Lock()
-		a.checked = false // vuelve a comprobar la próxima vez
+		a.checked = false // check again next time
 		a.mu.Unlock()
 	}
 	return a.CLI.Complete(ctx, prompt)
 }
 
-// Which dice qué implementación se usaría ahora ("ccapi" o "claude").
+// Which says which implementation would be used now ("ccapi" or "claude").
 func (a *Auto) Which(ctx context.Context) string {
 	if a.pick(ctx) != nil {
 		return "ccapi"

@@ -19,31 +19,31 @@ import (
 	"github.com/S-kkipie/quorum/internal/proto"
 )
 
-// Intervalos del vigilante de terminal; variables para tests.
+// Intervals of the terminal watcher; variables for tests.
 var (
-	termPoll  = 125 * time.Millisecond // pane.read: como mucho 8 frames por segundo
+	termPoll  = 125 * time.Millisecond // pane.read: at most 8 frames per second
 	termSize  = 2 * time.Second        // pane.layout
-	termLease = 15 * time.Second       // la app lo renueva cada 5 s mientras mira
+	termLease = 15 * time.Second       // the app renews it every 5 s while it is watching
 )
 
 const (
-	termFrameMax  = 256 << 10 // bytes de ANSI por term_frame
-	termReadMax   = 1 << 20   // bytes de ANSI de term_read (historial)
+	termFrameMax  = 256 << 10 // bytes of ANSI per term_frame
+	termReadMax   = 1 << 20   // bytes of ANSI for term_read (history)
 	termReadLines = 2000
-	termCallWait  = 3 * time.Second // plazo de cada llamada a herdr del vigilante
+	termCallWait  = 3 * time.Second // deadline of each of the watcher's calls to herdr
 	maxConvos     = 60
 )
 
-// userHome se sustituye en los tests (nunca se toca el ~/.claude real).
+// userHome is replaced in tests (the real ~/.claude is never touched).
 var userHome = os.UserHomeDir
 
 var (
-	errTermOff    = errors.New("la terminal está desactivada en esta máquina")
-	errHerdrDown  = errors.New("herdr no responde en esta máquina")
-	errNotOwnTerm = errors.New("Quorum solo cierra terminales que abrió")
+	errTermOff    = errors.New("terminal is disabled on this machine")
+	errHerdrDown  = errors.New("herdr is not responding on this machine")
+	errNotOwnTerm = errors.New("Quorum only closes terminals it opened")
 )
 
-// allowedKeys son las únicas teclas (nombres de herdr) que se mandan a un panel.
+// allowedKeys are the only keys (herdr names) that are sent to a pane.
 var allowedKeys = map[string]bool{
 	"esc": true, "tab": true, "enter": true, "ctrl+c": true, "ctrl+d": true, "ctrl+l": true,
 	"up": true, "down": true, "left": true, "right": true,
@@ -60,8 +60,8 @@ func init() {
 
 type rpcFunc = func(ctx context.Context, h *Host, params json.RawMessage) (any, error)
 
-// termOnly corta con errTermOff si la terminal está apagada y con errHerdrDown si
-// herdr no responde.
+// termOnly cuts off with errTermOff if the terminal is off and with errHerdrDown if
+// herdr does not respond.
 func termOnly(fn rpcFunc) rpcFunc {
 	return func(ctx context.Context, h *Host, params json.RawMessage) (any, error) {
 		if h == nil || !h.TerminalOn {
@@ -79,12 +79,12 @@ func decodeParams(params json.RawMessage, v any) error {
 		params = []byte("{}")
 	}
 	if err := json.Unmarshal(params, v); err != nil {
-		return fmt.Errorf("parámetros inválidos: %w", err)
+		return fmt.Errorf("invalid parameters: %w", err)
 	}
 	return nil
 }
 
-// --- conversaciones ---
+// --- conversations ---
 
 func rpcConversations(ctx context.Context, h *Host, params json.RawMessage) (any, error) {
 	var p struct {
@@ -94,7 +94,7 @@ func rpcConversations(ctx context.Context, h *Host, params json.RawMessage) (any
 		return nil, err
 	}
 	if p.Root == "" || !filepath.IsAbs(p.Root) {
-		return nil, errors.New("root debe ser una ruta absoluta")
+		return nil, errors.New("root must be an absolute path")
 	}
 	home, err := userHome()
 	if err != nil {
@@ -109,12 +109,12 @@ func rpcConversations(ctx context.Context, h *Host, params json.RawMessage) (any
 	return convos.List(convos.Dir(home, p.Root), live, maxConvos)
 }
 
-// --- terminales propias (herdr-terminals.json) ---
+// --- own terminals (herdr-terminals.json) ---
 
-// Terminals recuerda los paneles de terminal que abrió Quorum, cada uno con el
-// terminal_id que herdr le dio (los ids de panel se reusan, p. ej. tras reiniciar
-// herdr; el terminal_id no). Guarda el último de cada root (para reusarlo) y todos
-// los propios (los únicos que se pueden cerrar). Path vacío: no recuerda nada.
+// Terminals remembers the terminal panes Quorum opened, each with the
+// terminal_id herdr gave it (pane ids are reused, e.g. after restarting
+// herdr; the terminal_id is not). It keeps the last one of each root (to reuse it) and all
+// the own ones (the only ones that can be closed). Empty Path: remembers nothing.
 type Terminals struct {
 	Path string
 	mu   sync.Mutex
@@ -125,8 +125,8 @@ type ownedTerm struct {
 	TerminalID string `json:"terminalId"`
 }
 
-// termFile: el formato viejo ("owned": ids sueltos, sin terminal_id) se ignora a
-// propósito: esas entradas no se pueden verificar y no se cierran nunca.
+// termFile: the old format ("owned": bare ids, no terminal_id) is ignored on
+// purpose: those entries cannot be verified and are never closed.
 type termFile struct {
 	ByRoot    map[string]string `json:"byRoot"`
 	Terminals []ownedTerm       `json:"terminals"`
@@ -157,7 +157,7 @@ func (t *Terminals) save(f termFile) error {
 	return launch.WriteAtomic(t.Path, b, 0o600)
 }
 
-// update aplica fn bajo el lock y guarda si devolvió true.
+// update applies fn under the lock and saves if it returned true.
 func (t *Terminals) update(fn func(*termFile) bool) error {
 	if t == nil {
 		return nil
@@ -171,7 +171,7 @@ func (t *Terminals) update(fn func(*termFile) bool) error {
 	return t.save(f)
 }
 
-// get devuelve el panel recordado para root ("" si no hay).
+// get returns the remembered pane for root ("" if none).
 func (t *Terminals) get(root string) string {
 	if t == nil {
 		return ""
@@ -181,7 +181,7 @@ func (t *Terminals) get(root string) string {
 	return t.load().ByRoot[root]
 }
 
-// recorded devuelve el terminal_id con que Quorum abrió pane ("" si no es suyo).
+// recorded returns the terminal_id with which Quorum opened pane ("" if it is not its own).
 func (t *Terminals) recorded(pane string) string {
 	if t == nil {
 		return ""
@@ -210,8 +210,8 @@ func (t *Terminals) add(root, pane, terminalID string) error {
 	})
 }
 
-// sync olvida las terminales propias que ya no están vivas con su mismo
-// terminal_id (live: pane → terminal_id según pane.list).
+// sync forgets the own terminals that are no longer alive with the same
+// terminal_id (live: pane → terminal_id according to pane.list).
 func (t *Terminals) sync(live map[string]string) error {
 	return t.update(func(f *termFile) bool {
 		changed := false
@@ -254,7 +254,7 @@ func (t *Terminals) forget(pane string) error {
 	})
 }
 
-// livePanes devuelve pane → terminal_id de los paneles que existen en herdr.
+// livePanes returns pane → terminal_id for the panes that exist in herdr.
 func livePanes(ctx context.Context, c *herdr.Client) (map[string]string, error) {
 	panes, err := c.ListPanes(ctx, "")
 	if err != nil {
@@ -267,7 +267,7 @@ func livePanes(ctx context.Context, c *herdr.Client) (map[string]string, error) 
 	return live, nil
 }
 
-// --- métodos term_* ---
+// --- term_* methods ---
 
 type termOpenRes struct {
 	Pane string `json:"pane"`
@@ -285,7 +285,7 @@ func rpcTermOpen(ctx context.Context, h *Host, params json.RawMessage) (any, err
 		return nil, err
 	}
 	if p.Root == "" || !filepath.IsAbs(p.Root) {
-		return nil, errors.New("root debe ser una ruta absoluta")
+		return nil, errors.New("root must be an absolute path")
 	}
 	if p.Label == "" {
 		p.Label = filepath.Base(filepath.Clean(p.Root))
@@ -293,37 +293,37 @@ func rpcTermOpen(ctx context.Context, h *Host, params json.RawMessage) (any, err
 	pane := ""
 	if live, err := livePanes(ctx, h.Herdr); err == nil {
 		if err := h.Terms.sync(live); err != nil {
-			log.Printf("terminal: no se pudo actualizar herdr-terminals.json: %v", err)
+			log.Printf("terminal: could not update herdr-terminals.json: %v", err)
 		}
 		if !p.New {
-			pane = h.Terms.get(p.Root) // tras sync, solo si sigue vivo y es la misma terminal
+			pane = h.Terms.get(p.Root) // after sync, only if still alive and the same terminal
 		}
 	}
 	if pane == "" {
 		wsID, fresh, err := launch.ResolveWorkspace(ctx, h.Herdr, h.WS, p.Root, p.Label, nil)
 		if err != nil {
-			return nil, fmt.Errorf("no se pudo abrir la terminal en herdr: %w", err)
+			return nil, fmt.Errorf("could not open the terminal in herdr: %w", err)
 		}
 		pane = fresh
 		if pane == "" {
 			if pane, err = h.Herdr.CreateTab(ctx, wsID, p.Root, "terminal", nil); err != nil {
-				return nil, fmt.Errorf("no se pudo abrir la terminal en herdr: %w", err)
+				return nil, fmt.Errorf("could not open the terminal in herdr: %w", err)
 			}
 		}
-		// el terminal_id identifica el panel aunque herdr reuse su id más adelante;
-		// sin él, Quorum no lo recuerda y no lo podrá cerrar.
+		// the terminal_id identifies the pane even if herdr later reuses its id;
+		// without it, Quorum does not remember it and will not be able to close it.
 		live, err := livePanes(ctx, h.Herdr)
 		if tid := live[pane]; err == nil && tid != "" {
 			if err := h.Terms.add(p.Root, pane, tid); err != nil {
-				log.Printf("terminal: no se pudo recordar %s: %v", pane, err)
+				log.Printf("terminal: could not remember %s: %v", pane, err)
 			}
 		} else {
-			log.Printf("terminal: sin terminal_id para %s (%v); no se recuerda", pane, err)
+			log.Printf("terminal: no terminal_id for %s (%v); not remembered", pane, err)
 		}
 	}
 	cols, rows, err := h.Herdr.PaneSize(ctx, pane)
 	if err != nil {
-		log.Printf("terminal: tamaño de %s: %v", pane, err)
+		log.Printf("terminal: size of %s: %v", pane, err)
 	}
 	return termOpenRes{Pane: pane, Cols: cols, Rows: rows}, nil
 }
@@ -338,7 +338,7 @@ func paneOf(params json.RawMessage) (string, error) {
 		return "", err
 	}
 	if p.Pane == "" {
-		return "", errors.New("falta el panel")
+		return "", errors.New("missing pane")
 	}
 	return p.Pane, nil
 }
@@ -350,7 +350,7 @@ func rpcTermWatch(ctx context.Context, h *Host, params json.RawMessage) (any, er
 	}
 	l := linkOf(ctx)
 	if l.reg == nil {
-		return nil, errors.New("sin enlace con el hub")
+		return nil, errors.New("no link to the hub")
 	}
 	h.watch(l.ctx, l.reg, pane)
 	return struct{}{}, nil
@@ -366,7 +366,7 @@ func rpcTermInput(ctx context.Context, h *Host, params json.RawMessage) (any, er
 		return nil, err
 	}
 	if p.Pane == "" {
-		return nil, errors.New("falta el panel")
+		return nil, errors.New("missing pane")
 	}
 	for _, k := range p.Keys {
 		if !allowedKeys[k] {
@@ -395,7 +395,7 @@ func rpcTermRead(ctx context.Context, h *Host, params json.RawMessage) (any, err
 		return nil, err
 	}
 	if p.Pane == "" {
-		return nil, errors.New("falta el panel")
+		return nil, errors.New("missing pane")
 	}
 	if p.Lines <= 0 || p.Lines > termReadLines {
 		p.Lines = termReadLines
@@ -421,24 +421,24 @@ func rpcTermClose(ctx context.Context, h *Host, params json.RawMessage) (any, er
 		return nil, err
 	}
 	if err := h.Terms.sync(live); err != nil {
-		log.Printf("terminal: no se pudo actualizar herdr-terminals.json: %v", err)
+		log.Printf("terminal: could not update herdr-terminals.json: %v", err)
 	}
 	switch got, ok := live[pane]; {
 	case !ok:
-		return struct{}{}, nil // ya estaba cerrado; sync lo olvidó
+		return struct{}{}, nil // it was already closed; sync forgot it
 	case got != tid:
-		return nil, errNotOwnTerm // id reusado: ese panel ya no es el que abrió Quorum
+		return nil, errNotOwnTerm // id reused: that pane is no longer the one Quorum opened
 	}
 	if err := h.Herdr.ClosePane(ctx, pane); err != nil && !herdr.IsNotFound(err) {
 		return nil, err
 	}
 	if err := h.Terms.forget(pane); err != nil {
-		log.Printf("terminal: no se pudo olvidar %s: %v", pane, err)
+		log.Printf("terminal: could not forget %s: %v", pane, err)
 	}
 	return struct{}{}, nil
 }
 
-// trimFront deja s en max bytes como mucho quitando líneas del principio.
+// trimFront leaves s at max bytes at most by removing lines from the start.
 func trimFront(s string, max int) string {
 	if len(s) <= max {
 		return s
@@ -447,25 +447,25 @@ func trimFront(s string, max int) string {
 	if i := strings.IndexByte(s[cut-1:], '\n'); i >= 0 {
 		return s[cut+i:]
 	}
-	// una sola línea enorme: corta en un límite de runa
+	// a single huge line: cut at a rune boundary
 	for cut < len(s) && !utf8.RuneStart(s[cut]) {
 		cut++
 	}
 	return s[cut:]
 }
 
-// --- vigilante ---
+// --- watcher ---
 
-// termWatch es el vigilante de un panel: vive mientras el lease esté vigente y
-// el enlace con el hub siga abierto.
+// termWatch is a pane's watcher: it lives while the lease is valid and
+// the link to the hub stays open.
 type termWatch struct {
 	ctx    context.Context
 	cancel context.CancelFunc
-	until  time.Time // bajo Host.wmu
-	resend bool      // bajo Host.wmu: manda el frame actual aunque no haya cambiado
+	until  time.Time // under Host.wmu
+	resend bool      // under Host.wmu: sends the current frame even if it has not changed
 }
 
-// watch arranca o renueva el vigilante de pane. link es el ctx del enlace con el hub.
+// watch starts or renews pane's watcher. link is the ctx of the link to the hub.
 func (h *Host) watch(link context.Context, reg *Registry, pane string) {
 	h.wmu.Lock()
 	defer h.wmu.Unlock()
@@ -475,8 +475,8 @@ func (h *Host) watch(link context.Context, reg *Registry, pane string) {
 	until := time.Now().Add(termLease)
 	if w := h.watches[pane]; w != nil && w.ctx.Err() == nil {
 		w.until = until
-		// la app ignora frames anteriores a su montaje: cada term_watch (al abrir
-		// la vista y cada 5 s) recibe el frame actual aunque no haya cambiado.
+		// the app ignores frames earlier than its mount: each term_watch (on opening
+		// the view and every 5 s) receives the current frame even if it has not changed.
 		w.resend = true
 		return
 	}
@@ -486,7 +486,7 @@ func (h *Host) watch(link context.Context, reg *Registry, pane string) {
 	go h.runWatch(w, reg, pane)
 }
 
-// alive dice si w debe seguir; si no, lo saca del mapa (si sigue siendo el suyo).
+// alive reports whether w should continue; if not, it removes it from the map (if it is still its own).
 func (h *Host) alive(w *termWatch, pane string, closed bool) bool {
 	h.wmu.Lock()
 	defer h.wmu.Unlock()
@@ -500,7 +500,7 @@ func (h *Host) alive(w *termWatch, pane string, closed bool) bool {
 	return false
 }
 
-// takeResend dice si hay que reenviar el frame actual y baja la marca.
+// takeResend reports whether the current frame must be resent and clears the flag.
 func (h *Host) takeResend(w *termWatch) bool {
 	h.wmu.Lock()
 	defer h.wmu.Unlock()
@@ -509,7 +509,7 @@ func (h *Host) takeResend(w *termWatch) bool {
 	return r
 }
 
-// watching cuenta los vigilantes activos (para tests).
+// watching counts the active watchers (for tests).
 func (h *Host) watching() int {
 	h.wmu.Lock()
 	defer h.wmu.Unlock()
@@ -527,7 +527,7 @@ func (h *Host) runWatch(w *termWatch, reg *Registry, pane string) {
 		p, _ := json.Marshal(f)
 		env := proto.Envelope{Type: "term_frame", Machine: reg.machine, Payload: p}
 		if f.Closed {
-			reg.EmitEnvelope(env) // el cierre no se puede perder: la app dejaría de esperar
+			reg.EmitEnvelope(env) // the close cannot be lost: the app would stop waiting
 			return
 		}
 		reg.EmitDroppable(env)
@@ -564,7 +564,7 @@ func (h *Host) runWatch(w *termWatch, reg *Registry, pane string) {
 		})
 		if err != nil && resend {
 			h.wmu.Lock()
-			w.resend = true // no se pudo leer: que lo intente el próximo poll
+			w.resend = true // could not read: let the next poll retry
 			h.wmu.Unlock()
 		}
 		switch {

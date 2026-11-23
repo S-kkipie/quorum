@@ -18,10 +18,10 @@ import (
 
 type hws = map[string]any
 
-// fakeHerdr arma un herdr falso con los workspaces y paneles dados.
+// fakeHerdr builds a fake herdr with the given workspaces and panes.
 func fakeHerdr(t *testing.T, workspaces, panes []hws) *herdrtest.Fake {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir()) // TrustDir nunca toca el ~/.claude.json real
+	t.Setenv("HOME", t.TempDir()) // TrustDir never touches the real ~/.claude.json
 	f := herdrtest.New(t)
 	f.Handle("workspace.list", func(json.RawMessage) (any, string) {
 		return hws{"workspaces": workspaces}, ""
@@ -92,9 +92,9 @@ func TestRunHerdrPicksWorkspaceByCwd(t *testing.T) {
 	}
 	wss := []hws{{"workspace_id": "w2", "number": 2}, {"workspace_id": "w3", "number": 3}, {"workspace_id": "w9", "number": 1, "focused": true}}
 
-	// sin enfocado entre los candidatos: el de menor número
+	// no focused one among the candidates: the lowest-numbered
 	f := fakeHerdr(t, wss, panes)
-	// el recordado ya no existe en herdr: se ignora
+	// the remembered one no longer exists in herdr: ignored
 	ws := &Workspaces{Path: filepath.Join(t.TempDir(), "m.json")}
 	require.NoError(t, ws.Set(root, "wGONE"))
 	res := RunHerdr(context.Background(), &herdr.Client{Socket: f.Socket}, ws, proto.LaunchRequest{ReqID: "r1", Dir: root})
@@ -102,7 +102,7 @@ func TestRunHerdrPicksWorkspaceByCwd(t *testing.T) {
 	require.Equal(t, "w2", callsOf(f, "tab.create")[0]["workspace_id"])
 	require.Equal(t, "w2", ws.Get(root))
 
-	// con uno enfocado entre los candidatos: ese
+	// with a focused one among the candidates: that one
 	wss[1]["focused"] = true
 	f = fakeHerdr(t, wss, panes)
 	ws = &Workspaces{Path: filepath.Join(t.TempDir(), "m.json")}
@@ -118,17 +118,17 @@ func TestRunHerdrCreatesWorkspaceAndUsesItsRootPane(t *testing.T) {
 	f := fakeHerdr(t, []hws{{"workspace_id": "w1", "number": 1}}, nil)
 	ws := &Workspaces{Path: filepath.Join(t.TempDir(), "m.json")}
 	res := RunHerdr(context.Background(), &herdr.Client{Socket: f.Socket}, ws,
-		proto.LaunchRequest{ReqID: "r1", Dir: root, Label: "Mi Proyecto"})
+		proto.LaunchRequest{ReqID: "r1", Dir: root, Label: "My Project"})
 	require.Equal(t, proto.LaunchResult{ReqID: "r1", OK: true, Pane: "wNEW:p1", Via: "herdr"}, res)
 	require.Empty(t, callsOf(f, "tab.create"))
 	cw := callsOf(f, "workspace.create")
 	require.Len(t, cw, 1)
-	require.Equal(t, map[string]any{"cwd": root, "label": "Mi Proyecto", "focus": false,
+	require.Equal(t, map[string]any{"cwd": root, "label": "My Project", "focus": false,
 		"env": map[string]any{"QUORUM_LAUNCH_REQ": "r1"}}, cw[0])
 	require.Equal(t, "wNEW:p1", callsOf(f, "agent.start")[0]["pane_id"])
 	require.Equal(t, "wNEW", ws.Get(root))
 
-	// sin Label: el basename
+	// without Label: the basename
 	f = fakeHerdr(t, nil, nil)
 	RunHerdr(context.Background(), &herdr.Client{Socket: f.Socket}, &Workspaces{}, proto.LaunchRequest{ReqID: "r2", Dir: root})
 	require.Equal(t, filepath.Base(root), callsOf(f, "workspace.create")[0]["label"])
@@ -156,7 +156,7 @@ func TestRunHerdrResumeArgs(t *testing.T) {
 	res = RunHerdr(context.Background(), &herdr.Client{Socket: f.Socket}, &Workspaces{},
 		proto.LaunchRequest{ReqID: "r2", Dir: root, Resume: "x; rm -rf /"})
 	require.False(t, res.OK)
-	require.Equal(t, "id de conversación inválido", res.Error)
+	require.Equal(t, "invalid conversation id", res.Error)
 	require.Len(t, callsOf(f, "agent.start"), 1)
 }
 
@@ -194,19 +194,19 @@ func TestRunHerdrValidates(t *testing.T) {
 	t.Cleanup(func() { geteuid = old })
 	geteuid = func() int { return 0 }
 	res := RunHerdr(context.Background(), c, &Workspaces{}, proto.LaunchRequest{ReqID: "r", Dir: t.TempDir(), PermissionMode: "bypass"})
-	require.Equal(t, proto.LaunchResult{ReqID: "r", Error: "Sin permisos no funciona como root"}, res)
+	require.Equal(t, proto.LaunchResult{ReqID: "r", Error: "Skip permissions does not work as root"}, res)
 	geteuid = func() int { return 1000 }
 	res = RunHerdr(context.Background(), c, &Workspaces{}, proto.LaunchRequest{ReqID: "r", Dir: "rel"})
-	require.Equal(t, "la carpeta debe ser una ruta absoluta", res.Error)
+	require.Equal(t, "the folder must be an absolute path", res.Error)
 	res = RunHerdr(context.Background(), c, &Workspaces{}, proto.LaunchRequest{ReqID: "r", Dir: "/no/existe/xyz"})
-	require.Equal(t, "la carpeta no existe: /no/existe/xyz", res.Error)
+	require.Equal(t, "the folder does not exist: /no/existe/xyz", res.Error)
 	require.Empty(t, f.Calls())
 }
 
 func TestRunHerdrTrusts(t *testing.T) {
 	noGeteuidRoot(t)
 	root := t.TempDir()
-	f := fakeHerdr(t, nil, nil) // HOME temporal
+	f := fakeHerdr(t, nil, nil) // temporary HOME
 	res := RunHerdr(context.Background(), &herdr.Client{Socket: f.Socket}, &Workspaces{}, proto.LaunchRequest{ReqID: "r", Dir: root, Trust: true})
 	require.True(t, res.OK, res.Error)
 	b, err := os.ReadFile(filepath.Join(os.Getenv("HOME"), ".claude.json"))
@@ -238,22 +238,22 @@ func TestRunHerdrCauseUnavailableOnlyBeforeSideEffects(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	root := t.TempDir()
 
-	// sin socket: falla workspace.list, nada se tocó → se puede ir al respaldo
+	// no socket: workspace.list fails, nothing was touched → can go to the fallback
 	c := &herdr.Client{Socket: filepath.Join(t.TempDir(), "no.sock")}
-	res, err := RunHerdrCause(context.Background(), c, &Workspaces{}, proto.LaunchRequest{ReqID: "r", Dir: root, Prompt: "hola"})
+	res, err := RunHerdrCause(context.Background(), c, &Workspaces{}, proto.LaunchRequest{ReqID: "r", Dir: root, Prompt: "hello"})
 	require.False(t, res.OK)
 	require.ErrorIs(t, err, ErrHerdrUnavailable)
-	// no dejó el fichero del prompt: el respaldo puede escribirlo con el mismo nombre
+	// did not leave the prompt file: the fallback can write it under the same name
 	_, serr := os.Stat(filepath.Join(PromptDir(root), "ticket-r.md"))
 	require.True(t, os.IsNotExist(serr))
 
-	// pane.list falla: tampoco hubo efectos
+	// pane.list fails: no effects either
 	f := fakeHerdr(t, nil, nil)
 	f.Handle("pane.list", func(json.RawMessage) (any, string) { return nil, "boom" })
 	_, err = RunHerdrCause(context.Background(), &herdr.Client{Socket: f.Socket}, &Workspaces{}, proto.LaunchRequest{ReqID: "r", Dir: root})
 	require.ErrorIs(t, err, ErrHerdrUnavailable)
 
-	// workspace.create falla: herdr pudo haberlo creado → final
+	// workspace.create fails: herdr may have created it → final
 	f = fakeHerdr(t, nil, nil)
 	f.Handle("workspace.create", func(json.RawMessage) (any, string) { return nil, "boom" })
 	res, err = RunHerdrCause(context.Background(), &herdr.Client{Socket: f.Socket}, &Workspaces{}, proto.LaunchRequest{ReqID: "r", Dir: root})
@@ -261,7 +261,7 @@ func TestRunHerdrCauseUnavailableOnlyBeforeSideEffects(t *testing.T) {
 	require.Error(t, err)
 	require.False(t, errors.Is(err, ErrHerdrUnavailable))
 
-	// agent.start se queda colgado más allá del plazo: Claude puede estar arrancando → final, con panel
+	// agent.start hangs past the deadline: Claude may be starting → final, with pane
 	f = fakeHerdr(t, nil, nil)
 	f.Handle("agent.start", func(json.RawMessage) (any, string) { time.Sleep(time.Second); return hws{}, "" })
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
@@ -279,19 +279,19 @@ func TestRunHerdrPromptAlwaysViaFile(t *testing.T) {
 	root := t.TempDir()
 	f := fakeHerdr(t, nil, nil)
 	res := RunHerdr(context.Background(), &herdr.Client{Socket: f.Socket}, &Workspaces{},
-		proto.LaunchRequest{ReqID: "r1", Dir: root, Prompt: "hola $(id) 'x'"})
+		proto.LaunchRequest{ReqID: "r1", Dir: root, Prompt: "hello $(id) 'x'"})
 	require.True(t, res.OK, res.Error)
 	args := callsOf(f, "agent.start")[0]["args"].([]any)
 	last := args[len(args)-1].(string)
 	path := filepath.Join(PromptDir(root), "ticket-r1.md")
 	require.Equal(t, "--", args[len(args)-2])
-	require.Equal(t, "Lee el archivo .claude/quorum/ticket-r1.md y trabaja en ese ticket.", last)
+	require.Equal(t, "Read the file .claude/quorum/ticket-r1.md and work on that ticket.", last)
 	for _, a := range args {
 		require.False(t, strings.Contains(a.(string), "$(id)"))
 	}
 	b, err := os.ReadFile(path)
 	require.NoError(t, err)
-	require.Equal(t, "hola $(id) 'x'", string(b))
+	require.Equal(t, "hello $(id) 'x'", string(b))
 }
 
 func TestRunHerdrPromptNeverCarriesDir(t *testing.T) {
@@ -300,17 +300,17 @@ func TestRunHerdrPromptNeverCarriesDir(t *testing.T) {
 	require.NoError(t, os.MkdirAll(root, 0o700))
 	f := fakeHerdr(t, nil, nil)
 	res := RunHerdr(context.Background(), &herdr.Client{Socket: f.Socket}, &Workspaces{},
-		proto.LaunchRequest{ReqID: "r/2;x", Dir: root, Prompt: "hola"})
+		proto.LaunchRequest{ReqID: "r/2;x", Dir: root, Prompt: "hello"})
 	require.True(t, res.OK, res.Error)
 	args := callsOf(f, "agent.start")[0]["args"].([]any)
 	for _, a := range args {
 		require.NotContains(t, a.(string), root)
 		require.NotContains(t, a.(string), "$(x)")
 	}
-	require.Equal(t, "Lee el archivo .claude/quorum/ticket-r2x.md y trabaja en ese ticket.", args[len(args)-1])
+	require.Equal(t, "Read the file .claude/quorum/ticket-r2x.md and work on that ticket.", args[len(args)-1])
 	b, err := os.ReadFile(filepath.Join(PromptDir(root), "ticket-r2x.md"))
 	require.NoError(t, err)
-	require.Equal(t, "hola", string(b))
+	require.Equal(t, "hello", string(b))
 }
 
 func TestRunHerdrRememberedWithoutRootPaneFallsBack(t *testing.T) {

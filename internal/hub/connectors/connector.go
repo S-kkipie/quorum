@@ -1,5 +1,5 @@
-// Package connectors implementa los conectores de tickets (ejecutable, GitHub, Paperclip)
-// y el sincronizador periódico. No depende del paquete hub.
+// Package connectors implements the ticket connectors (executable, GitHub, Paperclip)
+// and the periodic syncer. It does not depend on the hub package.
 package connectors
 
 import (
@@ -13,17 +13,17 @@ import (
 	"github.com/S-kkipie/quorum/internal/proto"
 )
 
-// ErrNoConnector: el proyecto no tiene conector (kind none o vacío).
-var ErrNoConnector = errors.New("el proyecto no tiene conector")
+// ErrNoConnector: the project has no connector (kind none or empty).
+var ErrNoConnector = errors.New("the project has no connector")
 
-// Connector es la interfaz común de todos los orígenes de tickets.
+// Connector is the interface common to all ticket sources.
 type Connector interface {
 	List(ctx context.Context, since int64) ([]proto.Ticket, error)
 	Comment(ctx context.Context, externalID, body string) error
 	SetStatus(ctx context.Context, externalID, status string) error
 }
 
-// Factory construye un conector de un kind a partir de su configuración.
+// Factory builds a connector of a kind from its configuration.
 type Factory func(cfg proto.ConnectorConfig, token string, env []string) (Connector, error)
 
 var factories = map[string]Factory{
@@ -32,41 +32,52 @@ var factories = map[string]Factory{
 	},
 }
 
-// Register añade (o reemplaza) la implementación de un kind; se llama desde init().
+// Register adds (or replaces) the implementation of a kind; called from init().
 func Register(kind string, f Factory) { factories[kind] = f }
 
-// New crea el conector de cfg.Kind; "none" y "" dan ErrNoConnector.
+// New creates the connector for cfg.Kind; "none" and "" give ErrNoConnector.
 func New(cfg proto.ConnectorConfig, token string, env []string) (Connector, error) {
 	if cfg.Kind == "" || cfg.Kind == "none" {
 		return nil, ErrNoConnector
 	}
 	f, ok := factories[cfg.Kind]
 	if !ok {
-		return nil, fmt.Errorf("conector %q no soportado", cfg.Kind)
+		return nil, fmt.Errorf("connector %q not supported", cfg.Kind)
 	}
 	return f(cfg, token, env)
 }
 
 var defaultStatuses = map[string]string{
-	"por_hacer": "por_hacer", "en_curso": "en_curso", "en_review": "en_review", "hecho": "hecho", "bloqueado": "bloqueado",
-	"open": "por_hacer", "todo": "por_hacer", "to do": "por_hacer", "backlog": "por_hacer",
-	"in progress": "en_curso", "en curso": "en_curso", "doing": "en_curso",
-	"review": "en_review", "in review": "en_review",
-	"closed": "hecho", "done": "hecho", "resolved": "hecho", "cancelled": "hecho", "canceled": "hecho",
-	"blocked": "bloqueado",
+	"todo": "todo", "in_progress": "in_progress", "in_review": "in_review", "done": "done", "blocked": "blocked",
+	"open": "todo", "to do": "todo", "backlog": "todo",
+	"in progress": "in_progress", "doing": "in_progress",
+	"review": "in_review", "in review": "in_review",
+	"closed": "done", "resolved": "done", "cancelled": "done", "canceled": "done",
+	// Spanish aliases: connectors and statusMaps written before the English migration keep working.
+	"por_hacer": "todo", "en_curso": "in_progress", "en curso": "in_progress", "en_review": "in_review",
+	"hecho": "done", "bloqueado": "blocked",
 }
 
 func normKey(s string) string {
 	return strings.NewReplacer("_", " ", "-", " ").Replace(strings.ToLower(strings.TrimSpace(s)))
 }
 
-// StatusMap normaliza el estado crudo de un origen. El mapa custom tiene prioridad; las
-// claves se comparan sin mayúsculas y con "_" y "-" como espacio. Lo desconocido es por_hacer.
+// normValue maps a custom statusMap value through the default statuses, so old
+// Spanish values (e.g. "bloqueado") yield the English one; unknown values pass through.
+func normValue(v string) string {
+	if n, ok := defaultStatuses[strings.ToLower(strings.TrimSpace(v))]; ok {
+		return n
+	}
+	return v
+}
+
+// StatusMap normalizes a source's raw status. The custom map takes priority; keys
+// are compared case-insensitively with "_" and "-" as spaces. Unknown is todo.
 func StatusMap(raw string, custom map[string]string) string {
 	k := normKey(raw)
 	for ck, v := range custom {
 		if normKey(ck) == k {
-			return v
+			return normValue(v)
 		}
 	}
 	if v, ok := defaultStatuses[strings.ToLower(strings.TrimSpace(raw))]; ok {
@@ -75,14 +86,14 @@ func StatusMap(raw string, custom map[string]string) string {
 	if v, ok := defaultStatuses[k]; ok {
 		return v
 	}
-	// GitHub "open:<label>": vale el label.
+	// GitHub "open:<label>": the label counts.
 	if strings.HasPrefix(raw, "open:") {
 		return StatusMap(raw[len("open:"):], custom)
 	}
-	return "por_hacer"
+	return "todo"
 }
 
-// redact oculta el token en msg.
+// redact hides the token in msg.
 func redact(msg, token string) string {
 	if token == "" {
 		return msg
@@ -94,7 +105,7 @@ func redact(msg, token string) string {
 	return msg
 }
 
-// Kinds devuelve los kinds registrados (sin "none"), ordenados.
+// Kinds returns the registered kinds (without "none"), sorted.
 func Kinds() []string {
 	out := make([]string, 0, len(factories))
 	for k := range factories {

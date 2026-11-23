@@ -187,7 +187,7 @@ func TestEnsureConcurrentSpawnsOnce(t *testing.T) {
 	}
 }
 
-// ensure informa la versión del daemon que responde, no la del binario que corre ensure.
+// ensure reports the version of the daemon that answers, not of the binary running ensure.
 func TestHealthReportsDaemonVersion(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"ok":true,"version":"0.0.9","machine":"m"}`))

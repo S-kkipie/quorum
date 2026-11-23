@@ -51,16 +51,16 @@ func TestGitHubList(t *testing.T) {
 	require.Equal(t, []string{"WHOAS_PROFILE=p"}, calls[0].env)
 	require.Equal(t, "1", ts[0].ExternalID)
 	require.Equal(t, "open:in progress", ts[0].RawStatus)
-	require.Equal(t, "en_curso", StatusMap(ts[0].RawStatus, nil))
+	require.Equal(t, "in_progress", StatusMap(ts[0].RawStatus, nil))
 	require.Equal(t, "ana", ts[0].Assignee)
 	require.Equal(t, "u1", ts[0].URL)
 	require.Len(t, ts[0].Comments, 5)
 	require.Equal(t, "3", ts[0].Comments[0].Body)
 	require.Equal(t, "7", ts[0].Comments[4].Body)
 	require.Equal(t, "closed", ts[1].RawStatus)
-	require.Equal(t, "hecho", StatusMap(ts[1].RawStatus, nil))
+	require.Equal(t, "done", StatusMap(ts[1].RawStatus, nil))
 	require.Equal(t, []string{"api", "--paginate", "repos/o/r/issues/1/comments?per_page=100"}, calls[1].args)
-	require.Len(t, calls, 2) // un solo fetch de comentarios: el cerrado no
+	require.Len(t, calls, 2) // a single comments fetch: the closed one has none
 }
 
 func TestGitHubListNoSinceNoLabels(t *testing.T) {
@@ -108,28 +108,28 @@ func TestGitHubWrites(t *testing.T) {
 	require.Equal(t, []string{"api", "-X", "POST", "repos/o/r/issues/7/comments", "-f", "body=hola"}, calls[0].args)
 
 	calls = nil
-	require.NoError(t, g.SetStatus(ctx, "7", "hecho"))
+	require.NoError(t, g.SetStatus(ctx, "7", "done"))
 	require.Equal(t, []string{"api", "-X", "PATCH", "repos/o/r/issues/7", "-f", "state=closed"}, calls[0].args)
 	require.Len(t, calls, 4)
 	require.Equal(t, []string{"api", "-X", "DELETE", "repos/o/r/issues/7/labels/en%20curso"}, calls[1].args)
 
 	calls = nil
-	require.NoError(t, g.SetStatus(ctx, "7", "por_hacer"))
+	require.NoError(t, g.SetStatus(ctx, "7", "todo"))
 	require.Equal(t, []string{"api", "-X", "PATCH", "repos/o/r/issues/7", "-f", "state=open"}, calls[0].args)
 	require.Len(t, calls, 4)
 
 	calls = nil
-	require.NoError(t, g.SetStatus(ctx, "7", "en_curso"))
+	require.NoError(t, g.SetStatus(ctx, "7", "in_progress"))
 	require.Equal(t, []string{"api", "-X", "POST", "repos/o/r/issues/7/labels", "-f", "labels[]=en curso"}, calls[0].args)
 	require.Len(t, calls, 3)
 	require.Equal(t, "repos/o/r/issues/7/labels/review", calls[1].args[3])
 	require.Equal(t, "repos/o/r/issues/7/labels/blocked", calls[2].args[3])
 
 	calls = nil
-	require.NoError(t, g.SetStatus(ctx, "7", "en_review"))
+	require.NoError(t, g.SetStatus(ctx, "7", "in_review"))
 	require.Equal(t, "labels[]=review", calls[0].args[5])
 	calls = nil
-	require.NoError(t, g.SetStatus(ctx, "7", "bloqueado"))
+	require.NoError(t, g.SetStatus(ctx, "7", "blocked"))
 	require.Equal(t, "labels[]=blocked", calls[0].args[5])
 	require.Error(t, g.SetStatus(ctx, "7", "x"))
 }
@@ -142,7 +142,7 @@ func TestGitHubRemoveLabelIgnores404(t *testing.T) {
 		}
 		return []byte(`{}`), nil
 	}))
-	require.NoError(t, g.SetStatus(context.Background(), "7", "hecho"))
+	require.NoError(t, g.SetStatus(context.Background(), "7", "done"))
 }
 
 func TestGitHubCommentFetchFailureKeepsNil(t *testing.T) {
@@ -161,9 +161,9 @@ func TestGitHubCommentFetchFailureKeepsNil(t *testing.T) {
 
 func TestGitHubErrors(t *testing.T) {
 	for stderr, want := range map[string]string{
-		"gh: Bad credentials (HTTP 401)":                          "GitHub: credenciales inválidas (revisa el perfil de whoas)",
-		"To get started with GitHub CLI, authentication required": "GitHub: credenciales inválidas (revisa el perfil de whoas)",
-		"gh: Not Found (HTTP 404)":                                "GitHub: repositorio no encontrado (o/r)",
+		"gh: Bad credentials (HTTP 401)":                          "GitHub: invalid credentials (check the whoas profile)",
+		"To get started with GitHub CLI, authentication required": "GitHub: invalid credentials (check the whoas profile)",
+		"gh: Not Found (HTTP 404)":                                "GitHub: repository not found (o/r)",
 		"boom":                                                    "GitHub: boom",
 	} {
 		var calls []call
@@ -175,7 +175,7 @@ func TestGitHubErrors(t *testing.T) {
 
 func TestGitHubMissingRepoAndRegistered(t *testing.T) {
 	_, err := New(proto.ConnectorConfig{Kind: "github", Settings: map[string]string{}}, "", nil)
-	require.EqualError(t, err, "GitHub: falta el repo (owner/nombre)")
+	require.EqualError(t, err, "GitHub: missing repo (owner/name)")
 	c, err := New(proto.ConnectorConfig{Kind: "github", Settings: map[string]string{"repo": "o/r"}}, "", nil)
 	require.NoError(t, err)
 	require.NotNil(t, c)
@@ -184,7 +184,7 @@ func TestGitHubMissingRepoAndRegistered(t *testing.T) {
 func TestDefaultGhRunnerNotFound(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	_, err := defaultGhRunner(time.Second)(context.Background(), nil, "api")
-	require.EqualError(t, err, "GitHub: no encontré el comando gh en el hub")
+	require.EqualError(t, err, "GitHub: gh command not found on the hub")
 }
 
 func TestGhCommandArgv(t *testing.T) {
@@ -200,7 +200,7 @@ func TestGhCommandArgv(t *testing.T) {
 	require.Equal(t, `C:\gh\gh.exe`, name)
 	require.Equal(t, args, argv)
 
-	// sin bash: gh directo; sin gh tampoco: error claro
+	// without bash: gh direct; without gh either: clear error
 	name, argv, err = ghCommand("linux", func(n string) (string, error) {
 		if n == "bash" {
 			return "", exec.ErrNotFound
@@ -211,5 +211,5 @@ func TestGhCommandArgv(t *testing.T) {
 	require.Equal(t, "/usr/bin/gh", name)
 	require.Equal(t, args, argv)
 	_, _, err = ghCommand("linux", func(string) (string, error) { return "", exec.ErrNotFound }, args)
-	require.EqualError(t, err, "GitHub: no encontré el comando gh en el hub")
+	require.EqualError(t, err, "GitHub: gh command not found on the hub")
 }

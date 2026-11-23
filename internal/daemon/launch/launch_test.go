@@ -48,7 +48,7 @@ func TestArgv(t *testing.T) {
 	_, a = Argv(WSL, proto.LaunchRequest{Dir: "/x;y"}, false)
 	require.Contains(t, a, `/x\;y`)
 	_, a = Argv(Linux, proto.LaunchRequest{Dir: "/x", PermissionMode: "default"}, false)
-	require.Equal(t, "bash -lc 'claude --permission-mode default'", a[len(a)-1], "Normal (pide permisos) debe forzar el modo default aunque el usuario tenga auto")
+	require.Equal(t, "bash -lc 'claude --permission-mode default'", a[len(a)-1], "Normal (asks for permissions) must force default mode even if the user has auto")
 	_, a = Argv(Linux, proto.LaunchRequest{Dir: "/x"}, false)
 	require.Equal(t, "bash -lc 'claude'", a[len(a)-1])
 }
@@ -61,13 +61,13 @@ func TestShellQuote(t *testing.T) {
 
 func TestRunMissingDir(t *testing.T) {
 	r := Run(context.Background(), proto.LaunchRequest{ReqID: "r1", Dir: "/no/existe/xyz"})
-	require.Equal(t, proto.LaunchResult{ReqID: "r1", OK: false, Error: "la carpeta no existe: /no/existe/xyz"}, r)
+	require.Equal(t, proto.LaunchResult{ReqID: "r1", OK: false, Error: "the folder does not exist: /no/existe/xyz"}, r)
 }
 
 func TestRunRelativeDir(t *testing.T) {
 	r := Run(context.Background(), proto.LaunchRequest{Dir: "rel/dir"})
 	require.False(t, r.OK)
-	require.Equal(t, "la carpeta debe ser una ruta absoluta", r.Error)
+	require.Equal(t, "the folder must be an absolute path", r.Error)
 }
 
 func TestSuffix(t *testing.T) {
@@ -78,7 +78,7 @@ func TestSuffix(t *testing.T) {
 func TestRunInvalidMode(t *testing.T) {
 	r := Run(context.Background(), proto.LaunchRequest{Dir: t.TempDir(), PermissionMode: "x; rm"})
 	require.False(t, r.OK)
-	require.Equal(t, "modo de permisos inválido", r.Error)
+	require.Equal(t, "invalid permission mode", r.Error)
 }
 
 func TestRunExec(t *testing.T) {
@@ -144,7 +144,7 @@ func TestRunCollapsesLongPrompt(t *testing.T) {
 	require.NoError(t, os.Chtimes(stale, past, past))
 	fresh := filepath.Join(qdir, "ticket-fresh.md")
 	require.NoError(t, os.WriteFile(fresh, []byte("x"), 0o600))
-	legacy := tmp + "/quorum-ticket-old.md" // de versiones anteriores, en el temporal
+	legacy := tmp + "/quorum-ticket-old.md" // from earlier versions, in the temp dir
 	require.NoError(t, os.WriteFile(legacy, []byte("x"), 0o600))
 	require.NoError(t, os.Chtimes(legacy, past, past))
 
@@ -156,16 +156,16 @@ func TestRunCollapsesLongPrompt(t *testing.T) {
 	require.Equal(t, nastyPrompt, string(b))
 	st, _ := os.Stat(path)
 	require.Equal(t, os.FileMode(0o600), st.Mode().Perm())
-	require.Contains(t, strings.Join(got, " "), "Lee el archivo "+path)
+	require.Contains(t, strings.Join(got, " "), "Read the file "+path)
 	require.NotContains(t, strings.Join(got, " "), "$HOME")
 	_, err = os.Stat(stale)
 	require.True(t, os.IsNotExist(err))
 	_, err = os.Stat(legacy)
 	require.True(t, os.IsNotExist(err))
 	_, err = os.Stat(fresh)
-	require.NoError(t, err, "lo de menos de 24 h se conserva")
+	require.NoError(t, err, "files under 24 h are kept")
 
-	// carpetas nuevas: 0700; y O_EXCL: el mismo reqId no pisa un fichero existente
+	// new folders: 0700; and O_EXCL: the same reqId does not overwrite an existing file
 	work2 := t.TempDir()
 	r = Run(context.Background(), proto.LaunchRequest{ReqID: "r3", Dir: work2, Prompt: nastyPrompt})
 	require.True(t, r.OK, r.Error)
@@ -176,14 +176,14 @@ func TestRunCollapsesLongPrompt(t *testing.T) {
 	}
 	r = Run(context.Background(), proto.LaunchRequest{ReqID: "r3", Dir: work2, Prompt: nastyPrompt})
 	require.False(t, r.OK)
-	require.Contains(t, r.Error, "no se pudo preparar el prompt")
+	require.Contains(t, r.Error, "could not prepare the prompt")
 
-	// prompt corto de una línea: va directo, sin fichero
+	// short one-line prompt: goes directly, with no file
 	got = nil
 	work3 := t.TempDir()
-	r = Run(context.Background(), proto.LaunchRequest{ReqID: "r2", Dir: work3, Prompt: "hola"})
+	r = Run(context.Background(), proto.LaunchRequest{ReqID: "r2", Dir: work3, Prompt: "hello"})
 	require.True(t, r.OK)
-	require.Contains(t, strings.Join(got, " "), "hola")
+	require.Contains(t, strings.Join(got, " "), "hello")
 	_, err = os.Stat(filepath.Join(work3, ".claude"))
 	require.True(t, os.IsNotExist(err))
 }
@@ -196,11 +196,11 @@ func TestWtNeverSeesSemicolon(t *testing.T) {
 	for _, env := range []Env{WSL, Windows} {
 		r, err := collapsePrompt(env, proto.LaunchRequest{ReqID: "w" + string(env), Dir: t.TempDir(), Prompt: "a; b"})
 		require.NoError(t, err)
-		require.Contains(t, r.Prompt, "Lee el archivo")
+		require.Contains(t, r.Prompt, "Read the file")
 		_, a := Argv(env, r, false)
 		require.NotContains(t, strings.Join(a, " "), ";")
 	}
-	// fuera de wt.exe un prompt corto con ';' va directo
+	// outside wt.exe a short prompt with ';' goes directly
 	r, _ := collapsePrompt(Linux, proto.LaunchRequest{ReqID: "l", Prompt: "a; b"})
 	require.Equal(t, "a; b", r.Prompt)
 }
@@ -212,7 +212,7 @@ func TestClaudeLineCarriesLaunchReq(t *testing.T) {
 	id := "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0"
 	require.Equal(t, "QUORUM_LAUNCH_REQ=r claude --dangerously-skip-permissions --resume "+id,
 		claudeLine(proto.LaunchRequest{ReqID: "r", PermissionMode: "bypass", Resume: id}))
-	// Windows nativo (wt.exe sin shell): sin prefijo
+	// native Windows (wt.exe without a shell): no prefix
 	_, a := Argv(Windows, proto.LaunchRequest{ReqID: "r", Dir: `C:\p`, Resume: id}, false)
 	require.Equal(t, []string{"-d", `C:\p`, "claude", "--resume", id}, a)
 }
@@ -224,9 +224,9 @@ func TestBypassRejectedAsRoot(t *testing.T) {
 	execFn = func(context.Context, string, ...string) ([]byte, error) { called = true; return nil, nil }
 	geteuid = func() int { return 0 }
 	r := Run(context.Background(), proto.LaunchRequest{ReqID: "r", Dir: t.TempDir(), PermissionMode: "bypass"})
-	require.Equal(t, proto.LaunchResult{ReqID: "r", Error: "Sin permisos no funciona como root"}, r)
+	require.Equal(t, proto.LaunchResult{ReqID: "r", Error: "Skip permissions does not work as root"}, r)
 	require.False(t, called)
-	// como root, el modo normal sí se lanza
+	// as root, normal mode does launch
 	r = Run(context.Background(), proto.LaunchRequest{ReqID: "r", Dir: t.TempDir(), PermissionMode: "default"})
 	require.True(t, r.OK, r.Error)
 	require.NotEmpty(t, r.Via)
@@ -239,6 +239,6 @@ func TestRunRejectsBadResume(t *testing.T) {
 	for _, bad := range []string{"abc", "--------", "-----------------", "x; rm -rf /", "0f1e2d3c 4b5a", strings.Repeat("a", 65)} {
 		r := Run(context.Background(), proto.LaunchRequest{ReqID: "r", Dir: t.TempDir(), Resume: bad})
 		require.False(t, r.OK, bad)
-		require.Equal(t, "id de conversación inválido", r.Error)
+		require.Equal(t, "invalid conversation id", r.Error)
 	}
 }

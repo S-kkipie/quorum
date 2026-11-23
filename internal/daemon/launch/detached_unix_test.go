@@ -23,10 +23,10 @@ func tempLeft(t *testing.T, dir string) int {
 func TestRunDetachedFinishedReturnsOutput(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("TMPDIR", dir)
-	out, err := runDetached(context.Background(), "sh", "-c", "echo hola; exit 3")
+	out, err := runDetached(context.Background(), "sh", "-c", "echo hello; exit 3")
 	var ee *exec.ExitError
 	require.True(t, errors.As(err, &ee))
-	require.Equal(t, "hola\n", string(out))
+	require.Equal(t, "hello\n", string(out))
 	require.Zero(t, tempLeft(t, dir))
 }
 
@@ -41,7 +41,7 @@ func TestRunDetachedGraceConsidersLaunched(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, out)
 	require.Less(t, time.Since(t0), 300*time.Millisecond)
-	require.Equal(t, 1, tempLeft(t, dir)) // el hijo sigue vivo con el temporal
+	require.Equal(t, 1, tempLeft(t, dir)) // the child is still alive with the temp file
 	require.Eventually(t, func() bool { return tempLeft(t, dir) == 0 }, 3*time.Second, 20*time.Millisecond)
 }
 

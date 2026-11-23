@@ -15,11 +15,11 @@ import (
 	"github.com/S-kkipie/quorum/internal/proto"
 )
 
-// agentTimeoutMs es lo que herdr espera a que Claude quede listo en agent.start.
+// agentTimeoutMs is how long herdr waits for Claude to be ready in agent.start.
 const agentTimeoutMs = 60000
 
-// Workspaces recuerda qué workspace de herdr usa cada carpeta raíz (root → workspaceID),
-// en un JSON que se escribe de forma atómica. Path vacío: no recuerda nada.
+// Workspaces remembers which herdr workspace each root folder uses (root → workspaceID),
+// in a JSON file written atomically. Empty Path: remembers nothing.
 type Workspaces struct {
 	Path string
 	mu   sync.Mutex
@@ -36,7 +36,7 @@ func (w *Workspaces) load() map[string]string {
 	return m
 }
 
-// Get devuelve el workspace recordado para root, o "".
+// Get returns the remembered workspace for root, or "".
 func (w *Workspaces) Get(root string) string {
 	if w == nil {
 		return ""
@@ -46,7 +46,7 @@ func (w *Workspaces) Get(root string) string {
 	return w.load()[root]
 }
 
-// Set recuerda el workspace de root.
+// Set remembers root's workspace.
 func (w *Workspaces) Set(root, id string) error {
 	if w == nil || w.Path == "" {
 		return nil
@@ -65,7 +65,7 @@ func (w *Workspaces) Set(root, id string) error {
 	return WriteAtomic(w.Path, b, 0o600)
 }
 
-// WriteAtomic escribe con un temporal en el mismo directorio y rename.
+// WriteAtomic writes with a temp file in the same directory and rename.
 func WriteAtomic(path string, b []byte, mode os.FileMode) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -92,15 +92,15 @@ func WriteAtomic(path string, b []byte, mode os.FileMode) error {
 	return err
 }
 
-// ResolveWorkspace elige el workspace de herdr para root:
+// ResolveWorkspace picks the herdr workspace for root:
 //
-//	(a) el recordado, si sigue existiendo y aún tiene un panel cuyo cwd es root;
-//	(b) si no, uno con un panel cuyo cwd es root: el enfocado o, si no hay, el de menor número;
-//	(c) si no, uno nuevo con ese label y env; su panel raíz se devuelve en freshPane.
+//	(a) the remembered one, if it still exists and still has a pane whose cwd is root;
+//	(b) otherwise, one with a pane whose cwd is root: the focused one or, if none, the lowest-numbered;
+//	(c) otherwise, a new one with that label and env; its root pane is returned in freshPane.
 //
-// freshPane solo no está vacío si se creó el workspace. El elegido queda recordado.
-// Si falla antes de tocar nada en herdr (workspace.list / pane.list), el error
-// envuelve ErrHerdrUnavailable; un fallo de workspace.create no.
+// freshPane is non-empty only if the workspace was created. The chosen one is remembered.
+// If it fails before touching anything in herdr (workspace.list / pane.list), the error
+// wraps ErrHerdrUnavailable; a workspace.create failure does not.
 func ResolveWorkspace(ctx context.Context, c *herdr.Client, ws *Workspaces, root, label string, env map[string]string) (wsID, freshPane string, err error) {
 	list, err := c.ListWorkspaces(ctx)
 	if err != nil {
@@ -147,26 +147,26 @@ func ResolveWorkspace(ctx context.Context, c *herdr.Client, ws *Workspaces, root
 		}
 	}
 	if err := ws.Set(root, wsID); err != nil {
-		log.Printf("launch: no se pudo recordar el workspace de %s: %v", root, err)
+		log.Printf("launch: could not remember the workspace of %s: %v", root, err)
 	}
 	return wsID, freshPane, nil
 }
 
-// agentName es el nombre del agente en herdr: [a-z][a-z0-9_-]{0,31}.
+// agentName is the agent's name in herdr: [a-z][a-z0-9_-]{0,31}.
 func agentName(reqID string) string { return "q" + strings.ToLower(suffix(reqID)) }
 
-// RunHerdr lanza la sesión en una pestaña nueva del workspace de herdr del proyecto
-// (o en el panel raíz de un workspace nuevo) y arranca Claude con agent.start.
+// RunHerdr launches the session in a new tab of the project's herdr workspace
+// (or in the root pane of a new workspace) and starts Claude with agent.start.
 func RunHerdr(ctx context.Context, c *herdr.Client, ws *Workspaces, req proto.LaunchRequest) proto.LaunchResult {
 	res, _ := RunHerdrCause(ctx, c, ws, req)
 	return res
 }
 
-// RunHerdrCause es RunHerdr y además devuelve el error que hizo fallar el lanzamiento
-// (nil si fue bien o si falló la validación). Solo si errors.Is(err, ErrHerdrUnavailable)
-// se puede reintentar con Run: herdr no respondió antes de crear nada. Cualquier otro
-// error es definitivo (herdr pudo crear la pestaña o estar arrancando Claude; reintentar
-// lanzaría dos veces); Pane va relleno si ya se conoce.
+// RunHerdrCause is RunHerdr and also returns the error that made the launch fail
+// (nil if it went well or validation failed). Only if errors.Is(err, ErrHerdrUnavailable)
+// can Run be retried: herdr did not answer before anything was created. Any other
+// error is final (herdr may have created the tab or be starting Claude; retrying
+// would launch twice); Pane is filled in if already known.
 func RunHerdrCause(ctx context.Context, c *herdr.Client, ws *Workspaces, req proto.LaunchRequest) (proto.LaunchResult, error) {
 	res := proto.LaunchResult{ReqID: req.ReqID}
 	if msg := validate(Linux, req); msg != "" {
@@ -175,7 +175,7 @@ func RunHerdrCause(ctx context.Context, c *herdr.Client, ws *Workspaces, req pro
 	}
 	trust(req)
 	res.Via = "herdr"
-	// por JSON no hace falta sanear: va el reqId tal cual (el hub lo genera en hex).
+	// for JSON no sanitizing is needed: the reqId goes as is (the hub generates it in hex).
 	env := map[string]string{}
 	if req.ReqID != "" {
 		env[LaunchReqEnv] = req.ReqID
@@ -186,23 +186,23 @@ func RunHerdrCause(ctx context.Context, c *herdr.Client, ws *Workspaces, req pro
 	}
 	wsID, pane, err := ResolveWorkspace(ctx, c, ws, req.Dir, label, env)
 	if err != nil {
-		res.Error = "no se pudo abrir la pestaña en herdr: " + err.Error()
+		res.Error = "could not open the tab in herdr: " + err.Error()
 		return res, err
 	}
-	// herdr escribe la orden en el shell del panel y no sabemos cómo cita los args:
-	// todo prompt va a un fichero y a claude solo le llega una línea fija y segura,
-	// con la ruta relativa al cwd del panel (la carpeta nunca va en la línea).
-	// Se escribe tras ver que herdr responde: si no, el respaldo (Run) lo escribiría
-	// otra vez con el mismo nombre (O_EXCL) y fallaría.
+	// herdr types the command into the pane's shell and we don't know how it quotes args:
+	// every prompt goes to a file and claude only receives a fixed, safe line,
+	// with the path relative to the pane's cwd (the folder never goes in the line).
+	// It is written after seeing that herdr answers: otherwise the fallback (Run) would write it
+	// again under the same name (O_EXCL) and fail.
 	if req.Prompt != "" {
 		if req, err = promptToFile(req, true); err != nil {
-			res.Error = "no se pudo preparar el prompt: " + err.Error()
+			res.Error = "could not prepare the prompt: " + err.Error()
 			return res, err
 		}
 	}
 	if pane == "" {
 		if pane, err = c.CreateTab(ctx, wsID, req.Dir, "claude", env); err != nil {
-			res.Error = "no se pudo abrir la pestaña en herdr: " + err.Error()
+			res.Error = "could not open the tab in herdr: " + err.Error()
 			return res, err
 		}
 	}
@@ -213,9 +213,9 @@ func RunHerdrCause(ctx context.Context, c *herdr.Client, ws *Workspaces, req pro
 	}
 	if err := c.StartAgent(ctx, agentName(req.ReqID), "claude", pane, args, agentTimeoutMs); err != nil {
 		var he *herdr.Error
-		// agent_not_ready: Claude quedó en un diálogo de arranque; se ve en "Ver en terminal".
+		// agent_not_ready: Claude is stuck in a startup dialog; visible in "View in terminal".
 		if !errors.As(err, &he) || he.Code != "agent_not_ready" {
-			res.Error = "no se pudo arrancar Claude en herdr: " + err.Error()
+			res.Error = "could not start Claude in herdr: " + err.Error()
 			return res, err
 		}
 	}
@@ -223,5 +223,5 @@ func RunHerdrCause(ctx context.Context, c *herdr.Client, ws *Workspaces, req pro
 	return res, nil
 }
 
-// ErrHerdrUnavailable: herdr no respondió antes de tocar nada; se puede usar el respaldo.
+// ErrHerdrUnavailable: herdr did not answer before touching anything; the fallback can be used.
 var ErrHerdrUnavailable = errors.New("herdr no disponible")

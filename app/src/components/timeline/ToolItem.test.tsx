@@ -1,0 +1,106 @@
+// @vitest-environment jsdom
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import ToolItem from './ToolItem'
+import ArtifactCard from './ArtifactCard'
+import StatePill from '../StatePill'
+import type { AgentItem, ArtifactItem, ToolItem as Tool } from '../../lib/timeline'
+
+afterEach(cleanup)
+
+const EMOJI = /[\p{Extended_Pictographic}\u2600-\u27BF]/u
+const tool = (o: Partial<Tool> = {}): Tool => ({ t: 'tool', seq: 1, id: 't', name: 'Bash', kind: 'bash', title: 'List files', state: 'ok', output: 'OUT-1', ...o })
+
+describe('ToolItem', () => {
+  it('tool row is collapsed by default and expands on tap', () => {
+    render(<ToolItem item={tool()} />)
+    const row = screen.getByRole('button', { name: /List files/ })
+    expect(row.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByText('OUT-1')).toBeNull()
+    fireEvent.click(row)
+    expect(row.getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByText('OUT-1')).toBeTruthy()
+  })
+  it('edit row shows -/+ lines when expanded', () => {
+    render(<ToolItem item={tool({ name: 'Edit', kind: 'edit', title: 'Edited a.go', file: '/p/a.go', input: { file_path: '/p/a.go', old_string: 'same\nold line', new_string: 'same\nnew line' } })} />)
+    fireEvent.click(screen.getByRole('button', { name: /Edited a\.go/ }))
+    expect(screen.getByText('- old line')).toBeTruthy()
+    expect(screen.getByText('+ new line')).toBeTruthy()
+    expect(screen.queryByText('- same')).toBeNull()
+  })
+  it('running tool shows spinner icon, no emoji', () => {
+    const { container } = render(<ToolItem item={tool({ state: 'running', output: undefined })} />)
+    expect(screen.getByLabelText('running')).toBeTruthy()
+    expect(container.querySelector('svg.animate-spin')).toBeTruthy()
+    expect(EMOJI.test(container.textContent ?? '')).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: /List files/ }))
+    expect(EMOJI.test(container.textContent ?? '')).toBe(false)
+  })
+  it('failed and denied rows carry their state icon', () => {
+    render(<><ToolItem item={tool({ state: 'error', title: 'A' })} /><ToolItem item={tool({ state: 'denied', title: 'B' })} /></>)
+    expect(screen.getByLabelText('failed')).toBeTruthy()
+    expect(screen.getByLabelText('denied')).toBeTruthy()
+  })
+  it('todo row lists each task with its status', () => {
+    render(<ToolItem item={tool({ name: 'TodoWrite', kind: 'todo', title: 'Updated the plan', input: { todos: [{ content: 'one', status: 'completed' }, { content: 'two', status: 'pending' }] } })} />)
+    fireEvent.click(screen.getByRole('button', { name: /Updated the plan/ }))
+    expect(screen.getByText('one')).toBeTruthy()
+    expect(screen.getByLabelText('completed')).toBeTruthy()
+    expect(screen.getByLabelText('pending')).toBeTruthy()
+  })
+  it('mcp row shows the input as JSON and the output', () => {
+    render(<ToolItem item={tool({ name: 'mcp__x__y', kind: 'mcp', title: 'Used y (x)', input: { q: 'zz' }, output: 'RES' })} />)
+    fireEvent.click(screen.getByRole('button', { name: /Used y/ }))
+    expect(screen.getByText(/"q": "zz"/)).toBeTruthy()
+    expect(screen.getByText('RES')).toBeTruthy()
+  })
+  it('an edit of a .md inside the base offers Open', () => {
+    const onOpenFile = vi.fn()
+    render(<ToolItem base="/p" onOpenFile={onOpenFile} item={tool({ name: 'Edit', kind: 'edit', title: 'Edited r.md', file: '/p/r.md', input: { file_path: '/p/r.md', old_string: 'a', new_string: 'b' } })} />)
+    fireEvent.click(screen.getByRole('button', { name: /Edited r\.md/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Open' }))
+    expect(onOpenFile).toHaveBeenCalledWith('/p/r.md')
+  })
+  it('Open on a relative edited file passes the absolute path', () => {
+    const onOpenFile = vi.fn()
+    render(<ToolItem base="/p" onOpenFile={onOpenFile} item={tool({ name: 'Edit', kind: 'edit', title: 'Edited r.md', file: 'docs/./r.md', input: { file_path: 'docs/./r.md', old_string: 'a', new_string: 'b' } })} />)
+    fireEvent.click(screen.getByRole('button', { name: /Edited r\.md/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Open' }))
+    expect(onOpenFile).toHaveBeenCalledWith('/p/docs/r.md')
+  })
+  it('subagent row shows its answer, or the live text while running', () => {
+    const a: AgentItem = { t: 'agent', seq: 1, id: 'a', type: 'Explore', description: 'searches', status: 'running' }
+    render(<ToolItem item={a} live="LIVE" />)
+    expect(screen.getByLabelText('running')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /searches/ }))
+    expect(screen.getByText('LIVE')).toBeTruthy()
+  })
+})
+
+describe('ArtifactCard', () => {
+  const art = (o: Partial<ArtifactItem> = {}): ArtifactItem => ({ t: 'artifact', seq: 1, path: '/p/docs/r.html', name: 'r.html', inBase: true, ...o })
+  it('shows name, machine and folder, and Open calls onOpen', () => {
+    const onOpen = vi.fn()
+    render(<ArtifactCard item={art()} machine="m1" base="/p" onOpen={onOpen} />)
+    expect(screen.getByText('r.html')).toBeTruthy()
+    expect(screen.getByText('m1 · docs')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Open' }))
+    expect(onOpen).toHaveBeenCalledWith('/p/docs/r.html')
+  })
+  it('artifact card outside base has no Open', () => {
+    render(<ArtifactCard item={art({ path: '/tmp/r.html', inBase: false })} machine="m1" base="/p" onOpen={vi.fn()} />)
+    expect(screen.getByText('outside the project folder')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Open' })).toBeNull()
+  })
+})
+
+describe('StatePill', () => {
+  it('labels each state', () => {
+    const label = (s: string) => { const { container } = render(<StatePill state={s} />); const t = container.textContent; cleanup(); return t }
+    expect(label('working')).toBe('Working')
+    expect(label('needs_you')).toBe('Needs permission')
+    expect(label('waiting')).toBe('Waiting for you')
+    expect(label('idle')).toBe('Waiting for you')
+    expect(label('closed')).toBe('Closed')
+  })
+})

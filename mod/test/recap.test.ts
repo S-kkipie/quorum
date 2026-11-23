@@ -17,28 +17,28 @@ function mk(complete: (p: string) => Promise<string>, t = { v: 1_000_000 }) {
   return { r, updates, calls, t }
 }
 
-test('cleanRecap quita comillas, punto final y saltos de línea', () => {
-  expect(cleanRecap('"Arreglando el login con OAuth."\n')).toBe('Arreglando el login con OAuth')
-  expect(cleanRecap('Línea uno\nlínea dos')).toBe('Línea uno línea dos')
+test('cleanRecap strips quotes, trailing period and line breaks', () => {
+  expect(cleanRecap('"Fixing the login with OAuth."\n')).toBe('Fixing the login with OAuth')
+  expect(cleanRecap('Line one\nline two')).toBe('Line one line two')
 })
 
-test('cleanRecap corta a 60 en límite de palabra', () => {
-  const out = cleanRecap('palabra '.repeat(20))
+test('cleanRecap cuts at 60 on a word boundary', () => {
+  const out = cleanRecap('word '.repeat(20))
   expect(out.length).toBeLessThanOrEqual(60)
-  expect(out.endsWith('palabra')).toBe(true)
+  expect(out.endsWith('word')).toBe(true)
 })
 
-test('onFirstPrompt genera una vez y actualiza con el resultado limpio', async () => {
-  const { r, updates, calls } = mk(async () => '"Arreglando el login."')
-  r.onFirstPrompt('arregla el login')
+test('onFirstPrompt generates once and updates with the cleaned result', async () => {
+  const { r, updates, calls } = mk(async () => '"Fixing the login."')
+  r.onFirstPrompt('fix the login')
   await tick(); await tick()
   expect(calls.length).toBe(1)
-  expect(calls[0]).toContain('arregla el login')
-  expect(updates).toEqual(['Arreglando el login'])
+  expect(calls[0]).toContain('fix the login')
+  expect(updates).toEqual(['Fixing the login'])
 })
 
-test('dos onTurnEnd en menos de 5 min generan una sola vez', async () => {
-  const { r, calls, t } = mk(async () => 'Algo')
+test('two onTurnEnd calls within 5 min generate only once', async () => {
+  const { r, calls, t } = mk(async () => 'Something')
   r.onTurnEnd('a', 'b'); await tick(); await tick()
   t.v += 60_000
   r.onTurnEnd('c', 'd'); await tick(); await tick()
@@ -48,28 +48,28 @@ test('dos onTurnEnd en menos de 5 min generan una sola vez', async () => {
   expect(calls.length).toBe(2)
 })
 
-test('onTurnEnd sin turno nuevo desde la última generación no genera', async () => {
-  const { r, calls, t } = mk(async () => 'Algo')
-  r.onFirstPrompt('hola'); await tick(); await tick()
+test('onTurnEnd without a new turn since the last generation does not generate', async () => {
+  const { r, calls, t } = mk(async () => 'Something')
+  r.onFirstPrompt('hello'); await tick(); await tick()
   t.v += 10 * 60_000
-  r.onTurnEnd('hola', 'resp'); await tick(); await tick()
+  r.onTurnEnd('hello', 'reply'); await tick(); await tick()
   expect(calls.length).toBe(1)
 })
 
-test('complete que rechaza no actualiza ni lanza', async () => {
+test('a complete that rejects neither updates nor throws', async () => {
   const { r, updates } = mk(async () => { throw new Error('x') })
-  r.onFirstPrompt('hola'); await tick(); await tick()
+  r.onFirstPrompt('hello'); await tick(); await tick()
   expect(updates).toEqual([])
 })
 
-test('complete que tarda más del límite no actualiza', async () => {
-  const { r, updates } = mk(() => new Promise(res => setTimeout(() => res('tarde'), 100)))
-  r.onFirstPrompt('hola')
+test('a complete that takes longer than the limit does not update', async () => {
+  const { r, updates } = mk(() => new Promise(res => setTimeout(() => res('late'), 100)))
+  r.onFirstPrompt('hello')
   await new Promise(res => setTimeout(res, 150))
   expect(updates).toEqual([])
 })
 
-test('buildContext: acotado, más nuevo al final, sin herramientas', () => {
+test('buildContext: bounded, newest last, no tools', () => {
   const msgs = Array.from({ length: 10 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', text: `m${i} ` + 'x'.repeat(1000) }))
   const withTool = [...msgs, { role: 'assistant', text: '' }, { role: 'user', text: '   ' }]
   const c = buildContext(withTool)
@@ -80,57 +80,64 @@ test('buildContext: acotado, más nuevo al final, sin herramientas', () => {
   expect(buildContext([{ role: 'assistant', text: 'a'.repeat(700) }]).length).toBeLessThan(620)
 })
 
-test('el prompt usa el contexto de messages y no el último prompt suelto', async () => {
-  const { r, calls } = mk(async () => 'Migrando el login')
+test('the prompt uses the messages context and not the lone last prompt', async () => {
+  const { r, calls } = mk(async () => 'Migrating the login')
   ;(r as unknown as { deps: { messages: () => Promise<{ role: string; text: string }[]> } }).deps.messages =
-    async () => [{ role: 'user', text: 'migra el login' }, { role: 'assistant', text: 'listo' }, { role: 'user', text: 'ya esta' }]
-  r.onFirstPrompt('ya esta'); await tick(); await tick()
-  expect(calls[0]).toContain('migra el login')
+    async () => [{ role: 'user', text: 'migrate the login' }, { role: 'assistant', text: 'done' }, { role: 'user', text: 'that is it' }]
+  r.onFirstPrompt('that is it'); await tick(); await tick()
+  expect(calls[0]).toContain('migrate the login')
   expect(calls[0]).toContain('`-`')
 })
 
-test('sin API de messages (o que falla) cae a prompt + respuesta', async () => {
-  const { r, calls, t } = mk(async () => 'Algo')
+test('without a messages API (or when it fails) falls back to prompt + answer', async () => {
+  const { r, calls, t } = mk(async () => 'Something')
   ;(r as unknown as { deps: { messages: () => Promise<never> } }).deps.messages = async () => { throw new Error('x') }
-  r.onTurnEnd('mi prompt', 'mi respuesta'); await tick(); await tick()
-  expect(calls[0]).toContain('mi prompt')
-  expect(calls[0]).toContain('mi respuesta')
+  r.onTurnEnd('my prompt', 'my answer'); await tick(); await tick()
+  expect(calls[0]).toContain('my prompt')
+  expect(calls[0]).toContain('my answer')
   void t
 })
 
-test('no-respuestas se rechazan y no llaman a update', async () => {
-  for (const bad of ['-', '"-"', '', 'No hay contexto suficiente sobre la tarea', 'Sin contexto', 'No está claro', 'No se puede determinar', 'No sé', 'No context', 'Unclear', 'Cannot determine the task', 'Not enough information']) {
+test('non-answers are rejected and do not call update', async () => {
+  for (const bad of ['-', '"-"', '', 'No hay contexto suficiente sobre la tarea', 'Sin contexto', 'No está claro', 'Not clear', 'I don\'t know', 'Unclear what the task is', 'Insufficient context', 'No se puede determinar', 'No sé', 'No context', 'Unclear', 'Cannot determine the task', 'Not enough information']) {
     const { r, updates } = mk(async () => bad)
     r.onFirstPrompt('x'); await tick(); await tick()
     expect(updates).toEqual([])
   }
 })
 
-test('una frase buena se sigue aceptando', async () => {
-  const { r, updates } = mk(async () => 'Migrando el login a OAuth')
+test('a good phrase is still accepted', async () => {
+  const { r, updates } = mk(async () => 'Migrating the login to OAuth')
   r.onFirstPrompt('x'); await tick(); await tick()
-  expect(updates).toEqual(['Migrando el login a OAuth'])
+  expect(updates).toEqual(['Migrating the login to OAuth'])
 })
 
-test('primer prompt ausente de messages() se añade como último Usuario', async () => {
-  const { r, calls } = mk(async () => 'Algo')
+test('first prompt missing from messages() is appended as the last User', async () => {
+  const { r, calls } = mk(async () => 'Something')
   ;(r as unknown as { deps: { messages: () => Promise<{ role: string; text: string }[]> } }).deps.messages =
-    async () => [{ role: 'user', text: 'antes' }, { role: 'assistant', text: 'resp previa' }]
-  r.onFirstPrompt('prompt nuevo'); await tick(); await tick()
-  expect(calls[0]!.trimEnd().endsWith('Usuario: prompt nuevo')).toBe(true)
-  expect(calls[0]).toContain('antes')
+    async () => [{ role: 'user', text: 'before' }, { role: 'assistant', text: 'previous reply' }]
+  r.onFirstPrompt('new prompt'); await tick(); await tick()
+  expect(calls[0]!.trimEnd().endsWith('User: new prompt')).toBe(true)
+  expect(calls[0]).toContain('before')
 })
 
-test('onTurnEnd añade la respuesta si falta y no duplica si ya está', async () => {
+test('onTurnEnd appends the answer if missing and does not duplicate if present', async () => {
   const mkWith = (rows: { role: string; text: string }[]) => {
-    const m = mk(async () => 'Algo')
+    const m = mk(async () => 'Something')
     ;(m.r as unknown as { deps: { messages: () => Promise<typeof rows> } }).deps.messages = async () => rows
     return m
   }
   const a = mkWith([{ role: 'user', text: 'p' }])
-  a.r.onTurnEnd('p', 'la respuesta'); await tick(); await tick()
-  expect(a.calls[0]!.trimEnd().endsWith('Asistente: la respuesta')).toBe(true)
-  const b = mkWith([{ role: 'user', text: 'p' }, { role: 'assistant', text: 'la respuesta' }])
-  b.r.onTurnEnd('p', 'la respuesta'); await tick(); await tick()
-  expect(b.calls[0]!.match(/la respuesta/g)!.length).toBe(1)
+  a.r.onTurnEnd('p', 'the answer'); await tick(); await tick()
+  expect(a.calls[0]!.trimEnd().endsWith('Assistant: the answer')).toBe(true)
+  const b = mkWith([{ role: 'user', text: 'p' }, { role: 'assistant', text: 'the answer' }])
+  b.r.onTurnEnd('p', 'the answer'); await tick(); await tick()
+  expect(b.calls[0]!.match(/the answer/g)!.length).toBe(1)
+})
+
+test('the recap prompt asks for a short English phrase', async () => {
+  const { r, calls } = mk(async () => 'Fixing the login')
+  r.onFirstPrompt('fix the login'); await tick(); await tick()
+  expect(calls[0]).toContain('English')
+  expect(calls[0]).toContain('60 characters')
 })

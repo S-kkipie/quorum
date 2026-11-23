@@ -21,5 +21,5 @@ func TestConfigLockTimeoutMessage(t *testing.T) {
 	require.True(t, ok)
 	defer other.Unlock()
 	_, err = lockConfig()
-	require.EqualError(t, err, "no se pudo tomar el lock de configuración (otro quorumd arrancando)")
+	require.EqualError(t, err, "could not take the config lock (another quorumd is starting)")
 }

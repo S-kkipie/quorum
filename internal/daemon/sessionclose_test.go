@@ -12,13 +12,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// closeFake es un herdr falso con el panel w1:p1 (terminal term_1, Claude ya
-// terminado) que anota los pane.close.
+// closeFake is a fake herdr with pane w1:p1 (terminal term_1, Claude already
+// finished) that records the pane.close calls.
 type closeFake struct {
 	*herdrtest.Fake
 	mu    sync.Mutex
 	pane  map[string]any
-	fails int // los próximos fails pane.list responden error
+	fails int // the next fails pane.list calls answer an error
 }
 
 func newCloseFake(t *testing.T) *closeFake {
@@ -72,7 +72,7 @@ func (f *closeFake) lists() int {
 	return n
 }
 
-// closeTimes acorta los plazos; se fijan antes de arrancar cualquier goroutine.
+// closeTimes shortens the deadlines; set before starting any goroutine.
 func closeTimes(t *testing.T, wait, poll, window time.Duration) {
 	oW, oP, oX := sessionCloseWait, sessionClosePoll, sessionCloseWindow
 	sessionCloseWait, sessionClosePoll, sessionCloseWindow = wait, poll, window
@@ -89,7 +89,7 @@ func closeSetup(t *testing.T, launchReq string) (*closeFake, *Host, *Registry) {
 	return f, h, reg
 }
 
-// requested espera a que el pedido de cierre haya leído el terminal_id.
+// requested waits for the close request to have read the terminal_id.
 func requested(t *testing.T, f *closeFake, h *Host, reg *Registry) {
 	t.Helper()
 	n := f.lists()
@@ -98,7 +98,7 @@ func requested(t *testing.T, f *closeFake, h *Host, reg *Registry) {
 	time.Sleep(20 * time.Millisecond)
 }
 
-// noClose espera más que la ventana de sondeo y comprueba que no se cerró nada.
+// noClose waits longer than the polling window and checks that nothing was closed.
 func noClose(t *testing.T, f *closeFake) {
 	t.Helper()
 	time.Sleep(3 * sessionCloseWindow / 2)
@@ -116,7 +116,7 @@ func closedOnce(t *testing.T, f *closeFake) {
 func TestSessionCloseAfterGone(t *testing.T) {
 	f, h, reg := closeSetup(t, "req1")
 	requested(t, f, h, reg)
-	require.Empty(t, f.closes()) // todavía no: Claude sigue cerrándose
+	require.Empty(t, f.closes()) // not yet: Claude is still closing
 	reg.Gone("s1")
 	closedOnce(t, f)
 }
@@ -132,23 +132,23 @@ func TestSessionCloseDoneStatus(t *testing.T) {
 func TestSessionCloseGoneBeforeTerminalID(t *testing.T) {
 	f, h, reg := closeSetup(t, "req1")
 	h.closeRequested(reg, "s1")
-	reg.Gone("s1") // puede llegar antes de que se lea el terminal_id
+	reg.Gone("s1") // may arrive before the terminal_id is read
 	closedOnce(t, f)
 }
 
-// Sin Gone, el plazo solo olvida el pedido: el dueño podría estar usando la shell.
+// Without Gone, the deadline only forgets the request: the owner might be using the shell.
 func TestSessionCloseTimeoutWithoutGone(t *testing.T) {
 	f, h, reg := closeSetup(t, "req1")
 	sessionCloseWait = 30 * time.Millisecond
 	requested(t, f, h, reg)
 	time.Sleep(60 * time.Millisecond)
-	reg.Gone("s1") // tarde: el pedido ya se olvidó
+	reg.Gone("s1") // late: the request was already forgotten
 	noClose(t, f)
 }
 
 func TestSessionCloseNeedsCloseCommand(t *testing.T) {
 	f, _, reg := closeSetup(t, "req1")
-	reg.Gone("s1") // terminó sola: su pestaña se queda
+	reg.Gone("s1") // ended on its own: its tab stays
 	noClose(t, f)
 }
 
@@ -162,7 +162,7 @@ func TestSessionCloseNotQuorumLaunched(t *testing.T) {
 func TestSessionCloseTerminalChanged(t *testing.T) {
 	f, h, reg := closeSetup(t, "req1")
 	requested(t, f, h, reg)
-	f.set("terminal_id", "term_2") // herdr reusó el id del panel
+	f.set("terminal_id", "term_2") // herdr reused the pane's id
 	reg.Gone("s1")
 	noClose(t, f)
 }
@@ -179,7 +179,7 @@ func TestSessionCloseAgentBusy(t *testing.T) {
 	}
 }
 
-// Tras el Gone se sondea: primero working, luego idle → cierra.
+// After Gone it polls: first working, then idle → closes.
 func TestSessionCloseRetriesUntilIdle(t *testing.T) {
 	f, h, reg := closeSetup(t, "req1")
 	sessionCloseWindow = 2 * time.Second
@@ -207,12 +207,12 @@ func TestSessionCloseNoAgent(t *testing.T) {
 	f, h, reg := closeSetup(t, "req1")
 	requested(t, f, h, reg)
 	f.set("agent", "")
-	f.set("agent_status", "unknown") // sin agente el estado no cuenta
+	f.set("agent_status", "unknown") // without an agent the status does not count
 	reg.Gone("s1")
 	closedOnce(t, f)
 }
 
-// El comando close que llega del hub arma el cierre; el Gone del registro lo dispara.
+// The close command arriving from the hub arms the close; the registry's Gone triggers it.
 func TestSessionCloseViaHubLink(t *testing.T) {
 	closeTimes(t, time.Minute, 5*time.Millisecond, 100*time.Millisecond)
 	f := newCloseFake(t)
@@ -226,7 +226,7 @@ func TestSessionCloseViaHubLink(t *testing.T) {
 	case c := <-cmds:
 		require.Equal(t, "close", c.Type)
 	case <-time.After(3 * time.Second):
-		t.Fatal("el close no llegó a la sesión")
+		t.Fatal("the close did not reach the session")
 	}
 	require.Eventually(t, func() bool { return f.lists() > 0 }, 2*time.Second, 2*time.Millisecond)
 	time.Sleep(20 * time.Millisecond)

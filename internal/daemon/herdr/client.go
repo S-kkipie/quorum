@@ -1,4 +1,4 @@
-// Package herdr es el cliente del socket unix de herdr (JSON por líneas).
+// Package herdr is the client for herdr's unix socket (line-delimited JSON).
 package herdr
 
 import (
@@ -17,16 +17,16 @@ import (
 
 const defaultTimeout = 10 * time.Second
 
-// Client habla con herdr. Una conexión por llamada.
+// Client talks to herdr. One connection per call.
 type Client struct{ Socket string }
 
-// Error es un error devuelto por el servidor de herdr.
+// Error is an error returned by the herdr server.
 type Error struct{ Code, Message string }
 
 func (e *Error) Error() string { return "herdr: " + e.Code + ": " + e.Message }
 
-// IsNotFound dice si err es un error de herdr por algo que no existe: not_found
-// o cualquier código <algo>_not_found (herdr 0.9.5 responde pane_not_found,
+// IsNotFound reports whether err is a herdr error for something that does not exist: not_found
+// or any <something>_not_found code (herdr 0.9.5 answers pane_not_found,
 // workspace_not_found, tab_not_found...).
 func IsNotFound(err error) bool {
 	var he *Error
@@ -44,17 +44,17 @@ type Pane struct {
 	ID           string `json:"pane_id"`
 	WorkspaceID  string `json:"workspace_id"`
 	TabID        string `json:"tab_id"`
-	TerminalID   string `json:"terminal_id"` // único por terminal; los ids de panel se reusan
+	TerminalID   string `json:"terminal_id"` // unique per terminal; pane ids are reused
 	Cwd          string `json:"cwd"`
 	Focused      bool   `json:"focused"`
 	Agent        string `json:"agent"`
-	AgentStatus  string `json:"agent_status"` // p. ej. idle, working, blocked
+	AgentStatus  string `json:"agent_status"` // e.g. idle, working, blocked
 	AgentSession *struct {
 		Value string `json:"value"`
 	} `json:"agent_session"`
 }
 
-// SocketPath resuelve el socket: override > $HERDR_SOCKET_PATH > ~/.config/herdr/herdr.sock.
+// SocketPath resolves the socket: override > $HERDR_SOCKET_PATH > ~/.config/herdr/herdr.sock.
 func SocketPath(override string) string {
 	if override != "" {
 		return override
@@ -68,8 +68,8 @@ func SocketPath(override string) string {
 
 var reqSeq atomic.Uint64
 
-// Call envía una petición y deserializa `result` en out (puede ser nil).
-// Plazo: el del ctx, o 10 s si no tiene.
+// Call sends a request and deserializes `result` into out (may be nil).
+// Deadline: the ctx's, or 10 s if it has none.
 func (c *Client) Call(ctx context.Context, method string, params, out any) error {
 	if _, ok := ctx.Deadline(); !ok {
 		var cancel context.CancelFunc
@@ -85,7 +85,7 @@ func (c *Client) Call(ctx context.Context, method string, params, out any) error
 	if dl, ok := ctx.Deadline(); ok {
 		conn.SetDeadline(dl)
 	}
-	// Si el ctx se cancela a mitad de la llamada, corta la conexión.
+	// If the ctx is cancelled mid-call, cut the connection.
 	stop := context.AfterFunc(ctx, func() { conn.Close() })
 	defer stop()
 
@@ -112,7 +112,7 @@ func (c *Client) Call(ctx context.Context, method string, params, out any) error
 		Error  *Error          `json:"error"`
 	}
 	if err := json.Unmarshal(resp, &r); err != nil {
-		return fmt.Errorf("herdr: respuesta inválida: %w", err)
+		return fmt.Errorf("herdr: invalid response: %w", err)
 	}
 	if r.Error != nil {
 		return r.Error
@@ -123,7 +123,7 @@ func (c *Client) Call(ctx context.Context, method string, params, out any) error
 	return json.Unmarshal(r.Result, out)
 }
 
-// Available dice si el socket existe y workspace.list responde en < 1 s.
+// Available reports whether the socket exists and workspace.list answers in < 1 s.
 func (c *Client) Available(ctx context.Context) bool {
 	if _, err := os.Stat(c.Socket); err != nil {
 		return false
@@ -143,7 +143,7 @@ func (c *Client) ListWorkspaces(ctx context.Context) ([]Workspace, error) {
 	return out.Workspaces, nil
 }
 
-// ListPanes lista los paneles; workspaceID vacío = todos.
+// ListPanes lists the panes; empty workspaceID = all.
 func (c *Client) ListPanes(ctx context.Context, workspaceID string) ([]Pane, error) {
 	p := map[string]any{}
 	if workspaceID != "" {
@@ -164,7 +164,7 @@ type rootPane struct {
 	} `json:"root_pane"`
 }
 
-// CreateWorkspace crea un workspace sin robar el foco.
+// CreateWorkspace creates a workspace without stealing focus.
 func (c *Client) CreateWorkspace(ctx context.Context, cwd, label string, env map[string]string) (wsID, root string, err error) {
 	var out struct {
 		rootPane
@@ -182,7 +182,7 @@ func (c *Client) CreateWorkspace(ctx context.Context, cwd, label string, env map
 	return out.Workspace.ID, out.RootPane.ID, nil
 }
 
-// CreateTab crea una pestaña en el workspace sin robar el foco.
+// CreateTab creates a tab in the workspace without stealing focus.
 func (c *Client) CreateTab(ctx context.Context, wsID, cwd, label string, env map[string]string) (string, error) {
 	var out rootPane
 	p := map[string]any{"workspace_id": wsID, "cwd": cwd, "label": label, "focus": false}
@@ -195,7 +195,7 @@ func (c *Client) CreateTab(ctx context.Context, wsID, cwd, label string, env map
 	return out.RootPane.ID, nil
 }
 
-// StartAgent arranca un agente en el panel. Plazo: timeoutMs + 5 s.
+// StartAgent starts an agent in the pane. Deadline: timeoutMs + 5 s.
 func (c *Client) StartAgent(ctx context.Context, name, kind, pane string, args []string, timeoutMs int) error {
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(timeoutMs)*time.Millisecond+5*time.Second)
 	defer cancel()
@@ -204,7 +204,7 @@ func (c *Client) StartAgent(ctx context.Context, name, kind, pane string, args [
 	}, nil)
 }
 
-// ReadPane lee la pantalla del panel, siempre con ANSI.
+// ReadPane reads the pane's screen, always with ANSI.
 func (c *Client) ReadPane(ctx context.Context, pane, source string, lines int) (string, error) {
 	var out struct {
 		Read struct {
@@ -217,7 +217,7 @@ func (c *Client) ReadPane(ctx context.Context, pane, source string, lines int) (
 	return out.Read.Text, err
 }
 
-// PaneSize devuelve columnas y filas del panel según pane.layout.
+// PaneSize returns the pane's columns and rows according to pane.layout.
 func (c *Client) PaneSize(ctx context.Context, pane string) (cols, rows int, err error) {
 	var out struct {
 		Layout struct {
@@ -238,7 +238,7 @@ func (c *Client) PaneSize(ctx context.Context, pane string) (cols, rows int, err
 			return p.Rect.Width, p.Rect.Height, nil
 		}
 	}
-	return 0, 0, fmt.Errorf("herdr: panel %s no está en el layout", pane)
+	return 0, 0, fmt.Errorf("herdr: pane %s is not in the layout", pane)
 }
 
 func (c *Client) SendText(ctx context.Context, pane, text string) error {

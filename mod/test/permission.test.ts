@@ -5,7 +5,7 @@ import { HOLD_MAX_MS, LATE_NOTICE, NO_TERMINAL_MS, permissionQuestion, permissio
 
 const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve() }
 
-/** Fakes: link que registra eventos, sleep a mano, reloj a mano, diálogo de la terminal a mano. */
+/** Fakes: link that records events, manual sleep, manual clock, manual terminal dialog. */
 function fake(opts: { signal?: AbortSignal } = {}) {
   const evs: Array<{ kind: string; data: any }> = []
   const sleeps: Array<{ ms: number; fire: () => void }> = []
@@ -39,7 +39,7 @@ function fake(opts: { signal?: AbortSignal } = {}) {
   }
 }
 
-test('gana el dispositivo (allow): sin ask_resolved del mod; la respuesta tardía de la terminal no cambia nada', async () => {
+test('a device wins (allow): no ask_resolved from the mod; the late terminal answer changes nothing', async () => {
   const f = fake()
   const p = permissionRace(f.deps, f.a)
   await flush()
@@ -48,21 +48,21 @@ test('gana el dispositivo (allow): sin ask_resolved del mod; la respuesta tardí
   expect(f.sleeps.map(s => s.ms)).toEqual([HOLD_MAX_MS])
   expect(f.held.length).toBe(1)
   f.asks.resolve('a1', { decision: 'allow' })
-  expect(await p).toEqual({ decision: 'allow', reason: 'Permitido desde Quorum' })
-  f.answer('Denegar')
+  expect(await p).toEqual({ decision: 'allow', reason: 'Allowed from Quorum' })
+  f.answer('Deny')
   await flush()
   expect(f.resolved()).toEqual([])
   expect(f.logs).toEqual([LATE_NOTICE])
   expect(f.kinds()).toEqual(['ask', 'status', 'status'])
   expect(f.asks.pending).toEqual([])
-  // el sostén se libera con la decisión
+  // the keep-alive is released with the decision
   let released = false
   void f.held[0].then(() => { released = true })
   await flush()
   expect(released).toBe(true)
 })
 
-test('el dispositivo deniega: con su motivo o el genérico', async () => {
+test('the device denies: with its reason or the generic one', async () => {
   const f = fake()
   const p1 = permissionRace(f.deps, f.a)
   await flush()
@@ -71,110 +71,110 @@ test('el dispositivo deniega: con su motivo o el genérico', async () => {
   const p2 = permissionRace(f.deps, f.a)
   await flush()
   f.asks.resolve('a2', { decision: 'deny' })
-  expect(await p2).toEqual({ decision: 'deny', reason: 'Denegado desde Quorum' })
+  expect(await p2).toEqual({ decision: 'deny', reason: 'Denied from Quorum' })
 })
 
-test('la terminal responde Permitir primero → allow y ask_resolved{by:terminal}', async () => {
+test('the terminal answers Allow first → allow y ask_resolved{by:terminal}', async () => {
   const f = fake()
   const p = permissionRace(f.deps, f.a)
   await flush()
-  f.answer('Permitir')
-  expect(await p).toEqual({ decision: 'allow', reason: 'Permitido en la terminal' })
+  f.answer('Allow')
+  expect(await p).toEqual({ decision: 'allow', reason: 'Allowed in the terminal' })
   expect(f.resolved()).toEqual([{ askId: 'a1', by: 'terminal' }])
   expect(f.asks.pending).toEqual([])
-  // una decisión tardía del dispositivo ya no encuentra el ask
+  // a late device decision no longer finds the ask
   expect(f.asks.resolve('a1', { decision: 'deny' })).toBe(false)
 })
 
-test('la terminal responde Denegar → deny', async () => {
+test('the terminal answers Deny → deny', async () => {
   const f = fake()
   const p = permissionRace(f.deps, f.a)
   await flush()
-  f.answer('Denegar')
-  expect(await p).toEqual({ decision: 'deny', reason: 'Denegado en la terminal' })
+  f.answer('Deny')
+  expect(await p).toEqual({ decision: 'deny', reason: 'Denied in the terminal' })
   expect(f.resolved()).toEqual([{ askId: 'a1', by: 'terminal' }])
 })
 
-test('la terminal escribe otra cosa (Other) → deny con lo que escribió', async () => {
+test('the terminal types something else (Other) → deny with what was typed', async () => {
   const f = fake()
   const p = permissionRace(f.deps, f.a)
   await flush()
-  f.answer('mejor en /tmp')
-  expect(await p).toEqual({ decision: 'deny', reason: 'Denegado en la terminal: mejor en /tmp' })
+  f.answer('better in /tmp')
+  expect(await p).toEqual({ decision: 'deny', reason: 'Denied in the terminal: better in /tmp' })
 })
 
-test('el dueño cierra el diálogo (Esc) → la terminal deniega y retira la tarjeta', async () => {
+test('the owner closes the dialog (Esc) → the terminal denies and withdraws the card', async () => {
   const f = fake()
   const p = permissionRace(f.deps, f.a)
   await flush()
   f.clock.t += NO_TERMINAL_MS
   f.dismiss()
-  expect(await p).toEqual({ decision: 'deny', reason: 'Denegado en la terminal' })
+  expect(await p).toEqual({ decision: 'deny', reason: 'Denied in the terminal' })
   expect(f.resolved()).toEqual([{ askId: 'a1', by: 'terminal' }])
   expect(f.asks.pending).toEqual([])
 })
 
-test('respuesta que no es texto → deny sin romper nada', async () => {
+test('a non-text answer → deny without breaking anything', async () => {
   const f = fake()
   const p = permissionRace(f.deps, f.a)
   await flush()
   f.answer(undefined)
-  expect(await p).toEqual({ decision: 'deny', reason: 'Denegado en la terminal' })
+  expect(await p).toEqual({ decision: 'deny', reason: 'Denied in the terminal' })
 })
 
-test('nadie responde en HOLD_MAX_MS → deny con motivo y ask_resolved{by:terminal}', async () => {
+test('nobody answers within HOLD_MAX_MS → deny with a reason y ask_resolved{by:terminal}', async () => {
   const f = fake()
   const p = permissionRace(f.deps, f.a)
   await flush()
   f.sleeps[0].fire()
-  expect(await p).toEqual({ decision: 'deny', reason: 'Sin respuesta en 19 min (Quorum)' })
+  expect(await p).toEqual({ decision: 'deny', reason: 'No answer in 19 min (Quorum)' })
   expect(f.resolved()).toEqual([{ askId: 'a1', by: 'terminal' }])
 })
 
-test('signal abortado (turno interrumpido) → retira el ask y deniega', async () => {
+test('aborted signal (turn interrupted) → withdraws the ask and denies', async () => {
   const ac = new AbortController()
   const f = fake({ signal: ac.signal })
   const p = permissionRace(f.deps, f.a)
   await flush()
   ac.abort()
-  expect(await p).toEqual({ decision: 'deny', reason: 'Turno interrumpido' })
+  expect(await p).toEqual({ decision: 'deny', reason: 'Turn interrupted' })
   expect(f.kinds()).toEqual(['ask', 'status', 'ask_resolved', 'status'])
   expect(f.resolved()).toEqual([{ askId: 'a1', by: 'terminal' }])
-  // la respuesta tardía de la terminal no emite nada más
-  f.answer('Permitir')
+  // the terminal's late answer emits nothing more
+  f.answer('Allow')
   await flush()
   expect(f.resolved().length).toBe(1)
 })
 
-test('signal ya abortado → deniega sin preguntar', async () => {
+test('signal already aborted → denies without asking', async () => {
   const ac = new AbortController()
   ac.abort()
   const f = fake({ signal: ac.signal })
-  expect(await permissionRace(f.deps, f.a)).toEqual({ decision: 'deny', reason: 'Turno interrumpido' })
+  expect(await permissionRace(f.deps, f.a)).toEqual({ decision: 'deny', reason: 'Turn interrupted' })
   expect(f.evs).toEqual([])
   expect(f.questions).toEqual([])
 })
 
-test('retirado desde fuera (fin de turno, cierre) → deny Turno interrumpido', async () => {
+test('withdrawn from outside (end of turn, close) → deny Turn interrupted', async () => {
   const f = fake()
   const p = permissionRace(f.deps, f.a)
   await flush()
   f.asks.withdrawKind('permission')
-  expect(await p).toEqual({ decision: 'deny', reason: 'Turno interrumpido' })
+  expect(await p).toEqual({ decision: 'deny', reason: 'Turn interrupted' })
   expect(f.resolved()).toEqual([{ askId: 'a1', by: 'terminal' }])
 })
 
-test('termAsk que lanza al llamarse = sin terminal: sigue el dispositivo, sin excepción', async () => {
+test('termAsk that throws when called = no terminal: the device continues, no exception', async () => {
   const f = fake()
-  f.deps.termAsk = () => { throw new Error('sin ui') }
+  f.deps.termAsk = () => { throw new Error('no ui') }
   const p = permissionRace(f.deps, f.a)
   await flush()
   expect(f.asks.pending).toEqual(['a1'])
   f.asks.resolve('a1', { decision: 'allow' })
-  expect(await p).toEqual({ decision: 'allow', reason: 'Permitido desde Quorum' })
+  expect(await p).toEqual({ decision: 'allow', reason: 'Allowed from Quorum' })
 })
 
-test('sin terminal (sin termAsk): solo el dispositivo, hasta el tope', async () => {
+test('no terminal (no termAsk): only the device, up to the cap', async () => {
   const f = fake()
   f.deps.termAsk = undefined
   const p = permissionRace(f.deps, f.a)
@@ -183,11 +183,11 @@ test('sin terminal (sin termAsk): solo el dispositivo, hasta el tope', async () 
   expect(f.kinds()).toEqual(['ask', 'status'])
   expect(f.held.length).toBe(1)
   f.sleeps[0].fire()
-  expect(await p).toEqual({ decision: 'deny', reason: 'Sin respuesta en 19 min (Quorum)' })
+  expect(await p).toEqual({ decision: 'deny', reason: 'No answer in 19 min (Quorum)' })
   expect(f.resolved()).toEqual([{ askId: 'a1', by: 'terminal' }])
 })
 
-test('$.ui.ask rechaza enseguida (< 500 ms, corrida -p) → no es Esc: espera al dispositivo', async () => {
+test('$.ui.ask rejects right away (< 500 ms, -p run) → not Esc: waits for the device', async () => {
   const f = fake()
   const p = permissionRace(f.deps, f.a)
   let out: unknown
@@ -199,22 +199,22 @@ test('$.ui.ask rechaza enseguida (< 500 ms, corrida -p) → no es Esc: espera al
   expect(out).toBe(undefined)
   expect(f.asks.pending).toEqual(['a1'])
   expect(f.resolved()).toEqual([])
-  f.asks.resolve('a1', { decision: 'deny', reason: 'desde el móvil' })
-  expect(await p).toEqual({ decision: 'deny', reason: 'desde el móvil' })
+  f.asks.resolve('a1', { decision: 'deny', reason: 'from the phone' })
+  expect(await p).toEqual({ decision: 'deny', reason: 'from the phone' })
 })
 
-test('respuesta tardía tras vencer o retirarse: sin aviso de Quorum', async () => {
+test('late answer after expiring or being withdrawn: no Quorum notice', async () => {
   const f = fake()
   const p = permissionRace(f.deps, f.a)
   await flush()
   f.asks.withdrawKind('permission')
   await p
-  f.answer('Permitir')
+  f.answer('Allow')
   await flush()
   expect(f.logs).toEqual([])
 })
 
-test('dos carreras a la vez: askIds distintos; responder una retira solo esa; needs_you hasta la otra', async () => {
+test('two races at once: distinct askIds; answering one withdraws only that one; needs_you until the other', async () => {
   const f = fake()
   const answers: Array<(s: string) => void> = []
   f.deps.termAsk = () => new Promise<string>(r => { answers.push(r) })
@@ -222,30 +222,30 @@ test('dos carreras a la vez: askIds distintos; responder una retira solo esa; ne
   const p2 = permissionRace(f.deps, { tool: 'Bash', summary: 'ls', detail: '' })
   await flush()
   expect(f.evs.filter(e => e.kind === 'ask').map(e => e.data.askId)).toEqual(['a1', 'a2'])
-  answers[0]('Permitir')
-  expect(await p1).toEqual({ decision: 'allow', reason: 'Permitido en la terminal' })
+  answers[0]('Allow')
+  expect(await p1).toEqual({ decision: 'allow', reason: 'Allowed in the terminal' })
   expect(f.resolved()).toEqual([{ askId: 'a1', by: 'terminal' }])
   expect(f.asks.pending).toEqual(['a2'])
   const statuses = () => f.evs.filter(e => e.kind === 'status').map(e => e.data.state)
   expect(statuses()).toEqual(['needs_you', 'needs_you'])
   f.asks.resolve('a2', { decision: 'deny' })
-  expect(await p2).toEqual({ decision: 'deny', reason: 'Denegado desde Quorum' })
+  expect(await p2).toEqual({ decision: 'deny', reason: 'Denied from Quorum' })
   expect(statuses()).toEqual(['needs_you', 'needs_you', 'working'])
 })
 
-test('ask de un subagente: withdrawAgent retira solo los suyos', async () => {
+test('a subagent ask: withdrawAgent withdraws only its own', async () => {
   const f = fake()
   const p1 = permissionRace(f.deps, { ...f.a, agentId: 'ag1' })
   const p2 = permissionRace(f.deps, { ...f.a, agentId: 'ag2' })
   await flush()
   f.asks.withdrawAgent('ag1')
-  expect(await p1).toEqual({ decision: 'deny', reason: 'Turno interrumpido' })
+  expect(await p1).toEqual({ decision: 'deny', reason: 'Turn interrupted' })
   expect(f.asks.pending).toEqual(['a2'])
   f.asks.resolve('a2', { decision: 'allow' })
-  expect(await p2).toEqual({ decision: 'allow', reason: 'Permitido desde Quorum' })
+  expect(await p2).toEqual({ decision: 'allow', reason: 'Allowed from Quorum' })
 })
 
-test('pregunta de la terminal: "<tool>: <summary>" hasta 120 caracteres', () => {
+test('terminal question: "<tool>: <summary>" up to 120 characters', () => {
   expect(permissionQuestion('Bash', 'ls')).toBe('Bash: ls')
   const q = permissionQuestion('Bash', 'x'.repeat(300))
   expect(q.length).toBe(120)

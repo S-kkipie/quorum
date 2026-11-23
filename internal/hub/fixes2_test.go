@@ -1,6 +1,6 @@
 package hub
 
-// Regresiones de la segunda ronda de arreglos (residuales del plan 1).
+// Regressions from the second round of fixes (leftovers from plan 1).
 
 import (
 	"context"
@@ -42,27 +42,27 @@ func (f *appFx) restSessions(t *testing.T) map[string]proto.SessionInfo {
 	return out
 }
 
-// Important Q: tras /clear A→B, `claude --resume A` revive A mientras B vive. Los
-// upserts/hellos que aún traen B.previousId=A no mueven asks de A a B.
+// Important Q: after /clear A→B, `claude --resume A` revives A while B lives.
+// Upserts/hellos that still carry B.previousId=A do not move asks from A to B.
 func TestResumedOldIDKeepsAsks(t *testing.T) {
 	f := newAppFx(t, "A")
 	f.machineSend(t, upsertEnv("B", "A", proto.StateIdle)) // /clear
 	eventually(t, func() bool { _, err := f.st.Session("A"); return err != nil })
 
-	f.machineSend(t, upsertEnv("A", "", proto.StateIdle)) // resume A en otra terminal
+	f.machineSend(t, upsertEnv("A", "", proto.StateIdle)) // resume A in another terminal
 	eventually(t, func() bool { return f.srv.sessionLive("A") })
 	_, ch := f.live(t)
 	waitEnv(t, ch, func(e proto.Envelope) bool { return e.Type == "session_upsert" })
 	f.machineSend(t, askEnv("A", "a2"))
 	eventually(t, func() bool { f.srv.asks.mu.Lock(); defer f.srv.asks.mu.Unlock(); return f.srv.asks.open["a2"] == "A" })
 
-	// B se re-registra (update/hello) todavía con previousId=A
+	// B re-registers (update/hello) still with previousId=A
 	f.machineSend(t, upsertEnv("B", "A", proto.StateWorking))
 	e := waitEnv(t, ch, func(e proto.Envelope) bool { return e.Type == "session_upsert" && e.Session == "B" })
 	var si proto.SessionInfo
 	require.NoError(t, json.Unmarshal(e.Payload, &si))
 	require.Empty(t, si.PreviousID)
-	// y una reconexión con las dos vivas en el hello
+	// and a reconnection with both alive in the hello
 	f.mach.CloseNow()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -82,8 +82,8 @@ func TestResumedOldIDKeepsAsks(t *testing.T) {
 	require.Equal(t, 202, f.post("/api/sessions/A/decide", `{"askId":"a2","decision":"allow"}`).StatusCode)
 }
 
-// Important R: tras reiniciar el hub, una máquina que no vuelve cierra sus sesiones
-// (y poda sus asks) al vencer la gracia; la que vuelve a tiempo no pierde nada.
+// Important R: after the hub restarts, a machine that does not come back closes its sessions
+// (and prunes its asks) when the grace period expires; the one that returns in time loses nothing.
 func TestStartupGraceClosesMachinesThatNeverReturn(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "hub.db"))
 	require.NoError(t, err)
@@ -107,7 +107,7 @@ func TestStartupGraceClosesMachinesThatNeverReturn(t *testing.T) {
 	require.NoError(t, st.AddToken("machine", "m1", f.machTok))
 	f.devTok, _ = NewToken()
 	require.NoError(t, st.AddToken("device", "tel", f.devTok))
-	// m1 vuelve dentro de la gracia
+	// m1 comes back within the grace period
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	mc, _, err := websocket.Dial(ctx, f.wsURL("/api/machine/ws"), &websocket.DialOptions{HTTPHeader: http.Header{"Authorization": {"Bearer " + f.machTok}}})
@@ -125,7 +125,7 @@ func TestStartupGraceClosesMachinesThatNeverReturn(t *testing.T) {
 	s.asks.mu.Unlock()
 }
 
-// Minor: el límite de intentos de emparejamiento es por IP remota.
+// Minor: the pairing attempt limit is per remote IP.
 func TestPairLimiterPerIP(t *testing.T) {
 	s, st, h := newTestServer(t)
 	try := func(remote, xff, code string) int {
@@ -142,11 +142,11 @@ func TestPairLimiterPerIP(t *testing.T) {
 		require.Equal(t, 400, try("203.0.113.9:4000", "", "bad"))
 	}
 	require.Equal(t, 429, try("203.0.113.9:4001", "", "bad"))
-	// otra IP no queda bloqueada
+	// another IP is not blocked
 	code, err := st.CreateCode("pair")
 	require.NoError(t, err)
 	require.Equal(t, 200, try("198.51.100.7:5000", "", code))
-	// X-Forwarded-For solo cuenta detrás de un proxy local (loopback)
+	// X-Forwarded-For only counts behind a local proxy (loopback)
 	require.Equal(t, 429, try("203.0.113.9:4002", "198.51.100.8", "bad"))
 	for i := 0; i < 10; i++ {
 		require.Equal(t, 400, try("127.0.0.1:6000", "192.0.2.50", "bad"))
@@ -156,10 +156,10 @@ func TestPairLimiterPerIP(t *testing.T) {
 	_ = s
 }
 
-// Minor: el nombre del dispositivo se recorta y se limita a 64 caracteres.
+// Minor: the device name is trimmed and limited to 64 characters.
 func TestDeviceNameTrimmedAndLimited(t *testing.T) {
 	require.Equal(t, "tel", deviceName("  tel \n"))
-	require.Equal(t, "dispositivo", deviceName("   "))
+	require.Equal(t, "device", deviceName("   "))
 	long := strings.Repeat("ñ", 100)
 	require.Equal(t, strings.Repeat("ñ", 64), deviceName(long))
 	_, st, h := newTestServer(t)
@@ -171,14 +171,14 @@ func TestDeviceNameTrimmedAndLimited(t *testing.T) {
 	require.Equal(t, strings.Repeat("ñ", 64), ds[0].Name)
 }
 
-// Minor: el plazo de escritura crece con el tamaño (backfill de hasta 4 MiB).
+// Minor: the write deadline grows with the size (backfill of up to 4 MiB).
 func TestWriteTimeoutScalesWithSize(t *testing.T) {
 	require.Equal(t, writeTimeout, writeTimeoutFor(proto.Envelope{}))
 	big := proto.Envelope{Payload: make(json.RawMessage, 4<<20)}
 	require.Equal(t, writeTimeout+4*time.Second, writeTimeoutFor(big))
 }
 
-// Minor: dos pedidos simultáneos de historial mandan un solo backfill.
+// Minor: two simultaneous history requests send a single backfill.
 func TestConcurrentBackfillRequestSendsOnce(t *testing.T) {
 	f := newAppFx(t, "s1")
 	var wg sync.WaitGroup
@@ -200,24 +200,24 @@ func TestConcurrentBackfillRequestSendsOnce(t *testing.T) {
 	<-f.backfills
 	select {
 	case <-f.backfills:
-		t.Fatal("backfill duplicado")
+		t.Fatal("duplicate backfill")
 	case <-time.After(150 * time.Millisecond):
 	}
-	// un envío fallido no deja la sesión marcada
-	require.False(t, f.srv.hub.requestBackfill("nadie", "s9"))
+	// a failed send does not leave the session marked
+	require.False(t, f.srv.hub.requestBackfill("nobody", "s9"))
 	f.srv.hub.mu.Lock()
 	_, marked := f.srv.hub.backfills["s9"]
 	f.srv.hub.mu.Unlock()
 	require.False(t, marked)
 }
 
-// Minor: un session_upsert de una sesión viva ya sembrada no vuelve a leer sus asks;
-// una sesión nueva o que vuelve tras cerrarse sí.
+// Minor: a session_upsert of an already-seeded live session does not read its asks again;
+// a new one or one that returns after closing does.
 func TestReseedOnlyForNewOrReturningSessions(t *testing.T) {
 	f := newAppFx(t, "s1")
 	f.machineSend(t, upsertEnv("s1", "", proto.StateWorking))
 	eventually(t, func() bool { f.srv.asks.mu.Lock(); defer f.srv.asks.mu.Unlock(); return f.srv.asks.known["s1"] })
-	// un ask guardado sin pasar por el feed (no se observa)
+	// an ask stored without going through the feed (not observed)
 	_, err := f.st.AppendEvent(proto.Event{Session: "s1", Kind: proto.KindAsk, Data: mustJSON(proto.Ask{AskID: "hidden"})})
 	require.NoError(t, err)
 	f.machineSend(t, upsertEnv("s1", "", proto.StateIdle))
@@ -226,7 +226,7 @@ func TestReseedOnlyForNewOrReturningSessions(t *testing.T) {
 	f.srv.asks.mu.Lock()
 	_, open := f.srv.asks.open["hidden"]
 	f.srv.asks.mu.Unlock()
-	require.False(t, open, "reseed no debió consultar el store")
+	require.False(t, open, "reseed should not have queried the store")
 	f.machineSend(t, proto.Envelope{Type: "session_gone", Session: "s1"})
 	eventually(t, func() bool { return !f.srv.sessionLive("s1") })
 	f.machineSend(t, upsertEnv("s1", "", proto.StateNeedsYou))
@@ -237,7 +237,7 @@ func TestReseedOnlyForNewOrReturningSessions(t *testing.T) {
 	})
 }
 
-// Minor: si no se puede guardar el ask_resolved no se publica sin seq ni queda reclamado.
+// Minor: if ask_resolved cannot be stored it is neither published without seq nor left claimed.
 func TestDecideStoreFailureNoUnsequencedEventNoClaimLeak(t *testing.T) {
 	dir := t.TempDir()
 	st, err := store.Open(filepath.Join(dir, "hub.db"))
@@ -268,7 +268,7 @@ func TestDecideStoreFailureNoUnsequencedEventNoClaimLeak(t *testing.T) {
 	select {
 	case e := <-ch:
 		if e.Type == "event" {
-			t.Fatalf("evento publicado sin seq: %s", e.Payload)
+			t.Fatalf("event published without seq: %s", e.Payload)
 		}
 	case <-time.After(150 * time.Millisecond):
 	}
@@ -278,17 +278,17 @@ func TestDecideStoreFailureNoUnsequencedEventNoClaimLeak(t *testing.T) {
 	require.True(t, s.asks.resolved["a1"])
 }
 
-// Minor: el hub hace ping a las máquinas y suelta la que no contesta.
+// Minor: the hub pings the machines and drops the one that does not answer.
 func TestSilentMachineDroppedByPing(t *testing.T) {
 	old := machinePing.Swap(int64(20 * time.Millisecond))
 	t.Cleanup(func() { machinePing.Store(old) })
 	f := newFixture(t, "m1")
-	c := f.dial(t) // nunca lee: no contesta pongs
+	c := f.dial(t) // never reads: does not answer pongs
 	sendHello(t, c, "m1", "s1")
 	eventually(t, func() bool { return f.srv.hub.Connected("m1") })
 	eventually(t, func() bool { return !f.srv.hub.Connected("m1") })
 
-	// una que lee (y contesta pongs) sigue conectada
+	// one that reads (and answers pongs) stays connected
 	c2 := f.dial(t)
 	go func() {
 		for {
@@ -303,8 +303,8 @@ func TestSilentMachineDroppedByPing(t *testing.T) {
 	require.True(t, f.srv.hub.Connected("m1"))
 }
 
-// Revisión: X-Forwarded-For falsificado (entradas a la izquierda) no da claves nuevas,
-// y el techo global frena la rotación de IPs reales.
+// Review: a forged X-Forwarded-For (entries on the left) gives no new keys,
+// and the global ceiling stops the rotation of real IPs.
 func TestPairLimiterRightmostXFFAndGlobalCeiling(t *testing.T) {
 	_, _, h := newTestServer(t)
 	try := func(remote, xff string) int {
@@ -336,13 +336,13 @@ func TestPairLimiterRightmostXFFAndGlobalCeiling(t *testing.T) {
 			n++
 		}
 	}
-	require.Equal(t, 30, n) // tras 30 fallos en total, 429 para todos
+	require.Equal(t, 30, n) // after 30 failures in total, 429 for everyone
 	require.Equal(t, 429, try("203.0.113.200:1", ""))
 }
 
-// Revisión: un upsert viejo encolado antes de leer el snapshot no se reenvía tras él
-// (resucitaría una sesión renombrada); los eventos sí; y un snapshot lento no deja al
-// cliente por lento.
+// Review: an old upsert queued before reading the snapshot is not resent after it
+// (it would resurrect a renamed session); events are; and a slow snapshot does not make the
+// client count as slow.
 func TestSnapshotDropsOlderQueuedState(t *testing.T) {
 	s, st, _ := newTestServer(t)
 	l := s.live
@@ -353,7 +353,7 @@ func TestSnapshotDropsOlderQueuedState(t *testing.T) {
 	require.NoError(t, st.UpsertSession(proto.SessionInfo{ID: "B", Machine: "m", State: proto.StateIdle}))
 	l.Publish(proto.Envelope{Type: "session_upsert", Session: "A", Payload: mustJSON(proto.SessionInfo{ID: "A", Machine: "m"})})
 	l.Publish(proto.Envelope{Type: "event", Session: "B", Payload: mustJSON(proto.Event{Session: "B", Seq: 1, Kind: proto.KindInfo})})
-	for i := 0; i < clientBuffer*2; i++ { // más de lo que cabría en el canal
+	for i := 0; i < clientBuffer*2; i++ { // more than would fit in the channel
 		l.Publish(proto.Envelope{Type: "launch_result"})
 	}
 	l.mu.Lock()
@@ -376,8 +376,8 @@ func TestSnapshotDropsOlderQueuedState(t *testing.T) {
 	require.True(t, still)
 }
 
-// Revisión: el previous_id guardado que repite cada hello no vuelve a consultar los
-// asks de una sesión ya sembrada.
+// Review: the stored previous_id that every hello repeats does not query the
+// asks of an already-seeded session again.
 func TestHelloStoredPreviousIDDoesNotReseed(t *testing.T) {
 	f := newAppFx(t, "A")
 	f.machineSend(t, upsertEnv("B", "A", proto.StateIdle))
@@ -388,7 +388,7 @@ func TestHelloStoredPreviousIDDoesNotReseed(t *testing.T) {
 	})
 	_, err := f.st.AppendEvent(proto.Event{Session: "B", Kind: proto.KindAsk, Data: mustJSON(proto.Ask{AskID: "hidden"})})
 	require.NoError(t, err)
-	f.srv.asks.reseed(f.st, "B", "A") // lo que publica cada hello con previous_id=A
+	f.srv.asks.reseed(f.st, "B", "A") // what every hello publishes with previous_id=A
 	f.srv.asks.mu.Lock()
 	_, open := f.srv.asks.open["hidden"]
 	f.srv.asks.mu.Unlock()

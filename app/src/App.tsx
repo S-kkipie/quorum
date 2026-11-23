@@ -14,6 +14,7 @@ import Pair from './screens/Pair'
 import Sessions from './screens/Sessions'
 import Starting from './screens/Starting'
 import Terminal from './screens/Terminal'
+import Viewer from './screens/Viewer'
 import { frames } from './lib/frames'
 
 export default function App() {
@@ -28,10 +29,12 @@ export default function App() {
 }
 
 type Tab = 'projects' | 'sessions'
-/** Navegación guardada en history.state (en el celular, "atrás" del navegador vuelve). */
-/** Terminal abierta; root/label (si vienen de "Terminal") dejan a la pantalla ofrecer "Abrir otra". */
+/** Navigation saved in history.state (on the phone, the browser's "back" goes back). */
+/** Open terminal; root/label (if they come from "Terminal") let the screen offer "Open another". */
 export interface TermNav { machine: string; pane: string; root?: string; label?: string }
-interface Nav { tab?: Tab; project?: string | null; ticket?: string | null; config?: string | null; session?: string | null; starting?: boolean; terminal?: TermNav | null; depth?: number }
+/** Open local artifact of a session. */
+export interface ViewNav { machine: string; sessionId: string; path: string }
+interface Nav { tab?: Tab; project?: string | null; ticket?: string | null; config?: string | null; session?: string | null; starting?: boolean; terminal?: TermNav | null; viewer?: ViewNav | null; depth?: number }
 const navNow = (): Nav => history.state ?? {}
 
 function Main() {
@@ -39,23 +42,24 @@ function Main() {
   const [tab, setTab] = useState<Tab>(() => navNow().tab ?? 'projects')
   const [project, setProject] = useState<string | null>(() => navNow().project ?? null)
   const [ticket, setTicket] = useState<string | null>(() => navNow().ticket ?? null)
-  // null = cerrada; '' = configuración general; id = editar ese proyecto
+  // null = closed; '' = general settings; id = edit that project
   const [config, setConfig] = useState<string | null>(() => navNow().config ?? null)
   const [selected, setSelected] = useState<string | null>(() => navNow().session ?? null)
   const [starting, setStarting] = useState(() => !!navNow().starting)
   const [terminal, setTerminal] = useState<TermNav | null>(() => navNow().terminal ?? null)
+  const [viewer, setViewer] = useState<ViewNav | null>(() => navNow().viewer ?? null)
   const [launching, setLaunching] = useState(false)
   const [pending, setPending] = useState<Pending | null>(null)
   const pendingRef = useRef<Pending | null>(null)
-  // resultados que llegan por el WS antes de que el POST /api/launch responda
+  // results that arrive over the WS before the POST /api/launch answers
   const early = useRef(new EarlyLaunches())
   const startingRef = useRef(starting)
   startingRef.current = starting
-  // handler siempre al día para el dispatch (que es estable)
+  // always up-to-date handler for the dispatch (which is stable)
   const onOpenNew = useRef<(id: string) => void>(() => {})
   const wide = useWide()
   const dispatch = useCallback((e: Envelope) => {
-    // las fotos de terminal llegan hasta 8/s: van a su propio almacén, no al reducer
+    // terminal snapshots arrive up to 8/s: they go to their own store, not the reducer
     if (e.type === 'term_frame') {
       const f = e.payload as TermFrame
       if (f) frames.set(e.machine, f.pane, f)
@@ -66,7 +70,7 @@ function Main() {
       const r = pendingReducer(pendingRef.current, e, Date.now())
       pendingRef.current = r.pending
       setPending(r.pending)
-      // incluso pasados los 60 s: solo si el usuario sigue en "Arrancando…" de ese lanzamiento
+      // even after the 60 s: only if the user is still on "Starting…" for that launch
       if (r.open && startingRef.current) onOpenNew.current(r.open)
     }
     setState((s) => reduce(s, e))
@@ -76,7 +80,7 @@ function Main() {
   const onCheckouts = useCallback((pid: string, cos: Checkout[]) => setState((s) => setCheckouts(s, pid, cos)), [])
   const onTicket = useCallback((v: TicketView) => setState((s) => setTicketDetail(s, v)), [])
 
-  // viewKey identifica el "linaje" de la sesión abierta: cambia al abrir otra, no al reemplazarse (/clear, /resume).
+  // viewKey identifies the "lineage" of the open session: it changes when another is opened, not when replaced (/clear, /resume).
   const [viewKey, setViewKey] = useState(() => selected ?? '')
   const apply = (n: Nav) => {
     setTab(n.tab ?? 'projects')
@@ -86,6 +90,7 @@ function Main() {
     setSelected(n.session ?? null)
     setStarting(!!n.starting)
     setTerminal(n.terminal ?? null)
+    setViewer(n.viewer ?? null)
     setViewKey(n.session ?? '')
   }
   useEffect(() => {
@@ -93,8 +98,8 @@ function Main() {
     window.addEventListener('popstate', h)
     return () => window.removeEventListener('popstate', h)
   }, [])
-  const cur: Nav = { tab, project, ticket, config, session: selected, starting, terminal }
-  /** Va a otra vista: en el celular apila una entrada en el historial; en escritorio solo cambia. */
+  const cur: Nav = { tab, project, ticket, config, session: selected, starting, terminal, viewer }
+  /** Goes to another view: on the phone it pushes a history entry; on desktop it just switches. */
   const go = (n: Nav, replace = false) => {
     const depth = history.state?.depth ?? 0
     if (!wide && !replace) {
@@ -107,10 +112,11 @@ function Main() {
       apply(next)
     }
   }
-  /** Atrás: en el celular, la entrada anterior del historial (si la app la apiló); si no, sube un nivel. */
+  /** Back: on the phone, the previous history entry (if the app pushed it); otherwise go up one level. */
   const back = () => {
     if (!wide && (history.state?.depth ?? 0) > 0) { history.back(); return }
-    if (terminal) go({ terminal: null }, true)
+    if (viewer) go({ viewer: null }, true)
+    else if (terminal) go({ terminal: null }, true)
     else if (starting) go({ starting: false }, true)
     else if (selected) go({ session: null }, true)
     else if (config !== null) go({ config: null }, true)
@@ -118,13 +124,13 @@ function Main() {
     else go({ project: null }, true)
   }
 
-  // Si la sesión abierta fue reemplazada, seguir al id nuevo sin remontar el chat.
+  // If the open session was replaced, follow the new id without remounting the chat.
   let current = selected
   for (let i = 0; current && i < 20 && state.replacedBy[current]; i++) current = state.replacedBy[current]
   const openSession = (id: string) => {
-    // la que ya se ve (quizá con otro id tras /clear): no se remonta ni se apila
+    // the one already shown (maybe with another id after /clear): not remounted or pushed
     if (id === current && (!wide || tab === 'sessions')) { setSelected(id); return }
-    // en escritorio la sesión se abre en la pestaña Sesiones (lista + chat)
+    // on desktop the session opens in the Sessions tab (list + chat)
     if (wide) go({ tab: 'sessions', session: id })
     else go({ session: id })
     setViewKey(id)
@@ -132,11 +138,11 @@ function Main() {
   onOpenNew.current = (id: string) => {
     pendingRef.current = null
     setPending(null)
-    // reemplaza la entrada "Arrancando…" del historial
-    go({ starting: false, terminal: null, session: id, ...(wide ? { tab: 'sessions' as Tab } : {}) }, true)
+    // replaces the "Starting…" history entry
+    go({ starting: false, terminal: null, viewer: null, session: id, ...(wide ? { tab: 'sessions' as Tab } : {}) }, true)
     setViewKey(id)
   }
-  // al salir de "Arrancando…" el lanzamiento deja de esperarse
+  // when leaving "Starting…" the launch is no longer awaited
   useEffect(() => {
     if (!starting) { pendingRef.current = null; setPending(null) }
   }, [starting])
@@ -151,18 +157,18 @@ function Main() {
   const live = useRef<Live | null>(null)
 
   const load = useCallback(async (replace: boolean) => {
-    // Carga inicial por REST (seed: no pisa lo que ya trajo el WS). Al reconectar,
-    // la lista REST reemplaza la del estado: trae lo que cambió durante la caída.
+    // Initial REST load (seed: does not overwrite what the WS already brought). On reconnect,
+    // the REST list replaces the state's: it brings what changed during the outage.
     try {
       const [ms, ss] = await Promise.all([listMachines(), listSessions()])
       setState((s) => (replace ? replaceSessions(s, ms, ss) : seed(s, ms, ss)))
-    } catch { /* 401 lo maneja api.ts */ }
+    } catch { /* 401 is handled by api.ts */ }
     try {
       const [workspaces, projects, proposals] = await Promise.all([listWorkspaces(), listProjects(), loadProposals()])
       setState((s) => setProjectsData(s, { workspaces: workspaces ?? [], projects: projects ?? [], proposals: proposals ?? [] }, replace))
-      // tickets de cada proyecto: el tablero cuenta propuestas y muestra estados combinados
+      // tickets of each project: the board counts proposals and shows combined states
       await Promise.all((projects ?? []).map((p) => listTickets(p.id).then((v) => setState((s) => setTickets(s, p.id, v ?? []))).catch(() => {})))
-    } catch { /* sin proyectos: el tablero queda vacío */ }
+    } catch { /* no projects: the board stays empty */ }
   }, [])
 
   useEffect(() => {
@@ -187,7 +193,7 @@ function Main() {
     setPending(r.pending)
     go({ starting: true, terminal: null })
   }
-  // Guarda única y síncrona de todos los lanzamientos: tarjeta, retomar y menú pasan por aquí.
+  // Single synchronous guard for all launches: card, resume and menu go through here.
   const launchingRef = useRef(false)
   const [inflight, setInflight] = useState(false)
   const guardLaunch = async (fn: () => Promise<{ reqId: string; machine: string; label: string }>) => {
@@ -206,15 +212,19 @@ function Main() {
   const openConfig = (id: string) => go({ config: id, starting: false })
   const dialog = launching && <LaunchDialog state={state} onClose={() => setLaunching(false)} onLaunched={onLaunched} />
   const top = (
-    <TopBar tab={tab} connected={connected} onTab={(t) => go({ tab: t, project: null, ticket: null, config: null, starting: false, terminal: null, session: wide ? selected : null }, true)}
+    <TopBar tab={tab} connected={connected} onTab={(t) => go({ tab: t, project: null, ticket: null, config: null, starting: false, terminal: null, viewer: null, session: wide ? selected : null }, true)}
       onLaunch={openLaunch} onConfig={() => openConfig('')} />
   )
   const terminalView = terminal && (
     <Terminal key={terminal.machine + '\x00' + terminal.pane} machine={terminal.machine} pane={terminal.pane} root={terminal.root} label={terminal.label}
       onBack={back} onReopen={(pane) => go({ terminal: { ...terminal, pane } }, true)} />
   )
+  const viewerView = viewer && (
+    <Viewer key={viewer.machine + '\x00' + viewer.sessionId + '\x00' + viewer.path} {...viewer}
+      base={state.sessions[viewer.sessionId]?.root || state.sessions[viewer.sessionId]?.cwd || ''} onBack={back} />
+  )
   const startingView = starting && <Starting pending={pending} terminal={!!(pending && state.machines[pending.machine]?.caps?.terminal)} onBack={back} onViewTerminal={onViewTerminal} />
-  const sessionView = current ? <Session key={viewKey} state={state} id={current} onBack={wide ? undefined : back} onEvents={onEvents} onGuard={guardLaunch} busy={launchBusy} onViewTerminal={onViewTerminal} /> : null
+  const sessionView = current ? <Session key={viewKey} state={state} id={current} onBack={wide ? undefined : back} onEvents={onEvents} onGuard={guardLaunch} busy={launchBusy} onViewTerminal={onViewTerminal} onOpenFile={(machine, path) => current && go({ viewer: { machine, sessionId: current, path } })} /> : null
   const sessionsList = <Sessions state={state} onOpen={openSession} selected={current} />
   const projectsView = <Projects state={state} wide={wide} selected={project} onOpen={(id) => go({ project: id, ticket: null })} onOpenSession={openSession} onConfig={() => openConfig('')} />
   const configView = config !== null && <Config key={config} state={state} editProject={config || null} onBack={back} />
@@ -229,14 +239,15 @@ function Main() {
 
   if (wide) {
     let body
-    if (terminalView) body = <main className="min-h-0 flex-1">{terminalView}</main>
+    if (viewerView) body = <main className="min-h-0 flex-1">{viewerView}</main>
+    else if (terminalView) body = <main className="min-h-0 flex-1">{terminalView}</main>
     else if (starting) body = <main className="min-h-0 flex-1">{startingView}</main>
     else if (config !== null) body = <main className="min-h-0 flex-1 overflow-y-auto">{configView}</main>
     else if (tab === 'sessions') {
       body = (
         <div className="flex min-h-0 flex-1">
           <aside className="w-[360px] shrink-0 overflow-y-auto border-r border-zinc-800">{sessionsList}</aside>
-          <main className="min-w-0 flex-1">{sessionView ?? <p className="p-6 text-sm text-zinc-500">Elige una sesión.</p>}</main>
+          <main className="min-w-0 flex-1">{sessionView ?? <p className="p-6 text-sm text-zinc-500">Pick a session.</p>}</main>
         </div>
       )
     } else {
@@ -252,7 +263,8 @@ function Main() {
     return <div className="flex h-dvh flex-col">{top}{body}{dialog}</div>
   }
   let view
-  if (terminalView) view = <div className="h-full">{terminalView}</div>
+  if (viewerView) view = <div className="h-full">{viewerView}</div>
+  else if (terminalView) view = <div className="h-full">{terminalView}</div>
   else if (startingView) view = <div className="h-full">{startingView}</div>
   else if (sessionView) view = <div className="h-full">{sessionView}</div>
   else if (configView) view = <div className="h-full overflow-y-auto">{configView}</div>
@@ -268,14 +280,14 @@ function TopBar({ tab, connected, onTab, onLaunch, onConfig }: { tab: Tab; conne
     <header className="sticky top-0 z-10 flex shrink-0 items-center gap-2 border-b border-zinc-800 bg-zinc-950/90 px-3 py-2 backdrop-blur">
       <h1 className="mr-1 hidden text-base font-semibold sm:block">Quorum</h1>
       <nav role="tablist" className="flex gap-1">
-        <button role="tab" aria-selected={tab === 'projects'} onClick={() => onTab('projects')} className={tabCls('projects')}>Proyectos</button>
-        <button role="tab" aria-selected={tab === 'sessions'} onClick={() => onTab('sessions')} className={tabCls('sessions')}>Sesiones</button>
+        <button role="tab" aria-selected={tab === 'projects'} onClick={() => onTab('projects')} className={tabCls('projects')}>Projects</button>
+        <button role="tab" aria-selected={tab === 'sessions'} onClick={() => onTab('sessions')} className={tabCls('sessions')}>Sessions</button>
       </nav>
       <span className="ml-auto flex items-center gap-2">
-        <button onClick={onConfig} aria-label="Configuración" title="Configuración" className="rounded bg-zinc-800 px-2 py-1 text-xs">Configurar</button>
-        <button onClick={onLaunch} className="rounded bg-blue-600 px-2 py-1 text-xs text-white">Lanzar</button>
-        <span className={`h-2 w-2 rounded-full ${connected ? 'bg-emerald-500' : 'bg-amber-500'}`} title={connected ? 'conectado' : 'reconectando…'} />
-        <span className={`hidden text-xs sm:inline ${connected ? 'text-emerald-400' : 'text-amber-400'}`}>{connected ? 'conectado' : 'reconectando…'}</span>
+        <button onClick={onConfig} aria-label="Settings" title="Settings" className="rounded bg-zinc-800 px-2 py-1 text-xs">Settings</button>
+        <button onClick={onLaunch} className="rounded bg-blue-600 px-2 py-1 text-xs text-white">New session</button>
+        <span className={`h-2 w-2 rounded-full ${connected ? 'bg-emerald-500' : 'bg-amber-500'}`} title={connected ? 'connected' : 'reconnecting…'} />
+        <span className={`hidden text-xs sm:inline ${connected ? 'text-emerald-400' : 'text-amber-400'}`}>{connected ? 'connected' : 'reconnecting…'}</span>
       </span>
     </header>
   )

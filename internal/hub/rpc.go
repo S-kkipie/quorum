@@ -12,15 +12,15 @@ import (
 	"github.com/S-kkipie/quorum/internal/proto"
 )
 
-// rpcTimeout: cuánto espera el hub la respuesta de una máquina (variable para los tests).
+// rpcTimeout: how long the hub waits for a machine's response (a variable for tests).
 var rpcTimeout = 10 * time.Second
 
 var (
-	errOffline = errors.New("la máquina está fuera de línea")
-	errTimeout = errors.New("la máquina no respondió")
+	errOffline = errors.New("machine is offline")
+	errTimeout = errors.New("machine did not respond")
 )
 
-// daemonError es un error devuelto por el daemon en RPCResult.Error.
+// daemonError is an error returned by the daemon in RPCResult.Error.
 type daemonError string
 
 func (e daemonError) Error() string { return string(e) }
@@ -28,7 +28,7 @@ func (e daemonError) Error() string { return string(e) }
 type rpcWaiter struct {
 	machine string
 	conn    *machineConn
-	ch      chan proto.RPCResult // con búfer 1: quien resuelve nunca se bloquea
+	ch      chan proto.RPCResult // buffered 1: whoever resolves never blocks
 }
 
 type rpcState struct {
@@ -36,7 +36,7 @@ type rpcState struct {
 	waiters map[string]*rpcWaiter
 }
 
-// resolveRPC entrega res al waiter, solo si lo llamó esa misma máquina.
+// resolveRPC delivers res to the waiter, only if that same machine called it.
 func (h *Hub) resolveRPC(machine string, res proto.RPCResult) {
 	h.rpcMu.Lock()
 	w := h.waiters[res.ReqID]
@@ -51,7 +51,7 @@ func (h *Hub) resolveRPC(machine string, res proto.RPCResult) {
 	}
 }
 
-// failWaiters despierta con errOffline a los waiters de una conexión que se cayó.
+// failWaiters wakes the waiters of a dropped connection with errOffline.
 func (h *Hub) failWaiters(c *machineConn) {
 	h.rpcMu.Lock()
 	defer h.rpcMu.Unlock()
@@ -63,7 +63,7 @@ func (h *Hub) failWaiters(c *machineConn) {
 	}
 }
 
-// call manda un rpc a la máquina y espera su rpc_result (hasta rpcTimeout).
+// call sends an rpc to the machine and waits for its rpc_result (up to rpcTimeout).
 func (h *Hub) call(ctx context.Context, machine, method string, params any, out any) error {
 	h.mu.Lock()
 	c := h.conns[machine]

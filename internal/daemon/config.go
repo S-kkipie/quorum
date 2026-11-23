@@ -1,4 +1,4 @@
-// Package daemon implementa quorumd: API local, registro de sesiones y config.
+// Package daemon implements quorumd: local API, session registry and config.
 package daemon
 
 import (
@@ -22,16 +22,16 @@ type Config struct {
 	MachineToken string `json:"machineToken"`
 	Port         int    `json:"port"`
 	LocalToken   string `json:"localToken"`
-	// HerdrSocket cambia la ruta del socket de herdr (por defecto ~/.config/herdr/herdr.sock).
+	// HerdrSocket overrides the herdr socket path (default ~/.config/herdr/herdr.sock).
 	HerdrSocket string `json:"herdrSocket,omitempty"`
-	// Terminal apaga la terminal remota si es false; nil equivale a true.
+	// Terminal turns the remote terminal off if false; nil means true.
 	Terminal *bool `json:"terminal,omitempty"`
 }
 
-// TerminalOn dice si la terminal remota está permitida por la config.
+// TerminalOn reports whether the remote terminal is allowed by the config.
 func (c Config) TerminalOn() bool { return c.Terminal == nil || *c.Terminal }
 
-// ConfigDir devuelve QUORUM_CONFIG_DIR o ~/.config/quorum.
+// ConfigDir returns QUORUM_CONFIG_DIR or ~/.config/quorum.
 func ConfigDir() (string, error) {
 	if d := os.Getenv("QUORUM_CONFIG_DIR"); d != "" {
 		return d, nil
@@ -62,7 +62,7 @@ func defaultMachine() string {
 	return h
 }
 
-// LoadConfig lee la config; si falta, la crea con valores por defecto y token.
+// LoadConfig reads the config; if missing, it creates it with default values and a token.
 func LoadConfig() (Config, error) {
 	c, complete, err := readConfig()
 	if err != nil || complete {
@@ -94,7 +94,7 @@ func readConfig() (Config, bool, error) {
 	return c, c.Machine != "" && c.LocalToken != "", nil
 }
 
-// lockConfig toma el lock exclusivo (daemon.lock) entre procesos.
+// lockConfig takes the exclusive (daemon.lock) lock across processes.
 func lockConfig() (func(), error) {
 	dir, err := ConfigDir()
 	if err != nil {
@@ -108,18 +108,18 @@ func lockConfig() (func(), error) {
 	defer cancel()
 	ok, err := fl.TryLockContext(ctx, 50*time.Millisecond)
 	if errors.Is(err, context.DeadlineExceeded) || (err == nil && !ok) {
-		return nil, errors.New("no se pudo tomar el lock de configuración (otro quorumd arrancando)")
+		return nil, errors.New("could not take the config lock (another quorumd is starting)")
 	}
 	if err != nil {
-		return nil, fmt.Errorf("lock de configuración: %w", err)
+		return nil, fmt.Errorf("config lock: %w", err)
 	}
 	return func() { fl.Unlock() }, nil
 }
 
-// configLockWait: cuánto se espera el lock de configuración; variable para tests.
+// configLockWait: how long to wait for the config lock; a variable for tests.
 var configLockWait = 15 * time.Second
 
-// loadConfigLocked carga y completa la config; el llamador ya tiene el lock.
+// loadConfigLocked loads and completes the config; the caller already holds the lock.
 func loadConfigLocked() (Config, error) {
 	c, _, err := readConfig()
 	if err != nil {

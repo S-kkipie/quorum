@@ -11,17 +11,17 @@ afterEach(cleanup)
 const ten = () => Array.from({ length: 10 }, (_, i) => conv(i + 1, i === 0))
 
 describe('Conversations', () => {
-  it('muestra 6 de 10 y "Ver todas (10)" expande con buscador', async () => {
+  it('shows 6 of 10 and "See all (10)" expands with a search box', async () => {
     data = ten()
     render(<Conversations machine="m" root="/r" liveIds={new Set()} onOpen={vi.fn()} onResume={vi.fn()} />)
     await screen.findByText('Conv 1')
     expect(screen.getAllByRole('listitem')).toHaveLength(6)
-    fireEvent.click(screen.getByText('Ver todas (10)'))
+    fireEvent.click(screen.getByText('See all (10)'))
     expect(screen.getAllByRole('listitem')).toHaveLength(10)
-    fireEvent.change(screen.getByLabelText('Buscar por título'), { target: { value: 'conv 10' } })
+    fireEvent.change(screen.getByLabelText('Search by title'), { target: { value: 'conv 10' } })
     expect(screen.getAllByRole('listitem')).toHaveLength(1)
   })
-  it('abierta llama onOpen; cerrada llama onResume', async () => {
+  it('open calls onOpen; closed calls onResume', async () => {
     data = ten()
     const onOpen = vi.fn(), onResume = vi.fn()
     render(<Conversations machine="m" root="/r" liveIds={new Set(['c2'])} onOpen={onOpen} onResume={onResume} />)
@@ -31,9 +31,9 @@ describe('Conversations', () => {
     expect(onOpen).toHaveBeenCalledWith('c2')
     fireEvent.click(screen.getByText('Conv 3'))
     expect(onResume).toHaveBeenCalledWith('c3')
-    expect(screen.getByText(/· 3 msj/)).toBeTruthy()
+    expect(screen.getByText(/· 3 msgs/)).toBeTruthy()
   })
-  it('con busy las cerradas no se retoman; las abiertas sí abren', async () => {
+  it('with busy, closed ones are not resumed; open ones do open', async () => {
     data = ten()
     const onOpen = vi.fn(), onResume = vi.fn()
     render(<Conversations machine="m" root="/r" liveIds={new Set()} busy onOpen={onOpen} onResume={onResume} />)
@@ -42,16 +42,16 @@ describe('Conversations', () => {
     fireEvent.click(screen.getByText('Conv 1'))
     expect(onOpen).toHaveBeenCalledWith('c1')
   })
-  it('lista vacía', async () => {
+  it('empty list', async () => {
     data = []
     render(<Conversations machine="m" root="/r" liveIds={new Set()} onOpen={vi.fn()} onResume={vi.fn()} />)
-    expect(await screen.findByText('Sin conversaciones anteriores en esta máquina')).toBeTruthy()
+    expect(await screen.findByText('No previous conversations on this machine')).toBeTruthy()
   })
-  it('máquina sin caps (quorumd viejo): no pide nada y pide actualizar', () => {
+  it('machine without caps (old quorumd): requests nothing and asks to update', () => {
     const f = vi.mocked(fetch)
     f.mockClear()
     render(<Conversations machine="m" root="/r" liveIds={new Set()} outdated onOpen={vi.fn()} onResume={vi.fn()} />)
-    expect(screen.getByText('Actualiza quorumd en esta máquina para ver conversaciones')).toBeTruthy()
+    expect(screen.getByText('Update quorumd on this machine to see conversations')).toBeTruthy()
     expect(f).not.toHaveBeenCalled()
   })
 })

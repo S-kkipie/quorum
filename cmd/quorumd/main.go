@@ -20,7 +20,7 @@ func main() {
 	switch cmd {
 	case "serve":
 		if p := os.Getenv(daemon.LogEnv); p != "" {
-			log.SetOutput(daemon.NewRotatingLog(p)) // lanzado por ensure: log con rotación
+			log.SetOutput(daemon.NewRotatingLog(p)) // launched by ensure: log with rotation
 		}
 		cfg, err := daemon.LoadConfig()
 		if err != nil {
@@ -41,7 +41,7 @@ func main() {
 		}
 	case "attach":
 		fs := flag.NewFlagSet("attach", flag.ContinueOnError)
-		session := fs.String("session", "", "id de sesión")
+		session := fs.String("session", "", "session id")
 		if err := fs.Parse(os.Args[2:]); err != nil || *session == "" {
 			fmt.Fprintln(os.Stderr, "uso: quorumd attach --session <id>")
 			os.Exit(2)
@@ -57,18 +57,18 @@ func main() {
 		stop()
 		os.Exit(code)
 	case "hold":
-		// lo lanza el mod desde tool.check mientras espera un permiso del dispositivo
+		// launched by the mod from tool.check while it waits for a permission from the device
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		daemon.Hold(ctx, daemon.HoldMax)
 		stop()
 	case "link":
 		if len(os.Args) != 4 {
-			fmt.Fprintln(os.Stderr, "uso: quorumd link <hubURL> <código>")
+			fmt.Fprintln(os.Stderr, "usage: quorumd link <hubURL> <code>")
 			os.Exit(2)
 		}
 		cfg, err := daemon.LoadConfig()
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "no se pudo leer la config:", err)
+			fmt.Fprintln(os.Stderr, "could not read the config:", err)
 			os.Exit(1)
 		}
 		cfg, err = daemon.LinkMachine(context.Background(), cfg, os.Args[2], os.Args[3])
@@ -76,12 +76,12 @@ func main() {
 			fmt.Fprintln(os.Stderr, "error:", err)
 			os.Exit(1)
 		}
-		fmt.Printf("enlazada como %s con %s\n", cfg.Machine, cfg.Hub)
+		fmt.Printf("linked as %s with %s\n", cfg.Machine, cfg.Hub)
 		if err := daemon.ReloadRunning(cfg); err != nil {
-			fmt.Fprintln(os.Stderr, "aviso: el daemon no se recargó; se enlazará en el próximo arranque:", err)
+			fmt.Fprintln(os.Stderr, "warning: the daemon did not reload; it will link on next start:", err)
 		}
 	default:
-		fmt.Fprintln(os.Stderr, "uso: quorumd [serve|ensure --json|attach --session <id>|hold|link <hubURL> <código>]")
+		fmt.Fprintln(os.Stderr, "usage: quorumd [serve|ensure --json|attach --session <id>|hold|link <hubURL> <code>]")
 		os.Exit(2)
 	}
 }

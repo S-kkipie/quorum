@@ -5,10 +5,10 @@ import { SESSION_STATE as STATE } from '../lib/projects'
 
 function ago(ts: number): string {
   const s = Math.max(0, Math.floor(Date.now() / 1000 - (ts > 1e12 ? ts / 1000 : ts)))
-  if (s < 60) return 'ahora'
+  if (s < 60) return 'now'
   if (s < 3600) return `${Math.floor(s / 60)} min`
-  if (s < 86400) return `${Math.floor(s / 3600)} h`
-  return `${Math.floor(s / 86400)} d`
+  if (s < 86400) return `${Math.floor(s / 3600)}h`
+  return `${Math.floor(s / 86400)}d`
 }
 
 function Row({ s, onOpen, active, project }: { s: SessionInfo; onOpen?: (id: string) => void; active?: boolean; project?: string }) {
@@ -43,7 +43,7 @@ export default function Sessions({ state, onOpen, selected }: { state: AppState;
   return (
     <div className="mx-auto max-w-3xl pb-8 lg:max-w-none">
 
-      {machines.length === 0 && <p className="p-6 text-center text-sm text-zinc-500">Sin máquinas todavía. Conecta un daemon al hub.</p>}
+      {machines.length === 0 && <p className="p-6 text-center text-sm text-zinc-500">No machines yet. Connect a daemon to the hub.</p>}
 
       {machines.map((m) => {
         const info = state.machines[m]
@@ -55,12 +55,12 @@ export default function Sessions({ state, onOpen, selected }: { state: AppState;
               <span className={`h-2 w-2 rounded-full ${offline ? 'bg-zinc-600' : 'bg-emerald-500'}`} />
               {m}
               {info?.env && <span className="font-normal normal-case text-zinc-600">{info.env}</span>}
-              {offline && <span className="font-normal normal-case text-zinc-500">fuera de línea</span>}
+              {offline && <span className="font-normal normal-case text-zinc-500">offline</span>}
             </h2>
             {list.length ? (
               <ul className="divide-y divide-zinc-900 border-y border-zinc-900">{list.map((s) => <Row key={s.id} s={s} onOpen={onOpen} active={s.id === selected} project={state.projects[s.projectId]?.name} />)}</ul>
             ) : (
-              <p className="px-3 text-xs text-zinc-600">Sin sesiones.</p>
+              <p className="px-3 text-xs text-zinc-600">No sessions.</p>
             )}
           </section>
         )
@@ -68,7 +68,7 @@ export default function Sessions({ state, onOpen, selected }: { state: AppState;
 
       {services.length > 0 && (
         <section className="mt-6">
-          <h2 className="px-3 pb-1 text-xs font-semibold uppercase tracking-wide text-zinc-400">Servicios</h2>
+          <h2 className="px-3 pb-1 text-xs font-semibold uppercase tracking-wide text-zinc-400">Services</h2>
           <ul className="divide-y divide-zinc-900 border-y border-zinc-900">{services.map((s) => <Row key={s.id} s={s} onOpen={onOpen} active={s.id === selected} />)}</ul>
         </section>
       )}

@@ -122,7 +122,7 @@ func (f *appFx) live(t *testing.T) (*websocket.Conn, chan proto.Envelope) {
 	defer cancel()
 	c, _, err := websocket.Dial(ctx, f.wsURL("/api/live?token="+f.devTok), nil)
 	require.NoError(t, err)
-	c.SetReadLimit(-1) // como un navegador: sin tope por mensaje
+	c.SetReadLimit(-1) // like a browser: no per-message cap
 	t.Cleanup(func() { c.CloseNow() })
 	ch := make(chan proto.Envelope, 256)
 	go func() {
@@ -143,7 +143,7 @@ func (f *appFx) nextCmd(t *testing.T) proto.Command {
 	case c := <-f.cmds:
 		return c
 	case <-time.After(3 * time.Second):
-		t.Fatal("no llegó command")
+		t.Fatal("command did not arrive")
 		return proto.Command{}
 	}
 }
@@ -163,10 +163,10 @@ func TestPromptRoutedAsCommand(t *testing.T) {
 	require.Equal(t, "close", f.nextCmd(t).Type)
 	code, msg := f.postBody("/api/sessions/s1/prompt", `{"text":""}`)
 	require.Equal(t, 400, code)
-	require.Equal(t, "el mensaje está vacío", msg)
+	require.Equal(t, "the message is empty", msg)
 	code, msg = f.postBody("/api/sessions/nope/prompt", `{"text":"x"}`)
 	require.Equal(t, 404, code)
-	require.Equal(t, "sesión no encontrada", msg)
+	require.Equal(t, "session not found", msg)
 }
 
 func TestOfflineMachineAndClosedSession(t *testing.T) {
@@ -174,11 +174,11 @@ func TestOfflineMachineAndClosedSession(t *testing.T) {
 	require.NoError(t, f.st.UpsertSession(proto.SessionInfo{ID: "s2", Machine: "m1", State: proto.StateClosed}))
 	code, msg := f.postBody("/api/sessions/s2/prompt", `{"text":"x"}`)
 	require.Equal(t, 409, code)
-	require.Equal(t, "la sesión está cerrada", msg)
+	require.Equal(t, "the session is closed", msg)
 	require.NoError(t, f.st.UpsertSession(proto.SessionInfo{ID: "s3", Machine: "off", State: proto.StateIdle}))
 	code, msg = f.postBody("/api/sessions/s3/prompt", `{"text":"x"}`)
 	require.Equal(t, 409, code)
-	require.Equal(t, "la máquina está fuera de línea", msg)
+	require.Equal(t, "machine is offline", msg)
 }
 
 func TestRESTListings(t *testing.T) {
@@ -228,10 +228,10 @@ func TestDecideFirstWins(t *testing.T) {
 	require.Equal(t, proto.Command{Type: "decide", AskID: "a1", Decision: "allow", Reason: "ok"}, c)
 	code, msg := f.postBody("/api/sessions/s1/decide", `{"askId":"a1","decision":"deny"}`)
 	require.Equal(t, 409, code)
-	require.Equal(t, "ya se respondió", msg)
+	require.Equal(t, "already answered", msg)
 	code, _ = f.postBody("/api/sessions/s1/decide", `{"askId":"zz","decision":"deny"}`)
 	require.Equal(t, 409, code)
-	// ask_resolved emitido y guardado
+	// ask_resolved emitted and stored
 	e := waitEnv(t, ch, func(e proto.Envelope) bool {
 		var ev proto.Event
 		json.Unmarshal(e.Payload, &ev)
@@ -278,7 +278,7 @@ func TestConcurrentDecideExactlyOneWins(t *testing.T) {
 	f.nextCmd(t)
 	select {
 	case c := <-f.cmds:
-		t.Fatalf("comando extra: %+v", c)
+		t.Fatalf("extra command: %+v", c)
 	case <-time.After(200 * time.Millisecond):
 	}
 }
@@ -293,7 +293,7 @@ func waitEnv(t *testing.T, ch chan proto.Envelope, ok func(proto.Envelope) bool)
 				return e
 			}
 		case <-timeout:
-			t.Fatal("no llegó el envelope esperado")
+			t.Fatal("the expected envelope did not arrive")
 		}
 	}
 }
@@ -327,7 +327,7 @@ func TestSlowClientDisconnectedNotBlocking(t *testing.T) {
 	s.live.clients[cl] = struct{}{}
 	s.live.Publish(proto.Envelope{Type: "event"})
 	require.Len(t, s.live.clients, 1)
-	// el segundo no cabe: se desconecta sin bloquear
+	// the second does not fit: it is disconnected without blocking
 	s.live.Publish(proto.Envelope{Type: "event"})
 	s.live.mu.Lock()
 	n := len(s.live.clients)
@@ -354,7 +354,7 @@ func TestAsksSurviveHubRestart(t *testing.T) {
 	f := newAppFx(t, "s1")
 	f.machineSend(t, askEnv("s1", "a1"))
 	eventually(t, func() bool { evs, _ := f.st.Events("s1", 0, 10); return len(evs) == 1 })
-	// hub nuevo sobre el mismo store; la máquina vuelve a conectar
+	// new hub on the same store; the machine reconnects
 	s2 := NewServer(f.st)
 	ts2 := httptest.NewServer(s2.Handler())
 	t.Cleanup(ts2.Close)
@@ -368,7 +368,7 @@ func TestSessionGoneDropsAsksAndEmptyAskID(t *testing.T) {
 	f := newAppFx(t, "s1")
 	code, msg := f.postBody("/api/sessions/s1/decide", `{"decision":"allow"}`)
 	require.Equal(t, 400, code)
-	require.Equal(t, "falta askId", msg)
+	require.Equal(t, "missing askId", msg)
 	f.machineSend(t, askEnv("s1", "a1"))
 	eventually(t, func() bool { f.srv.asks.mu.Lock(); defer f.srv.asks.mu.Unlock(); return len(f.srv.asks.open) == 1 })
 	f.machineSend(t, proto.Envelope{Type: "session_gone", Session: "s1"})
@@ -395,10 +395,10 @@ func TestLaunchRoutedAndResultPublished(t *testing.T) {
 	_, ch := f.live(t)
 	code, msg := f.postBody("/api/launch", `{"machine":"m1","dir":""}`)
 	require.Equal(t, 400, code)
-	require.Equal(t, "falta la carpeta", msg)
+	require.Equal(t, "missing folder", msg)
 	code, msg = f.postBody("/api/launch", `{"machine":"nope","dir":"/x"}`)
 	require.Equal(t, 409, code)
-	require.Equal(t, "la máquina está fuera de línea", msg)
+	require.Equal(t, "machine is offline", msg)
 
 	req, _ := http.NewRequest("POST", f.ts.URL+"/api/launch", strings.NewReader(`{"machine":"m1","dir":"/work","continue":true,"permissionMode":"plan"}`))
 	req.Header.Set("Authorization", "Bearer "+f.devTok)
@@ -413,7 +413,7 @@ func TestLaunchRoutedAndResultPublished(t *testing.T) {
 	case lr := <-f.launches:
 		require.Equal(t, proto.LaunchRequest{ReqID: out["reqId"], Dir: "/work", Continue: true, PermissionMode: "plan", Trust: true}, lr)
 	case <-time.After(3 * time.Second):
-		t.Fatal("no llegó launch")
+		t.Fatal("launch did not arrive")
 	}
 	p, _ := json.Marshal(proto.LaunchResult{ReqID: out["reqId"], OK: true})
 	f.machineSend(t, proto.Envelope{Type: "launch_result", Machine: "m1", Payload: p})
@@ -430,28 +430,28 @@ func TestLaunchRoutedAndResultPublished(t *testing.T) {
 	require.Equal(t, 401, resp2.StatusCode)
 }
 
-// Sin modos: no hay ruta de presencia y los mensajes watch de una app se ignoran.
+// Without modes: there is no presence route and an app's watch messages are ignored.
 func TestNoPresenceRouteAndWatchIgnored(t *testing.T) {
 	f := newAppFx(t, "s1")
-	// sin ruta: 404, o 405 porque el fallback web de GET / ocupa el patrón
+	// no route: 404, or 405 because the web fallback of GET / occupies the pattern
 	for _, id := range []string{"x", "s1"} {
 		require.Contains(t, []int{404, 405}, f.post("/api/sessions/"+id+"/presence", `{"away":true}`).StatusCode)
 	}
 	c, ch := f.live(t)
 	waitEnv(t, ch, func(e proto.Envelope) bool { return e.Type == "session_upsert" })
 	require.NoError(t, wsjson.Write(context.Background(), c, map[string]string{"type": "watch", "session": "s1"}))
-	// la conexión sigue viva y ningún comando llega a la máquina
+	// the connection stays alive and no command reaches the machine
 	f.machineSend(t, proto.Envelope{Type: "event", Session: "s1", Payload: mustJSON(proto.Event{Session: "s1", Kind: proto.KindAssistantDelta})})
 	waitEnv(t, ch, func(e proto.Envelope) bool { return e.Type == "event" })
 	select {
 	case cmd := <-f.cmds:
-		t.Fatalf("comando inesperado: %+v", cmd)
+		t.Fatalf("unexpected command: %+v", cmd)
 	case <-time.After(200 * time.Millisecond):
 	}
 }
 
-// Revisión final: las fotos de la terminal se funden (solo la última por panel) y
-// nunca dejan por lento a un cliente que no lee; lo normal sigue llegando en orden.
+// Final review: terminal pictures are merged (only the latest per pane) and
+// never make a client that does not read count as slow; normal ones keep arriving in order.
 func TestTermFramesCoalescedNeverEvict(t *testing.T) {
 	s, _, _ := newTestServer(t)
 	cl := newLiveClient(nil)
@@ -462,7 +462,7 @@ func TestTermFramesCoalescedNeverEvict(t *testing.T) {
 		s.live.Publish(proto.Envelope{Type: "term_frame", Machine: "m",
 			Payload: mustJSON(proto.TermFrame{Pane: "w1:p1", ANSI: fmt.Sprint(i)})})
 	}
-	s.live.Publish(proto.Envelope{Type: "term_frame", Machine: "m", Payload: mustJSON(proto.TermFrame{Pane: "w1:p2", ANSI: "otro"})})
+	s.live.Publish(proto.Envelope{Type: "term_frame", Machine: "m", Payload: mustJSON(proto.TermFrame{Pane: "w1:p2", ANSI: "other"})})
 	s.live.Publish(proto.Envelope{Type: "launch_result", Session: "2"})
 	s.live.mu.Lock()
 	_, still := s.live.clients[cl]
@@ -478,6 +478,6 @@ func TestTermFramesCoalescedNeverEvict(t *testing.T) {
 		require.NoError(t, json.Unmarshal(e.Payload, &tf))
 		got[tf.Pane] = tf.ANSI
 	}
-	require.Equal(t, map[string]string{"w1:p1": "999", "w1:p2": "otro"}, got)
+	require.Equal(t, map[string]string{"w1:p1": "999", "w1:p2": "other"}, got)
 	require.Empty(t, s.live.takeFrames(cl))
 }

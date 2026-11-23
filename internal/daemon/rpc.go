@@ -15,26 +15,26 @@ import (
 	"github.com/S-kkipie/quorum/internal/proto"
 )
 
-// geteuid se sustituye en los tests.
+// geteuid is replaced in tests.
 var geteuid = os.Geteuid
 
-// Host agrupa lo que el daemon necesita para hablar con herdr.
+// Host groups what the daemon needs to talk to herdr.
 type Host struct {
 	Herdr      *herdr.Client
 	WS         *launch.Workspaces
 	Terms      *Terminals
 	TerminalOn bool
 
-	// vigilantes de terminal activos por panel (ver terminal.go)
+	// active terminal watchers per pane (see terminal.go)
 	wmu     sync.Mutex
 	watches map[string]*termWatch
 
-	// cierres de pestaña pendientes por sesión (ver sessionclose.go)
+	// pending tab closes per session (see sessionclose.go)
 	cmu     sync.Mutex
 	closing map[string]*pendingClose
 }
 
-// NewHost arma el Host desde la config (socket de herdr y workspaces guardados).
+// NewHost builds the Host from the config (herdr socket and saved workspaces).
 func NewHost(cfg Config) *Host {
 	h := &Host{
 		Herdr:      &herdr.Client{Socket: herdr.SocketPath(cfg.HerdrSocket)},
@@ -44,8 +44,8 @@ func NewHost(cfg Config) *Host {
 	}
 	dir, err := ConfigDir()
 	if err != nil {
-		// sin carpeta de config no se recuerda nada (nunca se escribe en el cwd)
-		log.Printf("quorumd: sin carpeta de config, no se recuerdan workspaces ni terminales de herdr: %v", err)
+		// without a config folder nothing is remembered (never writes into the cwd)
+		log.Printf("quorumd: no config folder, herdr workspaces and terminals are not remembered: %v", err)
 		return h
 	}
 	h.WS.Path = filepath.Join(dir, "herdr-workspaces.json")
@@ -57,14 +57,14 @@ func (h *Host) herdrUp(ctx context.Context) bool {
 	return h != nil && h.Herdr != nil && h.Herdr.Available(ctx)
 }
 
-// Caps calcula las capacidades actuales de la máquina.
+// Caps computes the machine's current capabilities.
 func (h *Host) Caps(ctx context.Context) proto.MachineCaps {
 	up := h.herdrUp(ctx)
 	return proto.MachineCaps{Herdr: up, Terminal: up && h.TerminalOn, Root: geteuid() == 0}
 }
 
-// launch abre la sesión en herdr si responde; el respaldo (launch.Run) solo se usa
-// si herdr no respondió antes de tocar nada: cualquier otro fallo es definitivo.
+// launch opens the session in herdr if it answers; the fallback (launch.Run) is only used
+// if herdr did not answer before touching anything: any other failure is final.
 func (h *Host) launch(ctx context.Context, req proto.LaunchRequest) proto.LaunchResult {
 	if h.herdrUp(ctx) {
 		res, err := launchHerdr(ctx, h.Herdr, h.WS, req)
@@ -75,20 +75,20 @@ func (h *Host) launch(ctx context.Context, req proto.LaunchRequest) proto.Launch
 	return launchRun(ctx, req)
 }
 
-// rpcHandlers se llena en otros ficheros (conversaciones, terminal).
+// rpcHandlers is filled in other files (conversations, terminal).
 var rpcHandlers = map[string]func(ctx context.Context, h *Host, params json.RawMessage) (any, error){}
 
-// rpcTimeout acota cada llamada rpc; algo menos que la espera del hub (10 s) para
-// que el error del daemon le llegue antes de que se rinda. Variable para tests.
+// rpcTimeout bounds each rpc call; somewhat less than the hub's wait (10 s) so that
+// the daemon's error reaches it before it gives up. A variable for tests.
 var rpcTimeout = 9 * time.Second
 
-// errRPCSlow es el error que ve el hub cuando un handler se pasa de rpcTimeout.
-const errRPCSlow = "la operación tardó demasiado en la máquina"
+// errRPCSlow is the error the hub sees when a handler exceeds rpcTimeout.
+const errRPCSlow = "the operation took too long on the machine"
 
-var errUnknownMethod = errors.New("método desconocido")
+var errUnknownMethod = errors.New("unknown method")
 
-// rpcLinkKey guarda en el ctx de cada llamada el enlace que la recibió: el ctx
-// del enlace (vive lo que la conexión, no lo que la llamada) y el registro.
+// rpcLinkKey stores in each call's ctx the link that received it: the link's ctx
+// (lives as long as the connection, not the call) and the registry.
 type rpcLinkKey struct{}
 
 type rpcLink struct {
@@ -96,7 +96,7 @@ type rpcLink struct {
 	reg *Registry
 }
 
-// linkOf devuelve el enlace de la llamada; sin enlace, el propio ctx y un registro nil.
+// linkOf returns the call's link; with no link, the ctx itself and a nil registry.
 func linkOf(ctx context.Context) rpcLink {
 	if l, ok := ctx.Value(rpcLinkKey{}).(rpcLink); ok {
 		return l
@@ -104,7 +104,7 @@ func linkOf(ctx context.Context) rpcLink {
 	return rpcLink{ctx: ctx}
 }
 
-// invokeRPC ejecuta el handler del método con un plazo de rpcTimeout.
+// invokeRPC runs the method's handler with an rpcTimeout deadline.
 func invokeRPC(ctx context.Context, host *Host, reg *Registry, rq proto.RPC) (any, error) {
 	fn, ok := rpcHandlers[rq.Method]
 	if !ok {
@@ -115,8 +115,8 @@ func invokeRPC(ctx context.Context, host *Host, reg *Registry, rq proto.RPC) (an
 	return fn(cctx, host, rq.Params)
 }
 
-// handleRPC despacha por método y responde rpc_result con el mismo reqId.
-// ctx es el del enlace: lo que arranque un handler (vigilantes) termina con él.
+// handleRPC dispatches by method and answers rpc_result with the same reqId.
+// ctx is the link's: whatever a handler starts (watchers) ends with it.
 func handleRPC(ctx context.Context, host *Host, reg *Registry, rq proto.RPC) {
 	out := proto.RPCResult{ReqID: rq.ReqID}
 	if res, err := invokeRPC(ctx, host, reg, rq); errors.Is(err, context.DeadlineExceeded) {

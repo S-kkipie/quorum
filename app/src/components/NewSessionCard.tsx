@@ -6,17 +6,17 @@ import LaunchDialog, { BypassToggle } from './LaunchDialog'
 
 const sep = '\u0000'
 
-/** Arriba del proyecto: un toque lanza una sesión nueva; chip de máquina, "Sin permisos" y Terminal. */
+/** Top of the project: one tap launches a new session; machine chip, "Skip permissions" and Terminal. */
 export default function NewSessionCard({ state, projectId, pending, onLaunched, onGuard, onTerminal, onSelect }: {
   state: AppState
   projectId: string
-  /** Hay un lanzamiento en curso: no se puede lanzar otra (doble toque = una sesión). */
+  /** A launch is in progress: another cannot be started (double tap = one session). */
   pending: boolean
   onLaunched: (p: { reqId: string; machine: string; label: string }) => void
-  /** Lanza con la guarda única de la app (síncrona): un lanzamiento a la vez. */
+  /** Launches with the app's single (synchronous) guard: one launch at a time. */
   onGuard: (fn: () => Promise<{ reqId: string; machine: string; label: string }>) => Promise<void>
   onTerminal: (machine: string, root: string) => Promise<unknown> | void
-  /** Avisa qué checkout quedó elegido (para listar sus conversaciones). */
+  /** Reports which checkout was chosen (to list its conversations). */
   onSelect?: (machine: string, root: string) => void
 }) {
   const cos = projectCheckouts(state, projectId)
@@ -32,7 +32,7 @@ export default function NewSessionCard({ state, projectId, pending, onLaunched, 
   const [termBusy, setTermBusy] = useState(false)
   const machine = chosen?.machine ?? ''
   const root = chosen?.root ?? ''
-  const caps = state.machines[machine]?.caps // sin caps = todo en false (daemons viejos)
+  const caps = state.machines[machine]?.caps // no caps = everything false (old daemons)
   const isRoot = !!caps?.root
 
   useEffect(() => { if (machine) onSelect?.(machine, root) }, [machine, root]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -63,8 +63,8 @@ export default function NewSessionCard({ state, projectId, pending, onLaunched, 
   if (cos.length === 0) {
     return (
       <div className="px-3 pt-3">
-        <p className="text-sm text-zinc-500">Este proyecto todavía no tiene carpeta en ninguna máquina</p>
-        <button onClick={() => setOther(true)} className="mt-1 text-sm text-blue-400 underline">Otra carpeta…</button>
+        <p className="text-sm text-zinc-500">This project has no folder on any machine yet</p>
+        <button onClick={() => setOther(true)} className="mt-1 text-sm text-blue-400 underline">Another folder…</button>
         {other && <LaunchDialog state={state} projectId={projectId} onClose={() => setOther(false)} onLaunched={(p) => { setOther(false); onLaunched(p) }} />}
       </div>
     )
@@ -73,17 +73,17 @@ export default function NewSessionCard({ state, projectId, pending, onLaunched, 
   return (
     <div className="px-3 pt-3">
       <button disabled={busy || pending || !chosen} onClick={go} className="min-h-14 w-full rounded-lg bg-blue-600 px-4 text-base font-semibold text-white disabled:opacity-40">
-        {busy || pending ? 'Lanzando…' : 'Nueva sesión'}
+        {busy || pending ? 'Launching…' : 'New session'}
       </button>
-      {!chosen && <p className="mt-2 text-xs text-amber-400">Ninguna máquina de este proyecto está en línea.</p>}
+      {!chosen && <p className="mt-2 text-xs text-amber-400">No machine of this project is online.</p>}
       <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2">
         <label className="flex items-center gap-1 rounded-full bg-zinc-800 px-3 py-1 text-xs text-zinc-300">
           <span className={online(machine) ? 'text-emerald-400' : 'text-zinc-600'}>●</span>
-          <select aria-label="Máquina" value={chosen ? chosen.machine + sep + chosen.root : ''} onChange={(e) => setPick(e.target.value)} className="bg-transparent text-xs">
-            {!chosen && <option value="">sin máquina</option>}
+          <select aria-label="Machine" value={chosen ? chosen.machine + sep + chosen.root : ''} onChange={(e) => setPick(e.target.value)} className="bg-transparent text-xs">
+            {!chosen && <option value="">no machine</option>}
             {cos.map((c) => (
               <option key={c.machine + sep + c.root} value={c.machine + sep + c.root} disabled={!online(c.machine)}>
-                {c.machine}{multi ? ` · ${c.root}` : ''}{online(c.machine) ? '' : ' (sin conexión)'}
+                {c.machine}{multi ? ` · ${c.root}` : ''}{online(c.machine) ? '' : ' (offline)'}
               </option>
             ))}
           </select>
@@ -92,7 +92,7 @@ export default function NewSessionCard({ state, projectId, pending, onLaunched, 
         {caps?.terminal ? (
           <button disabled={!chosen || termBusy} onClick={term} className="ml-auto min-h-10 rounded bg-zinc-800 px-4 text-sm disabled:opacity-40">Terminal</button>
         ) : (
-          chosen && <span className="text-xs text-zinc-500">Terminal no disponible en esta máquina (falta herdr)</span>
+          chosen && <span className="text-xs text-zinc-500">Terminal not available on this machine (herdr missing)</span>
         )}
       </div>
       {error && <p role="alert" className="mt-2 text-xs text-red-400">{error}</p>}

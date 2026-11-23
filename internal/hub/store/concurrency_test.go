@@ -11,8 +11,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// El dueño corre `quorum-hub pair`/`link-code` (otro proceso, otro Store) mientras `serve`
-// sincroniza: las transacciones que leen y luego escriben no deben fallar con SQLITE_BUSY.
+// The owner runs `quorum-hub pair`/`link-code` (another process, another Store) while `serve`
+// syncs: transactions that read and then write must not fail with SQLITE_BUSY.
 func TestTwoStoresConcurrentWriteTx(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "h.db")
 	a, err := Open(path)
@@ -31,7 +31,7 @@ func TestTwoStoresConcurrentWriteTx(t *testing.T) {
 		go func(st *Store) {
 			defer wg.Done()
 			for i := 0; i < n; i++ {
-				ts := []proto.Ticket{{ExternalID: fmt.Sprint(i % 5), Title: "t", Status: "por_hacer", UpdatedAt: time.Now().UnixMilli()}}
+				ts := []proto.Ticket{{ExternalID: fmt.Sprint(i % 5), Title: "t", Status: "todo", UpdatedAt: time.Now().UnixMilli()}}
 				if err := st.ReplaceTickets(p.ID, ts); err != nil {
 					errs <- err
 				}

@@ -6,9 +6,9 @@ export type LinkIO = {
   fetch(url: string, init: { method: string; headers: Record<string, string>; body?: string }): Promise<{ status: number }>
   spawn(argv: string[]): AsyncIterable<{ stream: string; text: string }>
   sleep(ms: number): Promise<void>
-  /** Reloj en ms (opcional; por defecto Date.now). */
+  /** Clock in ms (optional; Date.now by default). */
   now?: () => number
-  /** Diagnóstico opcional (se llama solo cuando el mensaje cambia). */
+  /** Optional diagnostics (called only when the message changes). */
   log?: (msg: string) => void
 }
 
@@ -33,9 +33,9 @@ export class Link {
   state: ConnState = 'no-daemon'
   machine = ''
   error = ''
-  /** Versión del daemon que respondió a ensure ("" si no la informó). */
+  /** Version of the daemon that answered ensure ("" if it did not report one). */
   daemonVersion = ''
-  /** Aviso si la versión del daemon difiere de la del mod ("" si coinciden o se ignora). */
+  /** Warning if the daemon version differs from the mod's ("" if they match or it is ignored). */
   versionWarning = ''
   role = 'work'
   private info!: SessionInfo
@@ -45,9 +45,9 @@ export class Link {
   private epoch = 0
   private changed = deferred()
   private stopped = false
-  /** Época del bucle de vaciado: start lanza uno nuevo y el anterior termina solo. */
+  /** Epoch of the flush loop: start launches a new one and the previous one ends by itself. */
   private flushGen = 0
-  /** Vaciado en curso: nunca hay dos POST de eventos a la vez (se reordenarían). */
+  /** Flush in progress: there are never two event POSTs at once (they would be reordered). */
   private inFlight: Promise<void> = Promise.resolve()
   private lastLog = ''
 
@@ -78,7 +78,7 @@ export class Link {
     if (this.conn && this.info?.id) void this.post(`/v1/sessions/${this.info.id}/gone`, undefined)
   }
 
-  /** La sesión sigue en el mismo proceso con otro id (/clear, /resume). */
+  /** The session continues in the same process with another id (/clear, /resume). */
   adoptId(newId: string): void {
     if (!this.info || newId === this.info.id) return
     this.info = { ...this.info, previousId: this.info.id, id: newId }
@@ -89,17 +89,17 @@ export class Link {
     })()
   }
 
-  /** Mezcla campos en la info de la sesión y la re-registra (sin esperar; se omite sin conexión). */
+  /** Merges fields into the session info and re-registers it (without waiting; skipped when offline). */
   update(patch: Partial<SessionInfo>): void {
     if (!this.info) return
     this.info = { ...this.info, ...patch, updatedAt: this.now() }
-    if (!this.conn || this.state !== 'connected') return // el próximo connect registra la info vigente
+    if (!this.conn || this.state !== 'connected') return // the next connect registers the current info
     void this.pushRegister()
   }
 
   private regBusy = false
   private regDirty = false
-  /** Un solo register en vuelo; si llegan más cambios, tras terminar se envía solo el último. */
+  /** A single register in flight; if more changes arrive, only the latest is sent afterwards. */
   private async pushRegister(): Promise<void> {
     if (this.regBusy) { this.regDirty = true; return }
     this.regBusy = true
@@ -127,7 +127,7 @@ export class Link {
     }
   }
 
-  /** Nueva época: los bucles y el attach anteriores terminan. */
+  /** New epoch: the previous loops and attach end. */
   private bump(): number {
     this.epoch++
     this.changed.resolve()
@@ -135,7 +135,7 @@ export class Link {
     return this.epoch
   }
 
-  /** sleep que devuelve false si el entorno se descargó (sleep abortado). */
+  /** sleep that returns false if the environment was unloaded (aborted sleep). */
   private async nap(ms: number): Promise<boolean> {
     try {
       await this.io.sleep(ms)
@@ -155,7 +155,7 @@ export class Link {
     this.io.log?.(msg)
   }
 
-  /** ensure + register. Falso si el daemon no está disponible. */
+  /** ensure + register. False if the daemon is unavailable. */
   private async connect(epoch: number): Promise<boolean> {
     let conn: Conn
     try {
@@ -163,19 +163,19 @@ export class Link {
       if (r.exitCode !== 0) {
         let detail = (r.stderr ?? '').trim()
         if (!detail) {
-          try { detail = String(JSON.parse(r.stdout)?.error ?? '') } catch { /* stdout no es JSON */ }
+          try { detail = String(JSON.parse(r.stdout)?.error ?? '') } catch { /* stdout is not JSON */ }
         }
-        throw new Error(`ensure terminó con código ${r.exitCode}${detail ? `: ${detail}` : ''}`)
+        throw new Error(`ensure exited with code ${r.exitCode}${detail ? `: ${detail}` : ''}`)
       }
       const out = JSON.parse(r.stdout)
-      if (!out.ok) throw new Error(out.error || 'ensure respondió ok:false')
+      if (!out.ok) throw new Error(out.error || 'ensure answered ok:false')
       conn = { port: out.port, token: out.token, machine: out.machine ?? '', version: typeof out.version === 'string' ? out.version : '' }
     } catch (err) {
       if (epoch !== this.epoch) return false
       this.conn = undefined
       this.error = String((err as Error)?.message ?? err)
       this.state = 'no-daemon'
-      this.log(`quorum: quorumd no disponible: ${this.error}`)
+      this.log(`quorum: quorumd unavailable: ${this.error}`)
       return false
     }
     if (epoch !== this.epoch) return false
@@ -185,7 +185,7 @@ export class Link {
     const status = await this.post('/v1/sessions/register', sent)
     if (epoch !== this.epoch) return false
     if (status !== 204) {
-      this.error = `register devolvió ${status}`
+      this.error = `register returned ${status}`
       this.state = 'reconnecting'
       this.log(`quorum: ${this.error}`)
       return false
@@ -196,7 +196,7 @@ export class Link {
     this.state = 'connected'
     this.daemonVersion = conn.version
     this.versionWarning = this.daemonVersion && this.daemonVersion !== Version
-      ? `quorumd ${this.daemonVersion} no coincide con la versión del mod (${Version}): reinicia quorumd o actualiza`
+      ? `quorumd ${this.daemonVersion} does not match the mod version (${Version}): restart quorumd or update`
       : ''
     if (this.versionWarning) this.log(`quorum: ${this.versionWarning}`)
     return true
@@ -218,7 +218,7 @@ export class Link {
       try {
         connected = await this.connect(epoch)
       } catch (err) {
-        this.log(`quorum: error al reconectar: ${String((err as Error)?.message ?? err)}`)
+        this.log(`quorum: error reconnecting: ${String((err as Error)?.message ?? err)}`)
         connected = false
       }
     }
@@ -243,9 +243,9 @@ export class Link {
         }
       }
     } catch {
-      // el hijo no arrancó o murió: el bucle reintenta
+      // the child failed to start or died: the loop retries
     } finally {
-      // suelta el hijo si seguía vivo (cambio de época)
+      // release the child if it was still alive (epoch change)
       void Promise.resolve(it.return?.(undefined)).catch(() => {})
     }
   }
@@ -263,7 +263,7 @@ export class Link {
       try {
         h(msg)
       } catch {
-        // un manejador roto no tumba el flujo
+        // a broken handler does not bring down the flow
       }
     }
   }
@@ -275,12 +275,12 @@ export class Link {
       try {
         await this.flush()
       } catch (err) {
-        this.log(`quorum: error al vaciar la cola: ${String((err as Error)?.message ?? err)}`)
+        this.log(`quorum: error flushing the queue: ${String((err as Error)?.message ?? err)}`)
       }
     }
   }
 
-  /** Encadena el vaciado tras el que esté en curso (p. ej. del bucle anterior a un stop/start). */
+  /** Chains the flush after the one in progress (e.g. from the loop before a stop/start). */
   private flush(): Promise<void> {
     const run = this.inFlight.then(() => this.flushNow())
     this.inFlight = run.catch(() => {})
@@ -295,7 +295,7 @@ export class Link {
     await this.post(`/v1/sessions/${id}/events`, batch)
   }
 
-  /** POST con timeout de 2 s; nunca lanza. Devuelve el status o 0. */
+  /** POST with a 2 s timeout; never throws. Returns the status or 0. */
   private async post(path: string, body: unknown): Promise<number> {
     if (!this.conn) return 0
     const url = `http://127.0.0.1:${this.conn.port}${path}`

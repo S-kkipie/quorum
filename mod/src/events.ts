@@ -1,13 +1,14 @@
 import type { Link } from './link'
+import { trimInput } from './trim'
 
 export const ERROR_ANSWER =
-  '⚠️ Claude devolvió un error (sesión vencida, límite de uso o fallo de la API). Revísalo en la terminal.'
+  'Claude returned an error (expired session, usage limit or API failure). Check it in the terminal.'
 
-const TOOL_OUTPUT_MAX = 4000
+const TOOL_OUTPUT_MAX = 8000
 const AGENT_ANSWER_MAX = 2000
 const TURN_ANSWER_MAX = 40_000
 
-/** Resumen de una línea de la llamada a una herramienta. */
+/** One-line summary of a tool call. */
 export function summarize(tool: string, input: unknown): string {
   const o = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>
   const pick = (k: string): string | undefined => (typeof o[k] === 'string' ? (o[k] as string) : undefined)
@@ -42,11 +43,11 @@ type Done = {
 }
 
 /**
- * Manejadores puros de los hooks de sesión. `getLink` se consulta en cada llamada
- * (el Link nace en session.start); `turnComplete` recibe `getPct` para el porcentaje de contexto.
- * `opts.fromDevice(text)` dice (y consume) si el prompt vino del dispositivo: su
- * `user` ya lo emitió el control, así que turnStart no lo repite.
- * Nada aquí lanza ni espera algo lento.
+ * Pure handlers of the session hooks. `getLink` is queried on every call
+ * (the Link is born in session.start); `turnComplete` receives `getPct` for the context percentage.
+ * `opts.fromDevice(text)` says (and consumes) whether the prompt came from the device: its
+ * `user` was already emitted by the control, so turnStart does not repeat it.
+ * Nothing here throws or waits on anything slow.
  */
 export function makeHandlers(
   getLink: () => Link | undefined,
@@ -56,7 +57,7 @@ export function makeHandlers(
     try {
       const l = getLink()
       if (l) fn(l)
-    } catch { /* un fallo de eventos no debe llegar a Claude Code */ }
+    } catch { /* an event failure must not reach Claude Code */ }
   }
   const full = (l: Link) => l.role !== 'service'
   const tag = (agent: string | undefined, d: Record<string, unknown>) => (agent ? { agent, ...d } : d)
@@ -77,7 +78,7 @@ export function makeHandlers(
       })
     },
 
-    /** Observa un chunk de turn.step; `st` es el estado del paso en curso. */
+    /** Observes a turn.step chunk; `st` is the state of the current step. */
     chunk(e: { agentId?: string }, c: Chunk, st: StepState): void {
       safe(l => {
         if (!full(l)) return
@@ -106,7 +107,7 @@ export function makeHandlers(
     toolStart(e: Call): void {
       safe(l => {
         if (!full(l)) return
-        l.emit({ kind: 'tool_start', data: tag(e.agentId, { id: e.tool_use_id, name: e.tool, summary: summarize(e.tool, e) }) })
+        l.emit({ kind: 'tool_start', data: tag(e.agentId, { id: e.tool_use_id, name: e.tool, summary: summarize(e.tool, e), input: trimInput(e.tool, e) }) })
       })
     },
 
@@ -161,8 +162,8 @@ export type StepState = { text: string; thinking: boolean }
 export const newStep = (): StepState => ({ text: '', thinking: false })
 
 /**
- * Porcentaje de contexto de `$.session.usage().context`: `percent` si existe;
- * si no, round(100 * tokens / window) cuando hay ambos; si no, undefined.
+ * Context percentage from `$.session.usage().context`: `percent` if present;
+ * otherwise round(100 * tokens / window) when both exist; otherwise undefined.
  */
 export function contextPct(u: { context?: { percent?: number; tokens?: number; window?: number } } | undefined): number | undefined {
   const c = u?.context
@@ -175,9 +176,9 @@ export function contextPct(u: { context?: { percent?: number; tokens?: number; w
 type Handlers = ReturnType<typeof makeHandlers>
 
 /**
- * Cuerpo del hook turn.step: reenvía cada chunk y el valor de retorno del flujo
- * interno. Si el consumidor cierra (return) o lanza (throw) el envoltorio, cierra
- * o reenvía al flujo interno y aun así emite el texto parcial del paso.
+ * Body of the turn.step hook: forwards each chunk and the inner stream's return
+ * value. If the consumer closes (return) or throws into the wrapper, it closes
+ * or forwards to the inner stream and still emits the step's partial text.
  */
 export async function* stepHook<C extends { kind: string }, R>(
   h: Handlers,
@@ -185,7 +186,7 @@ export async function* stepHook<C extends { kind: string }, R>(
   stream: AsyncGenerator<C, R>,
 ): AsyncGenerator<C, R> {
   const st = newStep()
-  let finished = false // el generador interno terminó o falló: nada que cerrar
+  let finished = false // the inner generator finished or failed: nothing to close
   try {
     while (true) {
       let r: IteratorResult<C, R>
@@ -203,7 +204,7 @@ export async function* stepHook<C extends { kind: string }, R>(
       try {
         yield r.value
       } catch (err) {
-        // el flujo interno decide; si no lanza, se relanza igual
+        // the inner stream decides; if it does not throw, rethrow anyway
         let res: IteratorResult<C, R>
         try {
           res = await stream.throw(err)
@@ -211,7 +212,7 @@ export async function* stepHook<C extends { kind: string }, R>(
           finished = true
           throw err2
         }
-        // si se recuperó y sigue suspendido en un yield, el finally lo cierra
+        // if it recovered and is still suspended at a yield, the finally closes it
         if (res.done) finished = true
         throw err
       }
@@ -223,17 +224,17 @@ export async function* stepHook<C extends { kind: string }, R>(
 }
 
 /**
- * La llamada no la hizo el modelo sino un mod: un `$.ui.ask` (que el engine corre como
- * tool.call de AskUserQuestion, p. ej. el diálogo de permiso de Quorum) o un `$.tool.call`.
- * No se refleja en los dispositivos (ni fila de herramienta ni tarjeta de pregunta).
- * `next.origin` dice quién la causó; sin él (builds viejos), el id `toolu_plugin_…` del engine.
+ * The call was not made by the model but by a mod: a `$.ui.ask` (which the engine runs as a
+ * tool.call of AskUserQuestion, e.g. Quorum's permission dialog) or a `$.tool.call`.
+ * It is not reflected on the devices (neither tool row nor question card).
+ * `next.origin` says who caused it; without it (old builds), the engine's `toolu_plugin_…` id.
  */
 export function fromPlugin(origin: { plugin?: string } | undefined, e: { tool_use_id?: unknown }): boolean {
   if (origin?.plugin !== undefined && origin.plugin !== 'engine') return true
   return typeof e.tool_use_id === 'string' && e.tool_use_id.startsWith('toolu_plugin_')
 }
 
-/** Cuerpo del hook tool.call: tool_start, llama, tool_end (también si lanza). */
+/** Body of the tool.call hook: tool_start, call, tool_end (also if it throws). */
 export async function toolHook<R>(h: Handlers, e: Call, run: () => Promise<R>): Promise<R> {
   h.toolStart(e)
   const t0 = Date.now()

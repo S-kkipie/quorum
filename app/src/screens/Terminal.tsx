@@ -31,14 +31,14 @@ const Screen = memo(function Screen({ ansi }: { ansi: string }) {
   )
 })
 
-/** Terminal en vivo de un panel: foto del daemon (solo mientras se renueva el lease), teclas y texto. */
+/** Live terminal of a pane: daemon snapshot (only while the lease is renewed), keys and text. */
 export default function Terminal({ machine, pane, root, label, onBack, onReopen }: {
   machine: string; pane: string; root?: string; label?: string; onBack: () => void; onReopen?: (pane: string) => void
 }) {
   const key = frames.key(machine, pane)
   const sub = useCallback((fn: () => void) => frames.subscribe(key, fn), [key])
   const stored = useSyncExternalStore(sub, () => frames.get(machine, pane))
-  // una foto de una visita anterior no cuenta: se espera una recibida después de montar
+  // a snapshot from a previous visit does not count: one received after mounting is awaited
   const mountedAt = useRef(0)
   const mountKey = useRef('')
   if (mountKey.current !== key) { mountKey.current = key; mountedAt.current = Date.now() }
@@ -56,9 +56,9 @@ export default function Terminal({ machine, pane, root, label, onBack, onReopen 
   const [auto, setAuto] = useState(true)
   const box = useRef<HTMLDivElement>(null)
 
-  // cada foto nueva es señal de vida
+  // every new snapshot is a sign of life
   useEffect(() => { if (frame) setLastLive(Date.now()) }, [frame])
-  // el lease dura 15 s: se renueva cada 5 s mientras la pantalla esté montada y la terminal viva
+  // the lease lasts 15 s: it is renewed every 5 s while the screen is mounted and the terminal alive
   useEffect(() => {
     if (closed) return
     let off = false
@@ -81,7 +81,7 @@ export default function Terminal({ machine, pane, root, label, onBack, onReopen 
     const t = setTimeout(() => setWaited(true), 3000)
     return () => clearTimeout(t)
   }, [machine, pane])
-  // fuente que cabe en el ancho (el celular nunca redimensiona el panel)
+  // font that fits the width (the phone never resizes the pane)
   const cols = frame?.cols ?? 0
   useLayoutEffect(() => {
     if (!auto || !cols || !box.current) return
@@ -94,11 +94,11 @@ export default function Terminal({ machine, pane, root, label, onBack, onReopen 
   const submit = async () => {
     setErr('')
     const t = text
-    setText('') // se vacía antes del await: un doble toque no repite el texto
+    setText('') // cleared before the await: a double tap does not repeat the text
     try {
       if (t) await sendTerminal(machine, pane, { text: t })
     } catch (e) {
-      setText((cur) => cur || t) // no llegó: se devuelve lo escrito (si no se escribió otra cosa)
+      setText((cur) => cur || t) // did not arrive: the typed text is restored (unless something else was typed)
       fail(e)
       return
     }
@@ -110,7 +110,7 @@ export default function Terminal({ machine, pane, root, label, onBack, onReopen 
   }
   const close = async () => {
     setMenu(false)
-    if (!confirm('¿Cerrar esta terminal?')) return
+    if (!confirm('Close this terminal?')) return
     try { await closeTerminal(machine, pane); onBack() } catch (e) { fail(e) }
   }
   const reopen = async () => {
@@ -124,17 +124,17 @@ export default function Terminal({ machine, pane, root, label, onBack, onReopen 
   return (
     <div className="flex h-full min-h-0 flex-col bg-zinc-950">
       <header className="flex shrink-0 items-center gap-2 border-b border-zinc-800 px-3 py-2">
-        <button onClick={onBack} aria-label="Volver" className="rounded bg-zinc-800 px-2 py-1 text-sm">←</button>
+        <button onClick={onBack} aria-label="Back" className="rounded bg-zinc-800 px-2 py-1 text-sm">←</button>
         <span className="min-w-0 flex-1 truncate text-sm">{label || 'Terminal'} <span className="text-xs text-zinc-500">{machine}</span></span>
         <button onClick={() => zoom(-1)} className={btn}>A−</button>
         <button onClick={() => zoom(1)} className={btn}>A+</button>
-        <button onClick={() => (history === null ? showHistory() : setHistory(null))} className={btn}>{history === null ? 'Historial' : 'En vivo'}</button>
-        {/* solo las terminales que abrió Quorum (con root) se pueden cerrar */}
+        <button onClick={() => (history === null ? showHistory() : setHistory(null))} className={btn}>{history === null ? 'History' : 'Live'}</button>
+        {/* only terminals opened by Quorum (with root) can be closed */}
         {root && <span className="relative">
           <button onClick={() => setMenu((m) => !m)} aria-label="⋯" className={btn}>⋯</button>
           {menu && (
             <div className="absolute right-0 top-full z-10 mt-1 rounded border border-zinc-700 bg-zinc-900 p-1 shadow">
-              <button onClick={close} className="whitespace-nowrap rounded px-3 py-1.5 text-sm text-red-400 hover:bg-zinc-800">Cerrar terminal</button>
+              <button onClick={close} className="whitespace-nowrap rounded px-3 py-1.5 text-sm text-red-400 hover:bg-zinc-800">Close terminal</button>
             </div>
           )}
         </span>}
@@ -144,16 +144,16 @@ export default function Terminal({ machine, pane, root, label, onBack, onReopen 
           <pre className="m-0 font-mono text-zinc-200" style={{ fontSize: size, lineHeight: 1.25 }}><Screen ansi={history} /></pre>
         ) : closed ? (
           <div className="flex flex-col items-center gap-3 p-6 text-center">
-            <p className="text-sm text-zinc-300">La terminal se cerró</p>
-            {root && <button onClick={reopen} className="rounded bg-blue-600 px-3 py-1.5 text-sm text-white">Abrir otra</button>}
+            <p className="text-sm text-zinc-300">Terminal closed</p>
+            {root && <button onClick={reopen} className="rounded bg-blue-600 px-3 py-1.5 text-sm text-white">Open another</button>}
           </div>
         ) : frame ? (
           <pre className="m-0 w-max font-mono text-zinc-200" style={{ fontSize: size, lineHeight: 1.25 }}><Screen ansi={frame.ansi} /></pre>
         ) : waited ? (
-          <p className="p-4 text-sm text-zinc-500">Conectando con la terminal…</p>
+          <p className="p-4 text-sm text-zinc-500">Connecting to the terminal…</p>
         ) : null}
       </div>
-      {noSignal && <p role="status" className="shrink-0 bg-amber-950 px-3 py-1 text-xs text-amber-300">Sin señal — {watchErr || 'reintentando…'}</p>}
+      {noSignal && <p role="status" className="shrink-0 bg-amber-950 px-3 py-1 text-xs text-amber-300">No signal: {watchErr || 'retrying…'}</p>}
       {err && <p role="alert" className="shrink-0 px-3 py-1 text-xs text-red-400">{err}</p>}
       {!closed && history === null && (
         <footer className="shrink-0 border-t border-zinc-800 bg-zinc-950 pb-[env(safe-area-inset-bottom)]">
@@ -161,7 +161,7 @@ export default function Terminal({ machine, pane, root, label, onBack, onReopen 
             {KEYS.map(([name, k]) => <button key={k} {...noBlur} onClick={() => key1(k)} className={btn}>{name}</button>)}
           </div>
           <form className="flex gap-2 p-2" onSubmit={(e) => { e.preventDefault(); submit() }}>
-            <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Escribe…" enterKeyHint="send"
+            <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Type…" enterKeyHint="send"
               autoCapitalize="off" autoCorrect="off" autoComplete="off" spellCheck={false}
               className="min-w-0 flex-1 rounded bg-zinc-900 px-3 py-2 text-base text-zinc-100 outline-none" />
             <button type="submit" aria-label="⏎" className="shrink-0 rounded bg-blue-600 px-4 py-2 text-sm text-white">⏎</button>

@@ -1,5 +1,5 @@
-// Package transcript reconstruye el historial de una sesión desde el JSONL
-// que Claude Code guarda en disco. El formato es interno: lo que no se entiende se salta.
+// Package transcript rebuilds a session's history from the JSONL
+// that Claude Code stores on disk. The format is internal: whatever is not understood is skipped.
 package transcript
 
 import (
@@ -17,7 +17,7 @@ import (
 
 const (
 	maxLine = 16 << 20
-	// MaxText acota el texto de cada evento para que el resultado quepa en un mensaje WS.
+	// MaxText bounds the text of each event so the result fits in a WS message.
 	MaxText = 16 << 10
 )
 
@@ -39,7 +39,7 @@ type line struct {
 	} `json:"message"`
 }
 
-// Parse devuelve como máximo los últimos limit eventos user/assistant/tool_start.
+// Parse returns at most the last limit user/assistant/tool_start events.
 func Parse(r io.Reader, limit int) ([]proto.Event, error) {
 	var out []proto.Event
 	br := bufio.NewReaderSize(r, 64<<10)
@@ -64,7 +64,7 @@ func Parse(r io.Reader, limit int) ([]proto.Event, error) {
 	return out, nil
 }
 
-// readLine lee una línea completa; descarta (devuelve vacía) las que exceden maxLine.
+// readLine reads a whole line; discards (returns empty) those that exceed maxLine.
 func readLine(br *bufio.Reader) ([]byte, error) {
 	var buf []byte
 	tooBig := false
@@ -87,7 +87,7 @@ func readLine(br *bufio.Reader) ([]byte, error) {
 	}
 }
 
-// clip corta s a MaxText bytes en frontera de runa y añade "…".
+// clip cuts s to MaxText bytes at a rune boundary and adds "…".
 func clip(s string) string {
 	if len(s) <= MaxText {
 		return s
@@ -99,7 +99,7 @@ func clip(s string) string {
 	return s[:cut] + "…"
 }
 
-// SkipUserText dice si es texto que Claude Code guarda como "user" pero no escribió una persona.
+// SkipUserText reports whether it is text Claude Code stores as "user" but a person did not write.
 func SkipUserText(s string) bool {
 	return strings.HasPrefix(s, "<command-") || strings.HasPrefix(s, "<local-command-") ||
 		strings.HasPrefix(s, "[Request interrupted by user")
@@ -148,13 +148,13 @@ func parseLine(raw []byte) []proto.Event {
 			}
 			out = append(out, ev(kind, map[string]string{"text": clip(b.Text)}))
 		case b.Type == "tool_use" && l.Type == "assistant":
-			out = append(out, ev(proto.KindToolStart, proto.ToolStart{ID: b.ID, Name: b.Name, Summary: clip(summarize(b.Name, b.Input))}))
+			out = append(out, ev(proto.KindToolStart, proto.ToolStart{ID: b.ID, Name: b.Name, Summary: clip(summarize(b.Name, b.Input)), Input: TrimInput(b.Name, b.Input)}))
 		}
 	}
 	return out
 }
 
-// summarize replica el resumen de una línea que arma el mod.
+// summarize replicates the one-line summary the mod builds.
 func summarize(tool string, input json.RawMessage) string {
 	var o map[string]any
 	_ = json.Unmarshal(input, &o)
@@ -174,7 +174,7 @@ func summarize(tool string, input json.RawMessage) string {
 			return v
 		}
 	}
-	// json.Marshal ordena las claves: el orden es estable aunque no el del mod.
+	// json.Marshal sorts the keys: the order is stable even though it is not the mod's.
 	var keys []string
 	for k := range o {
 		keys = append(keys, k)

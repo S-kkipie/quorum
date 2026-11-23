@@ -13,7 +13,7 @@ const INFO: SessionInfo = {
 
 const tick = async () => { for (let i = 0; i < 30; i++) await Promise.resolve() }
 
-// Reloj falso: sleep se resuelve al avanzar.
+// Fake clock: sleep resolves on advance.
 function fake() {
   let t = 0
   const sleepers: Array<{ at: number; fn: () => void }> = []
@@ -63,7 +63,7 @@ function fake() {
   return { io, runs, posts, spawns, sleeps, advance, setFetch: (f: typeof fetchImpl) => { fetchImpl = f } }
 }
 
-test('300 assistant_delta en <150 ms producen un solo POST con un delta', async () => {
+test('300 assistant_delta in <150 ms produce a single POST with one delta', async () => {
   const f = fake()
   const link = new Link(f.io)
   await link.start(INFO)
@@ -77,7 +77,7 @@ test('300 assistant_delta en <150 ms producen un solo POST con un delta', async 
   link.stop()
 })
 
-test('el register incluye transcriptPath', async () => {
+test('the register includes transcriptPath', async () => {
   const f = fake()
   const link = new Link(f.io)
   await link.start(INFO)
@@ -87,7 +87,7 @@ test('el register incluye transcriptPath', async () => {
   link.stop()
 })
 
-test('si attach termina, tras 1 s hay nuevo ensure y nuevo register', async () => {
+test('if attach ends, after 1 s there is a new ensure and a new register', async () => {
   const f = fake()
   const link = new Link(f.io)
   await link.start(INFO)
@@ -121,7 +121,7 @@ test('backoff 1, 2, 5, 10, 10 s', async () => {
   link.stop()
 })
 
-test('una línea JSON partida en dos chunks produce un solo Command; ping se ignora', async () => {
+test('a JSON line split across two chunks produces a single Command; ping is ignored', async () => {
   const f = fake()
   const link = new Link(f.io)
   const got: any[] = []
@@ -138,7 +138,7 @@ test('una línea JSON partida en dos chunks produce un solo Command; ping se ign
   link.stop()
 })
 
-test('un fetch que rechaza no lanza hacia afuera', async () => {
+test('a rejecting fetch does not throw outward', async () => {
   const f = fake()
   f.setFetch(async () => { throw new Error('boom') })
   const link = new Link(f.io)
@@ -149,7 +149,7 @@ test('un fetch que rechaza no lanza hacia afuera', async () => {
   link.stop()
 })
 
-test('adoptId vuelve a registrar con previousId', async () => {
+test('adoptId re-registers with previousId', async () => {
   const f = fake()
   const link = new Link(f.io)
   await link.start(INFO)
@@ -161,7 +161,7 @@ test('adoptId vuelve a registrar con previousId', async () => {
   link.stop()
 })
 
-test('adoptId no deja dos bucles attach: el viejo deja de consumir y no reintenta', async () => {
+test('adoptId leaves no two attach loops: the old one stops consuming and does not retry', async () => {
   const f = fake()
   const link = new Link(f.io)
   const got: string[] = []
@@ -171,19 +171,19 @@ test('adoptId no deja dos bucles attach: el viejo deja de consumir y no reintent
   link.adoptId('s2')
   await f.advance(10)
   expect(f.spawns.length).toBe(2)
-  // el attach viejo ya no se consume: sus comandos no llegan
+  // the old attach is no longer consumed: its commands do not arrive
   f.spawns[0].push('{"type":"prompt","text":"viejo"}\n')
-  f.spawns[1].push('{"type":"prompt","text":"nuevo"}\n')
+  f.spawns[1].push('{"type":"prompt","text":"new"}\n')
   await f.advance(10)
-  expect(got).toEqual(['nuevo'])
-  // el daemon cierra el stream viejo (Upsert con previousId): no hay reintento ni tercer attach
+  expect(got).toEqual(['new'])
+  // the daemon closes the old stream (Upsert with previousId): no retry and no third attach
   f.spawns[0].end()
   await f.advance(20_000)
   expect(f.spawns.length).toBe(2)
   link.stop()
 })
 
-test('un connect obsoleto no pisa el estado de la época nueva', async () => {
+test('a stale connect does not overwrite the state of the new epoch', async () => {
   const f = fake()
   const link = new Link(f.io)
   let release!: () => void
@@ -193,19 +193,19 @@ test('un connect obsoleto no pisa el estado de la época nueva', async () => {
   })
   const first = link.start(INFO)
   await tick()
-  link.adoptId('s2') // época nueva mientras el register de s1 sigue en vuelo
+  link.adoptId('s2') // new epoch while s1's register is still in flight
   await f.advance(10)
   expect(link.state).toBe('connected')
   const spawnsBefore = f.spawns.length
   release()
   await first
   await f.advance(10)
-  expect(f.spawns.length).toBe(spawnsBefore) // el connect viejo no lanza otro bucle
+  expect(f.spawns.length).toBe(spawnsBefore) // the old connect does not launch another loop
   expect(link.sessionId).toBe('s2')
   link.stop()
 })
 
-test('ensure con código distinto de 0 deja sin daemon y reporta stderr', async () => {
+test('ensure with a non-zero code leaves no daemon and reports stderr', async () => {
   const f = fake()
   f.io.run = async () => ({ exitCode: 1, stdout: 'no json', stderr: 'boom' })
   const link = new Link(f.io)
@@ -215,7 +215,7 @@ test('ensure con código distinto de 0 deja sin daemon y reporta stderr', async 
   link.stop()
 })
 
-test('los eventos se sellan con el id vigente al vaciar la cola', async () => {
+test('events are stamped with the current id when flushing the queue', async () => {
   const f = fake()
   const link = new Link(f.io)
   await link.start(INFO)
@@ -229,16 +229,16 @@ test('los eventos se sellan con el id vigente al vaciar la cola', async () => {
   link.stop()
 })
 
-test('ensure no-cero sin stderr toma el error del stdout JSON', async () => {
+test('non-zero ensure without stderr takes the error from the stdout JSON', async () => {
   const f = fake()
-  f.io.run = async () => ({ exitCode: 1, stdout: '{"ok":false,"error":"sin puerto"}', stderr: '' })
+  f.io.run = async () => ({ exitCode: 1, stdout: '{"ok":false,"error":"no port"}', stderr: '' })
   const link = new Link(f.io)
   await link.start(INFO)
-  expect(link.error).toContain('sin puerto')
+  expect(link.error).toContain('no port')
   link.stop()
 })
 
-test('update mezcla la info y re-registra con el estado nuevo', async () => {
+test('update merges the info and re-registers with the new state', async () => {
   const f = fake()
   const link = new Link(f.io)
   await link.start(INFO)
@@ -253,7 +253,7 @@ test('update mezcla la info y re-registra con el estado nuevo', async () => {
   link.stop()
 })
 
-test('update serializa los register: nunca un estado viejo después de uno nuevo', async () => {
+test('update serializes registers: never an old state after a new one', async () => {
   const f = fake()
   const link = new Link(f.io)
   await link.start(INFO)
@@ -275,9 +275,9 @@ test('update serializa los register: nunca un estado viejo después de uno nuevo
   link.stop()
 })
 
-test('cola llena: se descarta primero un assistant_delta y si no hay, el más viejo', async () => {
+test('full queue: an assistant_delta is dropped first and, if none, the oldest', async () => {
   const f = fake()
-  f.io.run = async () => ({ exitCode: 1, stdout: '', stderr: 'sin daemon' }) // nada se vacía
+  f.io.run = async () => ({ exitCode: 1, stdout: '', stderr: 'no daemon' }) // nothing flushes
   const link = new Link(f.io)
   await link.start(INFO)
   link.emit({ kind: 'info', data: { text: 'i0' } })
@@ -294,7 +294,7 @@ test('cola llena: se descarta primero un assistant_delta y si no hay, el más vi
   link.stop()
 })
 
-test('tras 30 s de attach sano el backoff vuelve a 1 s', async () => {
+test('after 30 s of healthy attach the backoff goes back to 1 s', async () => {
   const f = fake()
   const link = new Link(f.io)
   await link.start(INFO)
@@ -312,7 +312,7 @@ test('tras 30 s de attach sano el backoff vuelve a 1 s', async () => {
   link.stop()
 })
 
-test('los chunks de stderr del attach se ignoran', async () => {
+test('stderr chunks of attach are ignored', async () => {
   const f = fake()
   const link = new Link(f.io)
   const got: any[] = []
@@ -325,7 +325,7 @@ test('los chunks de stderr del attach se ignoran', async () => {
   link.stop()
 })
 
-test('stop y start seguidos dejan un solo bucle de vaciado', async () => {
+test('consecutive stop and start leave a single flush loop', async () => {
   const f = fake()
   const link = new Link(f.io)
   await link.start(INFO)
@@ -341,7 +341,7 @@ test('stop y start seguidos dejan un solo bucle de vaciado', async () => {
   link.stop()
 })
 
-test('stop/start con un POST de eventos en vuelo: el siguiente espera a que termine', async () => {
+test('stop/start with an events POST in flight: the next one waits for it to finish', async () => {
   const f = fake()
   const link = new Link(f.io)
   await link.start(INFO)
@@ -368,7 +368,7 @@ test('stop/start con un POST de eventos en vuelo: el siguiente espera a que term
   link.stop()
 })
 
-test('versión del daemon distinta de la del mod: aviso en log y versionWarning', async () => {
+test('daemon version different from the mod: warning in log and versionWarning', async () => {
   const f = fake()
   const logs: string[] = []
   f.io.log = m => { logs.push(m) }
@@ -377,11 +377,11 @@ test('versión del daemon distinta de la del mod: aviso en log y versionWarning'
   await link.start(INFO)
   expect(link.daemonVersion).toBe('0.0.1')
   expect(link.versionWarning).toContain('0.0.1')
-  expect(logs.some(l => l.includes('no coincide'))).toBe(true)
+  expect(logs.some(l => l.includes('does not match'))).toBe(true)
   link.stop()
 })
 
-test('versión igual (o no informada): sin aviso', async () => {
+test('same version (or not reported): no warning', async () => {
   const f = fake()
   const link = new Link(f.io)
   await link.start(INFO)

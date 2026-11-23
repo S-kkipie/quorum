@@ -25,13 +25,13 @@ func TestAttachCheckoutTouchesOnlyOnNewAssociation(t *testing.T) {
 		require.Equal(t, p.ID, si.ProjectID)
 	}
 	hello("s1")
-	require.Equal(t, 2, touches) // checkout nuevo y sesión nueva
+	require.Equal(t, 2, touches) // new checkout and new session
 	hello("s1")
 	hello("s1")
-	require.Equal(t, 2, touches) // reconexión: nada
+	require.Equal(t, 2, touches) // reconnection: nothing
 	hello("s2")
-	require.Equal(t, 3, touches) // sesión nueva en el proyecto
+	require.Equal(t, 3, touches) // new session in the project
 	h.forgetSuggested("s2")
 	hello("s2")
-	require.Equal(t, 4, touches) // reabierta: vuelve a avisar
+	require.Equal(t, 4, touches) // reopened: notifies again
 }

@@ -1,247 +1,247 @@
-# Quorum — diseño
+# Quorum — design
 
-Fecha: 2026-11-22 · Estado: borrador para aprobación · Reemplaza a pastor (v1)
+Date: 2026-11-22 · Status: draft for approval · Replaces pastor (v1)
 
-## 1. Qué es y por qué
+## 1. What it is and why
 
-Quorum es el **centro de mando personal** de una sola persona que tiene ~4 trabajos y, en uno de ellos, mantiene muchos proyectos. El trabajo lo hacen sesiones de Claude Code repartidas en varias máquinas (VPS dedicadas, un servidor, laptop, PC con WSL), a veces varias sesiones del mismo proyecto en máquinas distintas.
+Quorum is the **personal command center** of one person who has ~4 jobs and, in one of them, maintains many projects. The work is done by Claude Code sessions spread over several machines (dedicated VPSs, a server, a laptop, a PC with WSL), sometimes several sessions of the same project on different machines.
 
-**El dolor de hoy no es manejar sesiones, es manejar proyectos.** Cada proyecto tiene su contexto, sus features y su propia ticketera, y para saber cómo va algo hay que preguntar: "¿en qué estado está tal ticket?", "¿cómo vamos con el proyecto?". Quorum tiene que tener eso **ya armado**, sin preguntar, y además permitir **dirigir las sesiones remotamente** desde el celular o la compu.
+**Today's pain is not managing sessions, it is managing projects.** Each project has its own context, its features and its own ticket system, and to know how something is going you have to ask: "what state is that ticket in?", "how is the project going?". Quorum has to have that **already assembled**, without asking, and also allow **directing the sessions remotely** from the phone or the computer.
 
-pastor (github.com/S-kkipie/pastor) fue la v1: control remoto de Claude Code desde el móvil (mod + bridge + hub + PWA + agente WhatsApp). Funcionó, pero se escribió en 4 días y se rehace desde cero con otra unidad central (el proyecto, no la sesión) y una arquitectura limpia.
+pastor (github.com/S-kkipie/pastor) was v1: remote control of Claude Code from the phone (mod + bridge + hub + PWA + WhatsApp agent). It worked, but it was written in 4 days and is being redone from scratch with a different central unit (the project, not the session) and a clean architecture.
 
-### Quién lo usa
-Solo el dueño. Nadie más (clientes, jefes, equipo) ve nada. No hay usuarios, roles ni multi-tenant.
+### Who uses it
+Only the owner. Nobody else (clients, bosses, team) sees anything. There are no users, roles or multi-tenancy.
 
-## 2. Objetivos
+## 2. Goals
 
-1. **Proyectos primero.** Jerarquía: Trabajo → Proyecto → (Tickets, Sesiones). El tablero principal muestra todos los proyectos con su avance y un resumen corto de "en qué va y qué lo frena".
-2. **Estado sin preguntar.** Cada ticket muestra el estado de su ticketera combinado con el de la sesión que lo trabaja (trabajando / te necesita / terminado / esperando review). Cada proyecto tiene un resumen de 1–2 líneas que se actualiza solo.
-3. **Ticketeras genéricas.** Un modelo de ticket propio y conectores. Conectar una ticketera custom debe ser fácil (minutos, o pedírselo a una sesión de Claude).
-4. **Control remoto propio** (sin el Remote Control nativo de Claude): ver todas las sesiones de todas las máquinas, abrir sesiones nuevas en cualquier máquina/proyecto (también desde un ticket), mandar prompts (ahora / en cola / interrumpir), responder permisos y `AskUserQuestion`, cerrar sesiones.
-5. **Chat en vivo** con cada sesión: streaming de texto, herramientas, subagentes y tareas de fondo.
-6. **Terminal remota** en cualquier máquina.
-7. **Comunicación entre sesiones** entre máquinas, con la misma forma que la mensajería nativa de Claude Code.
-8. **Celular y compu por igual:** una app web adaptable — vista ancha multi-panel en escritorio, vista de pulgar en el celular, instalable como PWA.
-9. **Liviano:** los procesos que corren siempre (hub y agente por máquina) deben gastar poca RAM y compilar sin reventar la memoria.
+1. **Projects first.** Hierarchy: Workspace → Project → (Tickets, Sessions). The main board shows all projects with their progress and a short summary of "where it stands and what is blocking it".
+2. **Status without asking.** Each ticket shows the status from its ticket system combined with that of the session working on it (working / needs you / finished / waiting for review). Each project has a 1–2 line summary that updates itself.
+3. **Generic ticket systems.** A ticket model of our own and connectors. Connecting a custom ticket system must be easy (minutes, or ask a Claude session to do it).
+4. **Own remote control** (without Claude's native Remote Control): see all sessions on all machines, open new sessions on any machine/project (also from a ticket), send prompts (now / queued / interrupt), answer permissions and `AskUserQuestion`, close sessions.
+5. **Live chat** with each session: streaming text, tools, subagents and background tasks.
+6. **Remote terminal** on any machine.
+7. **Communication between sessions** across machines, with the same shape as Claude Code's native messaging.
+8. **Phone and computer alike:** an adaptive web app — wide multi-panel view on desktop, thumb view on the phone, installable as a PWA.
+9. **Lightweight:** the always-running processes (hub and per-machine agent) must use little RAM and build without blowing up memory.
 
-## 2b. Entrega por etapas (decidido por el dueño)
+## 2b. Delivery in stages (decided by the owner)
 
-- **Etapa 1 — lo central:** trabajos, proyectos, tickets (conectores GitHub, Paperclip y ejecutable), estado y resúmenes, sesiones de todas las máquinas, abrir/cerrar sesiones, chat en vivo, prompts (ahora/cola/interrumpir), permisos y preguntas. Compatibilidad con whoas y ccapi (§14b) desde esta etapa.
-- **Etapa 2:** terminal remota y comunicación entre sesiones de distintas máquinas.
-- **Después:** el roadmap (§16), empezando por las apps Tauri.
+- **Stage 1 — the core:** workspaces, projects, tickets (GitHub, Paperclip and executable connectors), status and summaries, sessions from all machines, open/close sessions, live chat, prompts (now/queue/interrupt), permissions and questions. whoas and ccapi compatibility (§14b) from this stage.
+- **Stage 2:** remote terminal and communication between sessions on different machines.
+- **Afterwards:** the roadmap (§16), starting with the Tauri apps.
 
-**Convivencia con pastor:** pastor queda retirado; no hay convivencia.
+**Coexistence with pastor:** pastor is retired; there is no coexistence.
 
-## 3. No-objetivos (por ahora, van al roadmap)
+## 3. Non-goals (for now, they go to the roadmap)
 
-- Git en la app (diff por archivo, commit, push/pull, PR).
-- Explorador de archivos, web en desarrollo por la tailnet, navegador en vivo.
-- Rutinas programadas.
-- Agente general por WhatsApp.
-- Apps nativas (escritorio y APK con Tauri): van justo después de la primera versión (ver §7.2b).
+- Git in the app (per-file diff, commit, push/pull, PR).
+- File explorer, web in development over the tailnet, live browser.
+- Scheduled routines.
+- General WhatsApp agent.
+- Native apps (desktop and APK with Tauri): they come right after the first version (see §7.2b).
 
-## 4. Anti-objetivos (si pasa esto, fracasó aunque "funcione")
+## 4. Anti-goals (if this happens, it failed even if it "works")
 
-- **Que tengas que seguir preguntando** a las sesiones en qué va cada cosa.
-- **Que sea un sistema de agentes autónomos** (estilo Paperclip: organigrama, heartbeats, agentes que corren solos). Las sesiones las diriges tú; Quorum informa y facilita.
-- **Raspar la terminal** (tmux/screen scraping estilo Collie). Se usan eventos reales.
-- **Depender del Remote Control nativo** o de los servidores de Anthropic para el control.
-- **Un monolito** como el `bridge.mjs` de 136 KB de v1.
-- **Polling** como mecanismo principal (v1 hacía poll cada 1 s / 250 ms).
-- Mascotas, animaciones y adornos que no hacen al problema (Clawd queda fuera).
+- **Having to keep asking** the sessions how each thing is going.
+- **Being an autonomous agent system** (Paperclip style: org chart, heartbeats, agents that run on their own). You direct the sessions; Quorum informs and facilitates.
+- **Scraping the terminal** (tmux/screen scraping Collie style). Real events are used.
+- **Depending on the native Remote Control** or on Anthropic's servers for control.
+- **A monolith** like v1's 136 KB `bridge.mjs`.
+- **Polling** as the main mechanism (v1 polled every 1 s / 250 ms).
+- Mascots, animations and decorations that do not serve the problem (Clawd stays out).
 
-## 5. Restricciones
+## 5. Constraints
 
-- Una sola persona, todo dentro de la tailnet (Tailscale/Headscale). Nunca expuesto a internet (`funnel` prohibido).
-- Máquinas: Linux (VPS, servidor), WSL2 y Windows nativo (lanzar sesiones en Windows Terminal), posible macOS. Las VPS no tienen pantalla: sesiones en tmux.
-- Claude Code con suscripción; la **cuota es compartida** entre todo (otros servicios del dueño). Lo que Quorum gaste en modelo (resúmenes) debe ser mínimo y con Haiku.
-- La API de mods de Claude Code es early-access y puede cambiar entre versiones.
-- RAM limitada en las máquinas (en particular las VPS chicas y la PC con WSL).
+- A single person, everything inside the tailnet (Tailscale/Headscale). Never exposed to the internet (`funnel` forbidden).
+- Machines: Linux (VPS, server), WSL2 and native Windows (launch sessions in Windows Terminal), possibly macOS. VPSs have no screen: sessions in tmux.
+- Claude Code with a subscription; the **quota is shared** across everything (the owner's other services). What Quorum spends on the model (summaries) must be minimal and with Haiku.
+- Claude Code's mod API is early-access and may change between versions.
+- Limited RAM on the machines (in particular the small VPSs and the PC with WSL).
 
-## 6. Enfoques considerados
+## 6. Approaches considered
 
-| Enfoque | Cómo se conecta a cada sesión | A favor | En contra |
+| Approach | How it connects to each session | Pros | Cons |
 |---|---|---|---|
-| **A. Mod + agente por máquina + hub** ✅ | Un mod dentro de cada sesión emite eventos reales y recibe prompts/decisiones | Ve y controla **cualquier** sesión, incluso las abiertas a mano; se puede seguir la misma sesión en la PC y en el celular a la vez | Depende de la API de mods (early-access) |
-| B. SDK / headless (`stream-json`) | El daemon lanza y posee los procesos | API más estable, control total | Las sesiones abiertas a mano no existen para Quorum; no se puede usar la terminal de la misma sesión a la vez. Va contra cómo trabaja el dueño |
-| C. Leer la terminal (tmux) | Scraping | — | Frágil, sin eventos reales; descartado desde v1 |
+| **A. Mod + per-machine agent + hub** ✅ | A mod inside each session emits real events and receives prompts/decisions | Sees and controls **any** session, even those opened by hand; the same session can be followed on the PC and on the phone at once | Depends on the mod API (early-access) |
+| B. SDK / headless (`stream-json`) | The daemon launches and owns the processes | More stable API, full control | Sessions opened by hand do not exist for Quorum; the same session's terminal cannot be used at the same time. Goes against how the owner works |
+| C. Read the terminal (tmux) | Scraping | — | Fragile, no real events; discarded since v1 |
 
-**Elegido: A.** Para acotar el riesgo de la API de mods, el mod es un paquete chico y tonto (traduce eventos ↔ protocolo) y toda la lógica vive en el agente y el hub.
+**Chosen: A.** To bound the risk of the mod API, the mod is a small, dumb package (translates events ↔ protocol) and all the logic lives in the agent and the hub.
 
-## 7. Arquitectura
+## 7. Architecture
 
 ```
- 📱 / 💻  App Quorum (PWA, React)
+ 📱 / 💻  Quorum app (PWA, React)
         │  WebSocket + HTTP (tailnet)
         ▼
- ┌──────────────────────┐      conectores ──▶ GitHub · Paperclip · ticketeras custom
- │  quorum-hub (Go)    │      resumidor  ──▶ claude -p (Haiku)
- │  SQLite · sirve app  │
+ ┌──────────────────────┐      connectors ──▶ GitHub · Paperclip · custom ticket systems
+ │  quorum-hub (Go)    │      summarizer ──▶ claude -p (Haiku)
+ │  SQLite · serves app │
  └──────────────────────┘
-        ▲  WebSocket (cada máquina se conecta saliente al hub)
+        ▲  WebSocket (each machine connects outbound to the hub)
         │
  ┌──────┴──────────┐   ┌─────────────────┐   ┌─────────────────┐
  │ quorumd (Go)   │   │ quorumd · VPS2 │   │ quorumd · PC   │
  │ VPS1            │   │                 │   │ (WSL / Windows) │
  └──────┬──────────┘   └─────────────────┘   └─────────────────┘
-        │ socket local (unix / named pipe)
+        │ local socket (unix / named pipe)
    ┌────┴─────┐
-   │ sesión   │ … cada sesión de Claude Code carga quorum-mod (TS)
+   │ session  │ … each Claude Code session loads quorum-mod (TS)
    │ + mod    │
    └──────────┘
 ```
 
-### 7.1 Piezas
+### 7.1 Pieces
 
-| Pieza | Lenguaje | Dónde corre | Responsabilidad |
+| Piece | Language | Where it runs | Responsibility |
 |---|---|---|---|
-| `quorum-mod` | TypeScript (lo exige Claude Code) | Dentro de cada sesión | Emitir eventos de la sesión (registro, prompts, texto en streaming, herramientas, permisos, preguntas, subagentes, tareas de fondo, uso de contexto, fin de turno, cierre). Recibir y aplicar: prompts (ahora/cola/interrumpir), decisiones de permiso/pregunta, interrupción, cierre, mensajes de otras sesiones. Nada de lógica de negocio. |
-| `quorumd` | Go | Un proceso por máquina (servicio systemd de usuario / tarea de Windows) | Agrupa las sesiones locales, mantiene una conexión saliente persistente al hub, lanza sesiones (tmux / Windows Terminal / WSL), da PTYs para la terminal remota, entrega mensajes entre sesiones, informa repos/proyectos locales y estado de la máquina. Se reconecta solo. |
-| `quorum-hub` | Go | VPS siempre encendida | Fuente de verdad: trabajos, proyectos, tickets, sesiones, máquinas, dispositivos. Conectores de ticketeras, resumidor, emparejamiento de dispositivos, enrutamiento de mensajes entre máquinas, sirve la app y su API. |
-| `app` | React + Vite + Tailwind (TS) | Navegador (PWA) | UI adaptable escritorio/celular. Se compila y se embebe en el binario del hub. |
-| `protocol` | Esquema compartido | — | Definición única de mensajes mod↔daemon↔hub↔app. Tipos Go y TS se generan de ahí (evita los contratos duplicados de v1). |
+| `quorum-mod` | TypeScript (Claude Code requires it) | Inside each session | Emit session events (registration, prompts, streaming text, tools, permissions, questions, subagents, background tasks, context usage, end of turn, close). Receive and apply: prompts (now/queue/interrupt), permission/question decisions, interrupt, close, messages from other sessions. No business logic. |
+| `quorumd` | Go | One process per machine (systemd user service / Windows task) | Groups the local sessions, keeps a persistent outbound connection to the hub, launches sessions (tmux / Windows Terminal / WSL), provides PTYs for the remote terminal, delivers messages between sessions, reports local repos/projects and machine state. Reconnects by itself. |
+| `quorum-hub` | Go | Always-on VPS | Source of truth: workspaces, projects, tickets, sessions, machines, devices. Ticket system connectors, summarizer, device pairing, message routing between machines, serves the app and its API. |
+| `app` | React + Vite + Tailwind (TS) | Browser (PWA) | Adaptive desktop/phone UI. Compiled and embedded in the hub binary. |
+| `protocol` | Shared schema | — | Single definition of mod↔daemon↔hub↔app messages. Go and TS types are generated from it (avoids v1's duplicated contracts). |
 
-### 7.2 Por qué Go para hub y daemon (decisión del autor del diseño)
-El dueño pidió rendimiento y ser amigable con la RAM, también al compilar; mencionó Rust o Go. Go: daemons de ~10–30 MB residentes, compilación rápida y de poca memoria, binario estático único, cross-compile trivial a linux/windows/darwin. Rust rendiría algo más pero sus compilaciones son pesadas en RAM. SQLite en Go **sin cgo** (p. ej. `modernc.org/sqlite`) para que el cross-compile siga siendo trivial.
+### 7.2 Why Go for hub and daemon (design author's decision)
+The owner asked for performance and being friendly to RAM, also when compiling; he mentioned Rust or Go. Go: daemons of ~10–30 MB resident, fast and low-memory compilation, a single static binary, trivial cross-compile to linux/windows/darwin. Rust would perform somewhat better but its builds are heavy on RAM. SQLite in Go **without cgo** (e.g. `modernc.org/sqlite`) so cross-compiling stays trivial.
 
-### 7.2b Interfaz: un frontend, tres salidas (decisión del autor del diseño, a pedido del dueño)
-El dueño sugirió Tauri para tener web, escritorio y APK desde un mismo código. Decisión:
-- **Un único frontend React** que el hub sirve como web/PWA (primera versión).
-- **Tauri v2 como envoltura fina** del mismo frontend para escritorio (Windows/macOS/Linux) y Android: aporta notificaciones nativas, bandeja y APK. Sin lógica de negocio en Rust.
-- **Los builds de Tauri corren en CI (GitHub Actions)**, no en las máquinas del dueño: la compilación de Rust es pesada en RAM.
-- Requisito desde el día uno: el frontend no asume que corre en el mismo origen que el hub (la URL del hub es configurable y se guarda en el dispositivo) y no usa APIs que fallen en un webview de Tauri. Las capacidades nativas se acceden detrás de una capa pequeña (`native`) con implementación web por defecto.
+### 7.2b Interface: one frontend, three outputs (design author's decision, at the owner's request)
+The owner suggested Tauri to get web, desktop and APK from one codebase. Decision:
+- **A single React frontend** that the hub serves as web/PWA (first version).
+- **Tauri v2 as a thin wrapper** of the same frontend for desktop (Windows/macOS/Linux) and Android: it brings native notifications, tray and APK. No business logic in Rust.
+- **Tauri builds run in CI (GitHub Actions)**, not on the owner's machines: Rust compilation is heavy on RAM.
+- Requirement from day one: the frontend does not assume it runs on the same origin as the hub (the hub URL is configurable and stored on the device) and does not use APIs that fail in a Tauri webview. Native capabilities are accessed behind a small layer (`native`) with a web implementation by default.
 
-### 7.3 Conexiones
-- **mod → daemon:** socket local (unix socket en Linux/mac/WSL, named pipe en Windows), restringido al usuario del SO. Si el daemon no está corriendo, el mod lo arranca (como v1 hacía con el bridge).
-- **daemon → hub:** WebSocket saliente sobre la tailnet, autenticado con un token de máquina obtenido al enlazar (`quorumd link <hub> <código>`). Como la conexión es saliente, el hub no necesita alcanzar a cada máquina.
-- **app → hub:** HTTP + WebSocket, con token por dispositivo obtenido emparejando con un código de un solo uso.
-- **Todo es push.** Nada de polling salvo la sincronización de ticketeras (ver §9).
+### 7.3 Connections
+- **mod → daemon:** local socket (unix socket on Linux/mac/WSL, named pipe on Windows), restricted to the OS user. If the daemon is not running, the mod starts it (as v1 did with the bridge).
+- **daemon → hub:** outbound WebSocket over the tailnet, authenticated with a machine token obtained when linking (`quorumd link <hub> <code>`). Since the connection is outbound, the hub does not need to reach each machine.
+- **app → hub:** HTTP + WebSocket, with a per-device token obtained by pairing with a single-use code.
+- **Everything is push.** No polling except ticket system sync (see §9).
 
-### 7.4 Funcionamiento sin hub
-Si el hub cae, las sesiones siguen funcionando normal (el mod nunca bloquea a Claude Code esperando al daemon o al hub). Cuando el hub vuelve, los daemons se reconectan y reenvían el estado actual.
+### 7.4 Operation without the hub
+If the hub goes down, sessions keep working normally (the mod never blocks Claude Code waiting for the daemon or the hub). When the hub comes back, the daemons reconnect and resend the current state.
 
-## 8. Modelo de datos (hub)
+## 8. Data model (hub)
 
-- **Trabajo** (workspace): nombre, color. Agrupa proyectos. Ej: "Cliente X", "ACME".
-- **Proyecto:** trabajo, nombre, repo remoto (si hay), conector de ticketera + su configuración, resumen actual, avance.
-- **Checkout:** un proyecto en una máquina concreta (máquina, ruta, rama actual). Un proyecto puede tener varios checkouts en varias máquinas. Las sesiones se asocian a su proyecto por el checkout donde corren (ruta raíz git → checkout → proyecto). Los checkouts se descubren solos (cada daemon informa los repos donde hubo sesiones) y se asignan a un proyecto con un toque (o automáticamente por URL del remoto git).
-- **Ticket:** proyecto, id externo, título, estado (normalizado: `por_hacer | en_curso | en_review | hecho | bloqueado` + el estado original), descripción, asignado, comentarios recientes, URL, actualizado.
-- **Sesión:** máquina, checkout, id de sesión de Claude Code, nombre, estado en vivo (`trabajando | te_necesita | esperando | en_reposo | cerrada`), ticket asociado (opcional), modelo, uso de contexto, último turno.
-- **Máquina:** nombre, SO, en línea/fuera de línea, versión del daemon.
-- **Dispositivo:** teléfono/navegador emparejado, token, último uso.
-- **Evento de sesión:** el historial que alimenta el chat (texto, herramientas, permisos, etc.). El transcript real sigue siendo el de Claude Code; el hub guarda lo necesario para mostrar y resumir, con retención limitada.
+- **Workspace:** name, color. Groups projects. E.g. "Client X", "ACME".
+- **Project:** workspace, name, remote repo (if any), ticket system connector + its configuration, current summary, progress.
+- **Checkout:** a project on a specific machine (machine, path, current branch). A project can have several checkouts on several machines. Sessions are linked to their project through the checkout where they run (git root path → checkout → project). Checkouts are discovered on their own (each daemon reports the repos where there were sessions) and assigned to a project with one tap (or automatically by git remote URL).
+- **Ticket:** project, external id, title, status (normalized: `todo | in_progress | in_review | done | blocked` + the original status), description, assignee, recent comments, URL, updated.
+- **Session:** machine, checkout, Claude Code session id, name, live state (`working | needs_you | waiting | idle | closed`), linked ticket (optional), model, context usage, last turn.
+- **Machine:** name, OS, online/offline, daemon version.
+- **Device:** paired phone/browser, token, last use.
+- **Session event:** the history that feeds the chat (text, tools, permissions, etc.). The real transcript remains Claude Code's; the hub stores what is needed to display and summarize, with limited retention.
 
-## 9. Ticketeras
+## 9. Ticket systems
 
-### 9.1 Conectores
-Interfaz común: `listar(proyecto, desde)`, `obtener(id)`, `cambiar_estado(id, estado)`, `comentar(id, texto)`, y un mapa de estados externos → normalizados.
+### 9.1 Connectors
+Common interface: `list(project, since)`, `get(id)`, `change_status(id, status)`, `comment(id, text)`, and a map of external → normalized statuses.
 
-- **GitHub Issues** (incluido): usa `gh` / API de GitHub con el login existente.
-- **Paperclip** (incluido): API REST de la instancia en la VPS (`/api/companies/{id}/issues`), para ver lo de ACME como un proyecto más sin migrar nada.
-- **Conector ejecutable (genérico):** cualquier programa que hable JSON por stdin/stdout con la interfaz de arriba. Es el camino para ticketeras custom: un script de 50 líneas en el lenguaje que sea, o se le pide a una sesión de Claude que lo escriba a partir de la doc de la ticketera. Vive en el hub, se configura por proyecto.
-- Jira/Linear quedan como conectores ejecutables de ejemplo o integrados más adelante.
+- **GitHub Issues** (included): uses `gh` / the GitHub API with the existing login.
+- **Paperclip** (included): REST API of the instance on the VPS (`/api/companies/{id}/issues`), to see ACME's things as one more project without migrating anything.
+- **Executable connector (generic):** any program that speaks JSON over stdin/stdout with the interface above. It is the path for custom ticket systems: a 50-line script in whatever language, or a Claude session is asked to write it from the ticket system's docs. It lives in the hub, configured per project.
+- Jira/Linear remain as example executable connectors or integrated later.
 
-### 9.2 Sincronización
-- Poll por proyecto cada N minutos (configurable, default 5) más refresco manual. Webhooks después.
-- Quorum **no** es dueño de los tickets: la ticketera manda. Quorum solo escribe cuando el dueño lo pide (o una sesión, al terminar un ticket, comenta / mueve estado — opcional por proyecto).
-- **Un ticket, una sesión activa a la vez** (idea tomada de Paperclip): al abrir una sesión desde un ticket que ya tiene una sesión viva, se ofrece ir a esa en vez de abrir otra.
+### 9.2 Sync
+- Poll per project every N minutes (configurable, default 5) plus manual refresh. Webhooks later.
+- Quorum is **not** the owner of the tickets: the ticket system rules. Quorum only writes when the owner asks (or a session, on finishing a ticket, comments / moves status — optional per project).
+- **One ticket, one active session at a time** (idea taken from Paperclip): when opening a session from a ticket that already has a live session, going to that one is offered instead of opening another.
 
-### 9.2b Asociar sesión ↔ ticket (decisión del autor del diseño)
-- Si la sesión se abrió desde un ticket, queda asociada.
-- Si se abrió a mano, Quorum **sugiere** el ticket por nombre de rama (`feat/41-…`, `GH-41`) o mensajes de commit, y el dueño confirma con un toque en la app. Nunca se asocia en silencio.
-- Claude también puede declararlo con un comando del mod (p. ej. `/quorum ticket 41`).
-- El dueño puede asociar o desasociar a mano en cualquier momento.
+### 9.2b Linking session ↔ ticket (design author's decision)
+- If the session was opened from a ticket, it is linked.
+- If it was opened by hand, Quorum **suggests** the ticket by branch name (`feat/41-…`, `GH-41`) or commit messages, and the owner confirms with a tap in the app. It is never linked silently.
+- Claude can also declare it with a mod command (e.g. `/quorum ticket 41`).
+- The owner can link or unlink by hand at any time.
 
-### 9.2c Escritura en la ticketera (decisión del autor del diseño)
-En la primera versión Quorum **nunca escribe solo** en una ticketera: propone el comentario o el cambio de estado (p. ej. al terminar una sesión asociada) y el dueño lo aprueba en la app. Motivo: las ticketeras de clientes son visibles para terceros.
-"Esperando tu review" = la ticketera dice `en_review`, **o** la sesión asociada terminó su turno y el dueño la marcó como lista.
+### 9.2c Writing to the ticket system (design author's decision)
+In the first version Quorum **never writes on its own** to a ticket system: it proposes the comment or status change (e.g. when a linked session finishes) and the owner approves it in the app. Reason: clients' ticket systems are visible to third parties.
+"Waiting for your review" = the ticket system says `in_review`, **or** the linked session finished its turn and the owner marked it as ready.
 
-### 9.2d De dónde salen trabajos y proyectos (decisión del autor del diseño)
-Quorum sugiere proyectos a partir de los repos donde hubo sesiones (por URL del remoto git) y de lo que exponen los conectores (repos de GitHub, empresas de Paperclip). El dueño acepta la sugerencia o crea el proyecto a mano. Los trabajos se crean a mano (son pocos).
+### 9.2d Where workspaces and projects come from (design author's decision)
+Quorum suggests projects from the repos where there were sessions (by git remote URL) and from what the connectors expose (GitHub repos, Paperclip companies). The owner accepts the suggestion or creates the project by hand. Workspaces are created by hand (there are few).
 
-### 9.3 Abrir sesión desde un ticket
-Elegir máquina + checkout (o clonar si esa máquina no tiene el repo — roadmap), y la sesión arranca con el ticket como primer mensaje (título, descripción, comentarios relevantes, URL). El dueño sigue dirigiendo desde ahí.
+### 9.3 Open a session from a ticket
+Pick machine + checkout (or clone if that machine does not have the repo — roadmap), and the session starts with the ticket as the first message (title, description, relevant comments, URL). The owner keeps directing from there.
 
-## 10. Estado y resúmenes
+## 10. Status and summaries
 
-- **Resumen por turno:** es el último mensaje de Claude del turno, recortado. No gasta modelo. (Decisión del autor del diseño.)
-- **Estado de ticket mostrado** = estado normalizado de la ticketera + estado de la sesión asociada (si hay). Ej: "en curso · sesión vps-2 · trabajando hace 12 min", "listo, esperando tu review".
-- **Resumen de proyecto:** 1–2 líneas ("en qué va y qué lo frena") generadas por el hub con **Haiku** (vía ccapi si está disponible, si no `claude -p`; ver §14b), a partir de: tickets y sus cambios, resúmenes de fin de turno de las sesiones del proyecto, actividad reciente. Se regenera con debounce (p. ej. como máximo cada 30 min por proyecto y solo si hubo cambios). "Sin actividad desde X" no gasta modelo.
-- **Avance:** tickets hechos / total del período o hito activo (lo define el conector; si no hay hito, abiertos vs. cerrados recientes).
+- **Per-turn summary:** it is Claude's last message of the turn, trimmed. It spends no model. (Design author's decision.)
+- **Displayed ticket status** = normalized ticket system status + status of the linked session (if any). E.g.: "in progress · session vps-2 · working for 12 min", "ready, waiting for your review".
+- **Project summary:** 1–2 lines ("where it stands and what is blocking it") generated by the hub with **Haiku** (through ccapi if available, otherwise `claude -p`; see §14b), from: tickets and their changes, end-of-turn summaries of the project's sessions, recent activity. Regenerated with debounce (e.g. at most every 30 min per project and only if there were changes). "No activity since X" spends no model.
+- **Progress:** tickets done / total of the period or active milestone (defined by the connector; if there is no milestone, open vs. recently closed).
 
-## 11. Control remoto y chat
+## 11. Remote control and chat
 
-Hereda lo que funcionó en v1, reimplementado:
-- **Panel de sesiones** dentro de cada proyecto y una vista global por máquina. Estados en vivo; el orden no salta cuando cambia el estado.
-- **Nueva sesión:** máquina + checkout (o carpeta), continuar última conversación opcional, modo de permisos.
-- **Prompts mientras trabaja:** enviar ahora (mismo turno), en cola (al terminar), interrumpir y enviar.
-- **Permisos y preguntas:** se enrutan según dónde está el dueño (lógica híbrida de v1: si la sesión está abierta en un dispositivo o se usó uno hace poco, va al dispositivo; si escribió en la terminal hace poco, va a la terminal). Con modo "fuera" explícito. Sin respuesta en el dispositivo en X minutos, se resuelve en la terminal.
-- **Chat en vivo:** texto en streaming, herramientas resumidas con detalle al tocar, plan de tareas, uso de contexto, resumen por turno, subagentes y tareas de fondo (ver, escribirles, detenerlos).
-- **Cerrar sesión** (como `/exit`, deteniendo antes tareas de fondo).
-- **Vista multi-sesión** en escritorio (mosaico, como Mission control de v1).
-- **Historial previo:** al abrir una sesión que empezó antes de que el hub la viera (hub caído, o sesión anterior a instalar Quorum), el daemon reconstruye el chat leyendo el transcript de Claude Code (como hacía v1). El parser va aislado porque el formato es interno y puede cambiar. (Decisión del autor del diseño.)
-- **PC con WSL:** Windows y WSL2 son entornos distintos (un unix socket de WSL no habla con un named pipe de Windows), así que cada uno corre su propio `quorumd`. En la app se agrupan como **una PC con dos entornos**. (Decisión del autor del diseño.)
-- **Lanzadores por plataforma** aislados en un módulo del daemon: tmux (servidores sin pantalla, con `bash -lc` para PATH/nvm), Windows Terminal (`wt.exe`, con escape de `;`), WSL desde Windows.
+Inherits what worked in v1, reimplemented:
+- **Session panel** inside each project and a global per-machine view. Live states; the order does not jump when the state changes.
+- **New session:** machine + checkout (or folder), optionally continue the last conversation, permission mode.
+- **Prompts while working:** send now (same turn), queue (when it finishes), interrupt and send.
+- **Permissions and questions:** routed according to where the owner is (v1's hybrid logic: if the session is open on a device or one was used recently, it goes to the device; if he typed in the terminal recently, it goes to the terminal). With an explicit "away" mode. With no answer on the device in X minutes, it is resolved in the terminal.
+- **Live chat:** streaming text, summarized tools with detail on tap, task plan, context usage, per-turn summary, subagents and background tasks (view, write to them, stop them).
+- **Close session** (like `/exit`, first stopping background tasks).
+- **Multi-session view** on desktop (tiled, like v1's Mission control).
+- **Previous history:** when opening a session that started before the hub saw it (hub down, or session from before installing Quorum), the daemon reconstructs the chat by reading Claude Code's transcript (as v1 did). The parser is isolated because the format is internal and may change. (Design author's decision.)
+- **PC with WSL:** Windows and WSL2 are different environments (a WSL unix socket does not talk to a Windows named pipe), so each runs its own `quorumd`. In the app they are grouped as **one PC with two environments**. (Design author's decision.)
+- **Per-platform launchers** isolated in a daemon module: tmux (headless servers, with `bash -lc` for PATH/nvm), Windows Terminal (`wt.exe`, with `;` escaping), WSL from Windows.
 
-## 12. Terminal remota
-PTY real por el daemon (no comandos sueltos): `xterm.js` en la app ↔ WebSocket ↔ hub ↔ daemon ↔ PTY. Varias terminales por máquina; se puede abrir en la carpeta de un checkout.
+## 12. Remote terminal
+A real PTY through the daemon (not loose commands): `xterm.js` in the app ↔ WebSocket ↔ hub ↔ daemon ↔ PTY. Several terminals per machine; it can be opened in a checkout's folder.
 
-## 13. Comunicación entre sesiones
-- **Misma máquina:** la nativa de Claude Code (sockets por sesión, `SendMessage`/`ListAgents`) funciona sola; Quorum no la toca.
-- **Entre máquinas:** la nativa solo funciona vía Remote Control, que no se usa. El mod expone las sesiones de otras máquinas como destinos y entrega sus mensajes como mensajes de otra sesión (envoltorio claramente marcado como "no es tu usuario", como hacía v1 con `<pastor-message>`). El hub enruta daemon→daemon. Con freno anti-bucles.
-- Los mensajes nunca aprueban permisos ni ejecutan comandos (misma regla que la nativa).
+## 13. Communication between sessions
+- **Same machine:** Claude Code's native one (per-session sockets, `SendMessage`/`ListAgents`) works on its own; Quorum does not touch it.
+- **Across machines:** the native one only works via Remote Control, which is not used. The mod exposes the sessions of other machines as destinations and delivers their messages as messages from another session (wrapper clearly marked as "not your user", as v1 did with `<pastor-message>`). The hub routes daemon→daemon. With an anti-loop brake.
+- Messages never approve permissions or run commands (same rule as the native one).
 
-## 14. Seguridad
-Quorum da control remoto total de las máquinas por diseño.
-- Hub y daemons escuchan solo en loopback/IP de tailnet; publicar con `tailscale serve`, nunca `funnel`.
-- Dispositivos: emparejamiento con código de un solo uso → token propio revocable desde la app.
-- Máquinas: enlace con código de un solo uso → token de máquina revocable.
-- Socket local mod↔daemon restringido al usuario del SO.
-- Secretos de conectores (tokens de ticketeras) guardados en el hub, nunca enviados a la app.
+## 14. Security
+Quorum gives full remote control of the machines by design.
+- Hub and daemons listen only on loopback/tailnet IP; publish with `tailscale serve`, never `funnel`.
+- Devices: pairing with a single-use code → own token revocable from the app.
+- Machines: link with a single-use code → revocable machine token.
+- Local mod↔daemon socket restricted to the OS user.
+- Connector secrets (ticket system tokens) stored in the hub, never sent to the app.
 
-## 14b. Compatibilidad total con whoas y ccapi (requisito del dueño)
+## 14b. Full compatibility with whoas and ccapi (owner's requirement)
 
-### whoas (identidades por proyecto)
-whoas guarda un token sellado por `proveedor@alias` y elige el alias por proyecto con `.whoas.yaml` + perfiles; los shims hacen que `claude`, `gh`, etc. pasen por whoas.
-- **Lanzar sesiones respetando whoas:** el daemon lanza `claude` en un shell de login de la carpeta del checkout, de modo que los shims de whoas están en el PATH y aplican el `.whoas.yaml` del repo (cuenta de Claude, gh, etc. correctas por proyecto). Nunca invoca un binario absoluto que se salte el shim.
-- **Credenciales de conectores vía whoas:** cada Trabajo de Quorum puede tener un perfil de whoas asociado. Los conectores que usan CLIs (GitHub por `gh`) corren a través de whoas con ese perfil (p. ej. `WHOAS_PROFILE` / contexto del checkout), así cada trabajo usa su propia cuenta. Las MCP que whoas expone (`whoas mcp proxy mcp-linear@…`) pueden servir de conector. Quorum **no guarda ni ve secretos** que ya maneje whoas; solo guarda secretos propios para ticketeras que whoas no cubra.
-- **Mostrar la identidad:** la app muestra qué cuenta usa cada sesión/proyecto (lo que diría `whoas which claude` / `gh` en ese checkout), para notar al instante si una sesión corre con la cuenta equivocada.
-- No hacer nunca `/login` ni tocar logins globales; respetar las reglas del skill whoas-setup.
+### whoas (per-project identities)
+whoas stores a sealed token per `provider@alias` and picks the alias per project with `.whoas.yaml` + profiles; the shims make `claude`, `gh`, etc. go through whoas.
+- **Launch sessions respecting whoas:** the daemon launches `claude` in a login shell of the checkout folder, so the whoas shims are on the PATH and apply the repo's `.whoas.yaml` (the right Claude, gh, etc. account per project). It never invokes an absolute binary that skips the shim.
+- **Connector credentials via whoas:** each Quorum Workspace can have an associated whoas profile. Connectors that use CLIs (GitHub through `gh`) run through whoas with that profile (e.g. `WHOAS_PROFILE` / checkout context), so each workspace uses its own account. The MCPs that whoas exposes (`whoas mcp proxy mcp-linear@…`) can serve as a connector. Quorum **neither stores nor sees secrets** that whoas already handles; it only stores its own secrets for ticket systems whoas does not cover.
+- **Show the identity:** the app shows which account each session/project uses (what `whoas which claude` / `gh` would say in that checkout), to notice instantly if a session runs with the wrong account.
+- Never do `/login` or touch global logins; follow the whoas-setup skill's rules.
 
-### ccapi (la suscripción como API compatible con Anthropic)
-ccapi corre una sesión de Claude Code en tmux con sus propios mods y sirve `/v1/messages` en `127.0.0.1:18787`; cada request es un subagente de esa sesión.
-- **Coexistencia:** el mod de Quorum también se cargará en la sesión de ccapi. Quorum debe **detectar la sesión de ccapi** (sus mods / su carpeta / su sesión tmux `ccapi`) y mostrarla como un **servicio** de la máquina (estado, cola, uso), no como una sesión de trabajo: sin inyectar prompts, sin responder permisos, sin notificaciones, y sin listar sus subagentes uno por uno.
-- **Uso de ccapi:** el resumidor del hub habla con un endpoint compatible con Anthropic configurable; si hay un ccapi alcanzable (local o por la tailnet/túnel), lo usa con Haiku; si no, cae a `claude -p`. Así Quorum no lanza un proceso de Claude por resumen.
-- Cualquier otro consumidor de Quorum que necesite modelo (p. ej. el futuro agente) usa la misma vía.
+### ccapi (the subscription as an Anthropic-compatible API)
+ccapi runs a Claude Code session in tmux with its own mods and serves `/v1/messages` on `127.0.0.1:18787`; each request is a subagent of that session.
+- **Coexistence:** the Quorum mod will also be loaded in ccapi's session. Quorum must **detect the ccapi session** (its mods / its folder / its tmux session `ccapi`) and show it as a machine **service** (state, queue, usage), not a work session: no prompt injection, no answering permissions, no notifications, and without listing its subagents one by one.
+- **Using ccapi:** the hub's summarizer talks to a configurable Anthropic-compatible endpoint; if a ccapi is reachable (local or over the tailnet/tunnel), it uses it with Haiku; otherwise it falls back to `claude -p`. That way Quorum does not launch a Claude process per summary.
+- Any other Quorum consumer that needs a model (e.g. the future agent) uses the same path.
 
-## 15. Lecciones de v1 que aplican
-- Nada de artefactos compilados en git (v1 versionaba 13 MB de `bridge/web`). La app se embebe en el binario al compilar.
-- Tests desde el inicio en daemon y hub (v1 tenía un solo test en el bridge).
-- Un solo lugar para los tipos del protocolo.
-- Versión única para todas las piezas; el daemon avisa si el mod o el hub no coinciden.
+## 15. Lessons from v1 that apply
+- No compiled artifacts in git (v1 versioned 13 MB of `bridge/web`). The app is embedded in the binary at build time.
+- Tests from the start in daemon and hub (v1 had a single test in the bridge).
+- A single place for the protocol types.
+- A single version for all the pieces; the daemon warns if the mod or the hub do not match.
 
-## 16. Roadmap (después de la primera versión)
-1. Git: estado, diff por archivo, commit, push/pull, PR.
-2. Explorador de archivos y "mencionar en el mensaje".
-3. Notificaciones push (web push / ntfy) cuando una sesión te necesita.
-4. Rutinas programadas.
-5. Web en desarrollo por la tailnet y páginas HTML locales.
-6. Navegador en vivo (CDP).
-7. Agente general (WhatsApp) que responde con el estado ya armado.
-8. Apps nativas con Tauri (escritorio + APK), compiladas en CI.
-9. Webhooks de ticketeras; clonar repo en una máquina desde la app.
+## 16. Roadmap (after the first version)
+1. Git: status, per-file diff, commit, push/pull, PR.
+2. File explorer and "mention in the message".
+3. Push notifications (web push / ntfy) when a session needs you.
+4. Scheduled routines.
+5. Web in development over the tailnet and local HTML pages.
+6. Live browser (CDP).
+7. General agent (WhatsApp) that answers with the status already assembled.
+8. Native apps with Tauri (desktop + APK), built in CI.
+9. Ticket system webhooks; clone a repo on a machine from the app.
 
-## 17. Lo que queda a criterio del constructor
-- Formato del esquema compartido y la herramienta de generación de tipos (JSON Schema, protobuf, o tipos Go como fuente).
-- Estructura del monorepo, librerías Go concretas (WebSocket, PTY, router), y componentes de UI (puede reutilizar AI Elements / shadcn de v1).
-- Retención exacta de eventos y tamaño de los resúmenes.
-- Cómo se instala y actualiza el daemon en cada máquina (script, binario autoactualizable).
-- Detalles visuales, siempre que el escritorio muestre varios paneles y el celular sea usable con una mano.
+## 17. Left to the builder's judgment
+- Shared schema format and the type generation tool (JSON Schema, protobuf, or Go types as the source).
+- Monorepo structure, concrete Go libraries (WebSocket, PTY, router), and UI components (may reuse v1's AI Elements / shadcn).
+- Exact event retention and summary size.
+- How the daemon is installed and updated on each machine (script, self-updating binary).
+- Visual details, as long as desktop shows several panels and the phone is usable one-handed.
 
-## 18. Cambios decididos tras la Etapa 1 (2026-11-22)
+## 18. Changes decided after Stage 1 (2026-11-22)
 
-- **Sin modos.** Desaparecen el modo "Fuera", la presencia (`watch`/`away`) y todo enrutamiento según dónde esté el dueño. Todo se controla desde todos lados siempre: cada permiso y cada pregunta aparece **a la vez** en la terminal y en todos los dispositivos; gana la primera respuesta y las demás se retiran.
-- **Permisos con diálogo propio (decidido por el dueño).** Claude Code no deja responder su diálogo nativo de permisos desde fuera. Quorum lo reemplaza: cuando el motor pediría permiso, el mod muestra en la terminal su propio diálogo (Permitir / Denegar, vía `$.ui.ask`) y la misma tarjeta en los dispositivos, y corre la carrera. Costos aceptados: se pierde el "permitir siempre" del diálogo nativo, y si gana un dispositivo el diálogo de la terminal queda abierto hasta que se cierre (su respuesta tardía se ignora). Límite de espera: el que permita el motor (~19 min con `quorumd hold`); vencido, deniega con motivo.
-- **Recap como nombre de sesión.** Cada sesión se muestra con un recap corto de en qué anda (≤ 60 caracteres, español), generado por el mod con Haiku (`$.model.complete`) tras el primer prompt y al terminar turnos (como mucho cada 5 min y solo si hubo turnos nuevos). Si no hay recap, la carpeta. `/rename` (nombre puesto por el dueño) tiene prioridad si el mod puede leerlo.
-- **Pastor retirado**: no hay convivencia ni sesiones "pasivas".
+- **No modes.** The "Away" mode, presence (`watch`/`away`) and all routing by where the owner is disappear. Everything is controlled from everywhere always: each permission and each question appears **at once** in the terminal and on all devices; the first answer wins and the others are withdrawn.
+- **Permissions with their own dialog (decided by the owner).** Claude Code does not let its native permission dialog be answered from outside. Quorum replaces it: when the engine would ask for permission, the mod shows in the terminal its own dialog (Allow / Deny, via `$.ui.ask`) and the same card on the devices, and runs the race. Accepted costs: the native dialog's "always allow" is lost, and if a device wins, the terminal dialog stays open until it is closed (its late answer is ignored). Wait limit: whatever the engine allows (~19 min with `quorumd hold`); once expired, it denies with a reason.
+- **Recap as session name.** Each session is shown with a short recap of what it is working on (≤ 60 characters, English), generated by the mod with Haiku (`$.model.complete`) after the first prompt and at the end of turns (at most every 5 min and only if there were new turns). If there is no recap, the folder. `/rename` (a name set by the owner) takes priority if the mod can read it.
+- **Pastor retired**: no coexistence and no "passive" sessions.

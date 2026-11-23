@@ -4,21 +4,21 @@ import { launch } from './api'
 export interface Prefs { machine?: string; bypass: boolean }
 const key = (projectId: string) => 'quorum.launch.' + projectId
 
-/** Preferencias de lanzamiento por proyecto; "Sin permisos" viene activado por defecto. */
+/** Launch preferences per project; "Skip permissions" is on by default. */
 export function loadPrefs(projectId: string): Prefs {
   try {
     const j = JSON.parse(localStorage.getItem(key(projectId)) ?? 'null')
     if (j && typeof j === 'object') {
       return { ...(typeof j.machine === 'string' && j.machine ? { machine: j.machine } : {}), bypass: j.bypass !== false }
     }
-  } catch { /* sin datos o ilegibles */ }
+  } catch { /* no data or unreadable */ }
   return { bypass: true }
 }
 export function savePrefs(projectId: string, p: Prefs) {
-  try { localStorage.setItem(key(projectId), JSON.stringify(p)) } catch { /* ignorar */ }
+  try { localStorage.setItem(key(projectId), JSON.stringify(p)) } catch { /* ignore */ }
 }
 
-/** Lanzamiento en curso, mientras la app espera que la sesión nueva se registre. */
+/** Launch in progress, while the app waits for the new session to register. */
 export type Pending = { reqId: string; machine: string; label: string; startedAt: number; pane?: string; error?: string }
 export const LAUNCH_TIMEOUT_MS = 60000
 
@@ -28,16 +28,16 @@ export function pendingReducer(p: Pending | null, env: Envelope, _now: number): 
   if (!pl || pl.reqId !== p.reqId) return { pending: p }
   if (env.type === 'launch_session') return { pending: null, open: pl.sessionId }
   if (env.type === 'launch_result') {
-    if (!pl.ok) return { pending: { ...p, error: pl.error || 'no se pudo lanzar' } }
+    if (!pl.ok) return { pending: { ...p, error: pl.error || 'could not launch' } }
     return { pending: { ...p, pane: pl.pane || p.pane } }
   }
   return { pending: p }
 }
 
 /**
- * Guarda por reqId los launch_result/launch_session recientes (60 s, como mucho 32):
- * pueden llegar por el WS antes de que el POST /api/launch responda, cuando aún no
- * hay Pending. replay los aplica al Pending recién creado.
+ * Keeps recent launch_result/launch_session per reqId (60 s, at most 32):
+ * they can arrive over the WS before the POST /api/launch answers, when there is
+ * no Pending yet. replay applies them to the newly created Pending.
  */
 export class EarlyLaunches {
   private byReq = new Map<string, { at: number; envs: Envelope[] }>()
@@ -51,7 +51,7 @@ export class EarlyLaunches {
     while (this.byReq.size >= this.max) this.byReq.delete(this.byReq.keys().next().value as string)
     this.byReq.set(id, { at: now, envs: [env] })
   }
-  /** Aplica a p lo guardado de su reqId (y lo olvida). */
+  /** Applies to p what was kept for its reqId (and forgets it). */
   replay(p: Pending, now: number): { pending: Pending | null; open?: string } {
     const cur = this.byReq.get(p.reqId)
     this.byReq.delete(p.reqId)
@@ -67,7 +67,7 @@ export class EarlyLaunches {
 
 export const timedOut = (p: Pending, now: number) => now - p.startedAt > LAUNCH_TIMEOUT_MS
 
-/** Lanza en machine+dir con "Sin permisos" (apagado si la máquina corre como root). Un solo camino para tarjeta, conversaciones y menú. */
+/** Launches in machine+dir with "Skip permissions" (off if the machine runs as root). A single path for the card, conversations and menu. */
 export async function launchIn(a: { machine: string; dir: string; bypass: boolean; root: boolean; resume?: string; projectId?: string }): Promise<{ reqId: string; machine: string; label: string }> {
   const r = await launch({ machine: a.machine, dir: a.dir, permissionMode: a.bypass && !a.root ? 'bypass' : 'default', ...(a.resume ? { resume: a.resume } : {}), projectId: a.projectId || undefined })
   return { reqId: r.reqId, machine: a.machine, label: a.dir }

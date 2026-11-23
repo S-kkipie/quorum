@@ -1,6 +1,6 @@
 import type { TermFrame } from '../proto.gen'
 
-/** Última foto de cada terminal (máquina + panel). Fuera del reducer: llegan hasta 8 por segundo. */
+/** Latest snapshot of each terminal (machine + pane). Outside the reducer: up to 8 arrive per second. */
 const last = new Map<string, TermFrame>()
 const at = new Map<string, number>()
 const subs = new Map<string, Set<() => void>>()
@@ -14,7 +14,7 @@ export const frames = {
     subs.get(k)?.forEach((fn) => fn())
   },
   get: (machine: string, pane: string) => last.get(frames.key(machine, pane)),
-  /** Cuándo llegó la última foto (ms), para descartar fotos de una visita anterior. */
+  /** When the last snapshot arrived (ms), to discard snapshots from a previous visit. */
   receivedAt: (machine: string, pane: string) => at.get(frames.key(machine, pane)) ?? 0,
   subscribe(key: string, fn: () => void) {
     let s = subs.get(key)

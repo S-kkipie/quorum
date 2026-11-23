@@ -22,23 +22,23 @@ import (
 var (
 	backoffMin    = time.Second
 	backoffMax    = 30 * time.Second
-	stableAfter   = 30 * time.Second // una conexión más larga reinicia el backoff
+	stableAfter   = 30 * time.Second // a longer connection resets the backoff
 	pingEvery     = 30 * time.Second
 	linkWriteWait = 5 * time.Second
 )
 
-// launchRun abre la sesión sin herdr; launchHerdr, con herdr. Se sustituyen en los tests.
+// launchRun opens the session without herdr; launchHerdr, with herdr. Replaced in tests.
 var (
 	launchRun   = launch.Run
 	launchHerdr = launch.RunHerdrCause
 )
 
-// capsEvery: cada cuánto se recalculan las capacidades; variable para tests.
+// capsEvery: how often capabilities are recomputed; a variable for tests.
 var capsEvery = 30 * time.Second
 
 const linkReadLimit = 8 << 20
 
-// wsURL convierte la URL http(s) base del hub en la del WebSocket de máquinas.
+// wsURL converts the hub's base http(s) URL into the machines WebSocket one.
 func wsURL(hub string) string {
 	hub = strings.TrimRight(hub, "/")
 	switch {
@@ -57,9 +57,9 @@ func machineEnv() string {
 	return runtime.GOOS
 }
 
-// RunHubLink mantiene la conexión con el hub hasta ctx.Done, reconectando con
-// backoff. Mientras no hay conexión sigue vaciando reg.Out(): el hello de la
-// próxima conexión restituye el estado de las sesiones.
+// RunHubLink keeps the connection to the hub until ctx.Done, reconnecting with
+// backoff. While there is no connection it keeps draining reg.Out(): the next
+// connection's hello restores the sessions' state.
 func RunHubLink(ctx context.Context, cfg Config, reg *Registry, host *Host) {
 	host.trackSessions(reg)
 	backoff := backoffMin
@@ -72,7 +72,7 @@ func RunHubLink(ctx context.Context, cfg Config, reg *Registry, host *Host) {
 		if time.Since(start) > stableAfter {
 			backoff = backoffMin
 		}
-		log.Printf("hub: enlace caído (%v); reintento en %s", err, backoff)
+		log.Printf("hub: link down (%v); retrying in %s", err, backoff)
 		drainFor(ctx, reg, backoff)
 		if backoff *= 2; backoff > backoffMax {
 			backoff = backoffMax
@@ -106,7 +106,7 @@ func linkOnce(ctx context.Context, cfg Config, reg *Registry, host *Host) error 
 	defer ws.CloseNow()
 	ws.SetReadLimit(linkReadLimit)
 
-	// Lo emitido sin conexión se descarta; el hello lleva el estado actual.
+	// Anything emitted while disconnected is dropped; the hello carries the current state.
 	for drained := false; !drained; {
 		select {
 		case <-reg.Out():
@@ -155,7 +155,7 @@ func linkOnce(ctx context.Context, cfg Config, reg *Registry, host *Host) error 
 		case err := <-readErr:
 			return err
 		case <-ctx.Done():
-			ws.CloseNow() // cierre acotado: no esperar al par al apagar
+			ws.CloseNow() // bounded close: do not wait for the peer on shutdown
 			return ctx.Err()
 		}
 	}
@@ -177,22 +177,22 @@ func readLoop(ctx context.Context, ws *websocket.Conn, reg *Registry, host *Host
 		case "command":
 			var cmd proto.Command
 			if err := json.Unmarshal(env.Payload, &cmd); err != nil {
-				log.Printf("hub: command inválido: %v", err)
+				log.Printf("hub: invalid command: %v", err)
 				continue
 			}
 			if cmd.Type == "close" {
-				host.closeRequested(reg, env.Session) // antes de que la sesión termine
+				host.closeRequested(reg, env.Session) // before the session ends
 			}
 			if !reg.Send(env.Session, cmd) {
-				log.Printf("hub: command para %s sin suscriptor", env.Session)
+				log.Printf("hub: command for %s with no subscriber", env.Session)
 			}
 		case "launch":
 			var req proto.LaunchRequest
 			if err := json.Unmarshal(env.Payload, &req); err != nil {
-				log.Printf("hub: launch inválido: %v", err)
+				log.Printf("hub: invalid launch: %v", err)
 				continue
 			}
-			go func() { // nunca bloquear el bucle de lectura
+			go func() { // never block the read loop
 				res := host.launch(ctx, req)
 				p, _ := json.Marshal(res)
 				reg.EmitEnvelope(proto.Envelope{Type: "launch_result", Machine: reg.machine, Payload: p})
@@ -200,14 +200,14 @@ func readLoop(ctx context.Context, ws *websocket.Conn, reg *Registry, host *Host
 		case "rpc":
 			var rq proto.RPC
 			if err := json.Unmarshal(env.Payload, &rq); err != nil {
-				log.Printf("hub: rpc inválido: %v", err)
+				log.Printf("hub: invalid rpc: %v", err)
 				continue
 			}
-			go handleRPC(ctx, host, reg, rq) // nunca bloquear el bucle de lectura
+			go handleRPC(ctx, host, reg, rq) // never block the read loop
 		case "backfill":
-			go backfill(reg, env.Session) // nunca bloquear el bucle de lectura
+			go backfill(reg, env.Session) // never block the read loop
 		default:
-			log.Printf("hub: mensaje %q ignorado", env.Type)
+			log.Printf("hub: ignored message %q", env.Type)
 		}
 	}
 }
@@ -215,11 +215,11 @@ func readLoop(ctx context.Context, ws *websocket.Conn, reg *Registry, host *Host
 const (
 	backfillLimit    = 500
 	maxTranscriptLen = 200 << 20
-	backfillBudget   = 4 << 20 // bytes serializados; el hub lee hasta 8 MiB por mensaje
+	backfillBudget   = 4 << 20 // serialized bytes; the hub reads up to 8 MiB per message
 )
 
-// backfill rearma el historial reciente de la sesión desde su transcript y lo
-// responde al hub. Ante cualquier problema responde una lista vacía.
+// backfill rebuilds the session's recent history from its transcript and
+// answers it to the hub. On any problem it answers an empty list.
 func backfill(reg *Registry, session string) {
 	evs := []proto.Event{}
 	for _, si := range reg.Snapshot() {
@@ -232,14 +232,14 @@ func backfill(reg *Registry, session string) {
 	reg.EmitEnvelope(proto.Envelope{Type: "backfill_result", Machine: reg.machine, Session: session, Payload: p})
 }
 
-// marshalWithin serializa evs descartando primero los más viejos hasta que quepan en budget bytes.
+// marshalWithin serializes evs, dropping the oldest first until they fit in budget bytes.
 func marshalWithin(evs []proto.Event, budget int) json.RawMessage {
 	for {
 		p, _ := json.Marshal(evs)
 		if len(p) <= budget || len(evs) == 0 {
 			return p
 		}
-		// descarta en bloques para no re-serializar demasiadas veces
+		// drop in blocks so as not to re-serialize too many times
 		drop := len(evs) / 8
 		if drop < 1 {
 			drop = 1
@@ -267,18 +267,18 @@ func readTranscript(path string) []proto.Event {
 	return evs
 }
 
-// LinkMachine canjea el código de enlace en hubURL y guarda Hub y MachineToken.
+// LinkMachine redeems the link code at hubURL and saves Hub and MachineToken.
 func LinkMachine(ctx context.Context, cfg Config, hubURL, code string) (Config, error) {
 	hubURL = strings.TrimRight(hubURL, "/")
 	body, _ := json.Marshal(map[string]string{"code": code, "machine": cfg.Machine})
 	req, err := http.NewRequestWithContext(ctx, "POST", hubURL+"/api/link", strings.NewReader(string(body)))
 	if err != nil {
-		return cfg, fmt.Errorf("URL del hub inválida: %w", err)
+		return cfg, fmt.Errorf("invalid hub URL: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
 	if err != nil {
-		return cfg, fmt.Errorf("no se pudo contactar al hub: %w", err)
+		return cfg, fmt.Errorf("could not contact the hub: %w", err)
 	}
 	defer resp.Body.Close()
 	var out struct {
@@ -291,11 +291,11 @@ func LinkMachine(ctx context.Context, cfg Config, hubURL, code string) (Config, 
 		if msg == "" {
 			msg = resp.Status
 		}
-		return cfg, fmt.Errorf("el hub rechazó el enlace: %s", msg)
+		return cfg, fmt.Errorf("the hub rejected the link: %s", msg)
 	}
 	cfg.Hub, cfg.MachineToken = hubURL, out.Token
 	if err := SaveConfig(cfg); err != nil {
-		return cfg, fmt.Errorf("no se pudo guardar la config: %w", err)
+		return cfg, fmt.Errorf("could not save the config: %w", err)
 	}
 	return cfg, nil
 }

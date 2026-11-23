@@ -24,7 +24,7 @@ export default function TicketRow({ state, ticket, pending, active, onOpen }: {
             {t.assignee && <span className="text-zinc-600"> · {t.assignee}</span>}
           </span>
         </span>
-        {!!pending && <span className="shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 text-[11px] text-amber-300" title="propuestas pendientes">{pending}</span>}
+        {!!pending && <span className="shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 text-[11px] text-amber-300" title="pending proposals">{pending}</span>}
       </button>
     </li>
   )

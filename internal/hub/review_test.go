@@ -1,6 +1,6 @@
 package hub
 
-// Regresiones de la revisión final de la etapa 1.
+// Regressions from the final review of stage 1.
 
 import (
 	"context"
@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Important 1: la caída de una máquina cierra sus sesiones y las apps se enteran.
+// Important 1: a machine dropping closes its sessions and the apps find out.
 func TestExpirePublishesSessionGone(t *testing.T) {
 	f := newFixture(t, "m1")
 	c := f.dial(t)
@@ -40,7 +40,7 @@ func TestExpirePublishesSessionGone(t *testing.T) {
 	require.Equal(t, "machine_status", f.cap.envs[len(f.cap.envs)-1].Type)
 }
 
-// Important 1: una sesión que reaparece con el hello llega a las apps.
+// Important 1: a session that reappears with the hello reaches the apps.
 func TestHelloSessionReachesLiveApps(t *testing.T) {
 	f := newAppFx(t)
 	_, ch := f.live(t)
@@ -51,12 +51,12 @@ func TestHelloSessionReachesLiveApps(t *testing.T) {
 	require.Equal(t, "s9", e.Session)
 }
 
-// Important 2: el renombre queda en el store y sale en el snapshot y en el REST.
+// Important 2: the rename stays in the store and shows up in the snapshot and in REST.
 func TestPreviousIDInSnapshotAndREST(t *testing.T) {
 	f := newAppFx(t, "a")
 	f.machineSend(t, proto.Envelope{Type: "session_upsert", Session: "b", Payload: mustJSON(proto.SessionInfo{ID: "b", PreviousID: "a", State: proto.StateIdle})})
 	eventually(t, func() bool { si, err := f.st.Session("b"); return err == nil && si.PreviousID == "a" })
-	// un upsert posterior sin previousId no lo borra
+	// a later upsert without previousId does not clear it
 	f.machineSend(t, proto.Envelope{Type: "session_upsert", Session: "b", Payload: mustJSON(proto.SessionInfo{ID: "b", State: proto.StateWorking})})
 	eventually(t, func() bool { si, _ := f.st.Session("b"); return si.State == proto.StateWorking })
 	_, ch := f.live(t)
@@ -76,13 +76,13 @@ func TestPreviousIDInSnapshotAndREST(t *testing.T) {
 	require.Equal(t, "a", list[0].PreviousID)
 }
 
-// Important 5: reiniciar el daemon (hello vacío y luego re-registro) no deja la tarjeta muerta.
+// Important 5: restarting the daemon (empty hello and then re-registration) does not leave the card dead.
 func TestAsksSurviveDaemonRestart(t *testing.T) {
 	f := newAppFx(t, "s1")
 	f.machineSend(t, askEnv("s1", "a1"))
 	eventually(t, func() bool { f.srv.asks.mu.Lock(); defer f.srv.asks.mu.Unlock(); return len(f.srv.asks.open) == 1 })
 	f.mach.CloseNow()
-	f.connectMachine(t) // daemon nuevo: hello sin sesiones → s1 cerrada
+	f.connectMachine(t) // new daemon: hello without sessions → s1 closed
 	eventually(t, func() bool { si, _ := f.st.Session("s1"); return si.State == proto.StateClosed })
 	f.machineSend(t, proto.Envelope{Type: "session_upsert", Session: "s1", Payload: mustJSON(proto.SessionInfo{ID: "s1", State: proto.StateNeedsYou})})
 	eventually(t, func() bool { si, _ := f.st.Session("s1"); return si.State == proto.StateNeedsYou })
@@ -90,7 +90,7 @@ func TestAsksSurviveDaemonRestart(t *testing.T) {
 	require.Equal(t, "decide", f.nextCmd(t).Type)
 }
 
-// Important 5: con /clear los asks de la sesión vieja se contestan en la nueva.
+// Important 5: with /clear the old session's asks are answered in the new one.
 func TestAsksFollowRename(t *testing.T) {
 	f := newAppFx(t, "s1")
 	f.machineSend(t, askEnv("s1", "a1"))
@@ -99,14 +99,14 @@ func TestAsksFollowRename(t *testing.T) {
 	eventually(t, func() bool { f.srv.asks.mu.Lock(); defer f.srv.asks.mu.Unlock(); return f.srv.asks.open["a1"] == "s2" })
 	require.Equal(t, 202, f.post("/api/sessions/s2/decide", `{"askId":"a1","decision":"deny"}`).StatusCode)
 	require.Equal(t, "decide", f.nextCmd(t).Type)
-	// ya resuelto: un upsert posterior no lo reabre
+	// already resolved: a later upsert does not reopen it
 	f.machineSend(t, proto.Envelope{Type: "session_upsert", Session: "s2", Payload: mustJSON(proto.SessionInfo{ID: "s2", State: proto.StateWorking})})
 	eventually(t, func() bool { si, _ := f.st.Session("s2"); return si.State == proto.StateWorking })
 	code, _ := f.postBody("/api/sessions/s2/decide", `{"askId":"a1","decision":"allow"}`)
 	require.Equal(t, 409, code)
 }
 
-// Important 8: al arrancar, ninguna máquina figura en línea hasta su hello.
+// Important 8: at startup, no machine shows as online until its hello.
 func TestStartupMarksMachinesOffline(t *testing.T) {
 	_, st, _ := newTestServer(t)
 	require.NoError(t, st.UpsertMachine("m1", "linux", "linux", "1", true, proto.MachineCaps{}))
@@ -116,14 +116,14 @@ func TestStartupMarksMachinesOffline(t *testing.T) {
 	require.False(t, ms[0].Online)
 }
 
-// Minor: una máquina no difunde tipos desconocidos ni falsifica machine_status.
+// Minor: a machine does not broadcast unknown types nor forge machine_status.
 func TestMachineEnvelopeWhitelist(t *testing.T) {
 	f := newFixture(t, "m1")
 	c := f.dial(t)
 	sendHello(t, c, "m1", "s1")
 	eventually(t, func() bool { return online(f, "m1") })
 	ctx := context.Background()
-	fake := mustJSON(map[string]any{"name": "otra", "online": true})
+	fake := mustJSON(map[string]any{"name": "another", "online": true})
 	require.NoError(t, wsjson.Write(ctx, c, proto.Envelope{Type: "machine_status", Payload: fake}))
 	require.NoError(t, wsjson.Write(ctx, c, proto.Envelope{Type: "wat"}))
 	require.NoError(t, wsjson.Write(ctx, c, proto.Envelope{Type: "launch_result", Payload: mustJSON(proto.LaunchResult{ReqID: "r"})}))
@@ -131,7 +131,7 @@ func TestMachineEnvelopeWhitelist(t *testing.T) {
 	require.Equal(t, []string{"session_upsert", "machine_status", "launch_result"}, f.cap.types())
 }
 
-// Minor: revocar un token cierra sus WebSockets vivos.
+// Minor: revoking a token closes its live WebSockets.
 func TestRevokedTokenClosesLiveSockets(t *testing.T) {
 	old := tokenRecheck.Swap(int64(20 * time.Millisecond))
 	t.Cleanup(func() { tokenRecheck.Store(old) })
@@ -139,7 +139,7 @@ func TestRevokedTokenClosesLiveSockets(t *testing.T) {
 	f.live(t)
 	liveN := func() int { f.srv.live.mu.Lock(); defer f.srv.live.mu.Unlock(); return len(f.srv.live.clients) }
 	eventually(t, func() bool { return liveN() == 1 })
-	time.Sleep(60 * time.Millisecond) // varias comprobaciones con el token aún válido
+	time.Sleep(60 * time.Millisecond) // several checks with the token still valid
 	require.Equal(t, 1, liveN())
 	require.True(t, f.srv.hub.Connected("m1"))
 	require.NoError(t, f.st.RevokeToken("device", "tel"))
@@ -148,7 +148,7 @@ func TestRevokedTokenClosesLiveSockets(t *testing.T) {
 	eventually(t, func() bool { return !f.srv.hub.Connected("m1") })
 }
 
-// Minor: /api/pair y /api/link frenan la fuerza bruta de códigos.
+// Minor: /api/pair and /api/link stop brute-forcing of codes.
 func TestPairLinkRateLimited(t *testing.T) {
 	s, st, h := newTestServer(t)
 	_ = s
@@ -164,8 +164,8 @@ func TestPairLinkRateLimited(t *testing.T) {
 	require.NoError(t, err)
 	rr := do(h, "POST", "/api/pair", `{"code":"`+code+`"}`, nil)
 	require.Equal(t, 429, rr.Code)
-	require.JSONEq(t, `{"error":"demasiados intentos, espera un minuto"}`, rr.Body.String())
-	// pasado el minuto vuelve a aceptar
+	require.JSONEq(t, `{"error":"too many attempts, wait a minute"}`, rr.Body.String())
+	// after the minute it accepts again
 	s.fails.now = func() time.Time { return time.Now().Add(61 * time.Second) }
 	rr = do(h, "POST", "/api/pair", `{"code":"`+code+`"}`, nil)
 	require.Equal(t, 200, rr.Code, rr.Body.String())

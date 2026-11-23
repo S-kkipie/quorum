@@ -30,14 +30,21 @@ func cfg(t *testing.T, mode string, extra ...string) proto.ConnectorConfig {
 
 func TestStatusMap(t *testing.T) {
 	for in, want := range map[string]string{
-		"open": "por_hacer", "TODO": "por_hacer", "backlog": "por_hacer", "In Progress": "en_curso", "doing": "en_curso",
-		"review": "en_review", "in review": "en_review", "closed": "hecho", "Done": "hecho", "resolved": "hecho",
-		"blocked": "bloqueado", "raro": "por_hacer", "": "por_hacer", "hecho": "hecho", "in_progress": "en_curso",
+		"open": "todo", "TODO": "todo", "backlog": "todo", "In Progress": "in_progress", "doing": "in_progress",
+		"review": "in_review", "in review": "in_review", "closed": "done", "Done": "done", "resolved": "done",
+		"blocked": "blocked", "weird": "todo", "": "todo", "done": "done", "in_progress": "in_progress",
 	} {
 		require.Equal(t, want, StatusMap(in, nil), in)
 	}
-	require.Equal(t, "bloqueado", StatusMap("waiting", map[string]string{"waiting": "bloqueado"}))
-	require.Equal(t, "hecho", StatusMap("open", map[string]string{"open": "hecho"}))
+	// Spanish values written before the English migration still normalize.
+	for in, want := range map[string]string{"por_hacer": "todo", "en_curso": "in_progress", "en curso": "in_progress", "en_review": "in_review", "hecho": "done", "bloqueado": "blocked"} {
+		require.Equal(t, want, StatusMap(in, nil), in)
+		require.Equal(t, want, StatusMap("x", map[string]string{"x": want}), in)
+		// a custom statusMap value written in Spanish is normalized too
+		require.Equal(t, want, StatusMap("x", map[string]string{"x": in}), in)
+	}
+	require.Equal(t, "blocked", StatusMap("waiting", map[string]string{"waiting": "blocked"}))
+	require.Equal(t, "done", StatusMap("open", map[string]string{"open": "done"}))
 }
 
 func TestNewNone(t *testing.T) {
@@ -55,28 +62,28 @@ func TestExecErrors(t *testing.T) {
 	}
 	start := time.Now()
 	err := run("sleep", 300*time.Millisecond)
-	require.ErrorContains(t, err, "tiempo de espera")
+	require.ErrorContains(t, err, "timed out")
 	require.Less(t, time.Since(start), 5*time.Second)
-	require.ErrorContains(t, run("garbage", time.Second*10), "respuesta inválida del conector")
+	require.ErrorContains(t, run("garbage", time.Second*10), "invalid connector response")
 	err = run("fail", time.Second*10)
-	require.ErrorContains(t, err, "se rompió todo")
-	require.ErrorContains(t, run("huge", time.Second*20), "respuesta demasiado grande")
-	require.EqualError(t, run("err", time.Second*10), "sin permiso")
+	require.ErrorContains(t, err, "everything broke")
+	require.ErrorContains(t, run("huge", time.Second*20), "response too large")
+	require.EqualError(t, run("err", time.Second*10), "no permission")
 }
 
 func TestExecCommentAndStatus(t *testing.T) {
 	log := filepath.Join(t.TempDir(), "log")
-	c, err := newExec(cfg(t, "ok", "log", log), "secreto", os.Environ(), 10*time.Second)
+	c, err := newExec(cfg(t, "ok", "log", log), "secret", os.Environ(), 10*time.Second)
 	require.NoError(t, err)
 	require.NoError(t, c.Comment(context.Background(), "A-1", "hola"))
-	require.NoError(t, c.SetStatus(context.Background(), "A-1", "hecho"))
+	require.NoError(t, c.SetStatus(context.Background(), "A-1", "done"))
 	b, _ := os.ReadFile(log)
 	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
 	require.Len(t, lines, 2)
 	require.Contains(t, lines[0], `"op":"comment"`)
 	require.Contains(t, lines[0], `"body":"hola"`)
-	require.Contains(t, lines[0], `"token":"secreto"`)
-	require.Contains(t, lines[1], `"status":"hecho"`)
+	require.Contains(t, lines[0], `"token":"secret"`)
+	require.Contains(t, lines[1], `"status":"done"`)
 }
 
 func TestExecNoCommand(t *testing.T) {
@@ -101,7 +108,7 @@ func newFx(t *testing.T, c proto.ConnectorConfig, profile string) *fx {
 	p, err := st.CreateProject(proto.Project{WorkspaceID: ws.ID, Name: "p", Connector: c})
 	require.NoError(t, err)
 	f := &fx{st: st, proj: p}
-	require.NoError(t, st.SetConnectorToken(p.ID, "tok-secreto"))
+	require.NoError(t, st.SetConnectorToken(p.ID, "tok-secret"))
 	f.sy = NewSyncer(st, func(e proto.Envelope) { f.mu.Lock(); f.pubs = append(f.pubs, e); f.mu.Unlock() })
 	return f
 }
@@ -124,33 +131,33 @@ func TestSyncOKThenError(t *testing.T) {
 	for _, x := range ts {
 		by[x.ExternalID] = x
 	}
-	require.Equal(t, "por_hacer", by["A-1"].Status)
-	require.Equal(t, "en_curso", by["A-2"].Status)
+	require.Equal(t, "todo", by["A-1"].Status)
+	require.Equal(t, "in_progress", by["A-2"].Status)
 	require.Equal(t, "In Progress", by["A-2"].RawStatus)
 	p, _ := f.st.GetProject(f.proj.ID)
 	require.Equal(t, "", p.SyncError)
 	require.NotZero(t, p.SyncedAt)
 	require.Equal(t, []string{"project_upsert", "tickets"}, f.types())
-	require.NotContains(t, string(f.pubs[0].Payload), "tok-secreto")
+	require.NotContains(t, string(f.pubs[0].Payload), "tok-secret")
 
-	// Cambia el conector a uno roto: los tickets se conservan y SyncError se fija.
+	// Switch the connector to a broken one: the tickets are kept and SyncError is set.
 	broken := f.proj
 	broken.Connector = cfg(t, "fail")
 	require.NoError(t, f.st.UpdateProject(broken))
 	require.Error(t, f.sy.SyncNow(f.proj.ID))
 	p, _ = f.st.GetProject(f.proj.ID)
-	require.Contains(t, p.SyncError, "se rompió todo")
+	require.Contains(t, p.SyncError, "everything broke")
 	ts, _ = f.st.ListTickets(f.proj.ID)
 	require.Len(t, ts, 2)
 	require.Equal(t, []string{"project_upsert", "tickets", "project_upsert"}, f.types())
 }
 
 func TestSyncWhoasProfileAndNone(t *testing.T) {
-	f := newFx(t, cfg(t, "env"), "perfil-x")
+	f := newFx(t, cfg(t, "env"), "profile-x")
 	require.NoError(t, f.sy.SyncNow(f.proj.ID))
 	ts, _ := f.st.ListTickets(f.proj.ID)
 	require.Len(t, ts, 1)
-	require.Equal(t, "perfil-x", ts[0].Title)
+	require.Equal(t, "profile-x", ts[0].Title)
 
 	g := newFx(t, proto.ConnectorConfig{Kind: "none"}, "")
 	require.ErrorIs(t, g.sy.SyncNow(g.proj.ID), ErrNoConnector)
@@ -183,12 +190,12 @@ func TestTokenRedacted(t *testing.T) {
 	f := newFx(t, cfg(t, "leak"), "")
 	err := f.sy.SyncNow(f.proj.ID)
 	require.Error(t, err)
-	require.NotContains(t, err.Error(), "tok-secreto")
+	require.NotContains(t, err.Error(), "tok-secret")
 	p, _ := f.st.GetProject(f.proj.ID)
-	require.NotContains(t, p.SyncError, "tok-secreto")
+	require.NotContains(t, p.SyncError, "tok-secret")
 	require.Contains(t, p.SyncError, "***")
 	for _, e := range f.pubs {
-		require.NotContains(t, string(e.Payload), "tok-secreto")
+		require.NotContains(t, string(e.Payload), "tok-secret")
 	}
 }
 
@@ -202,7 +209,7 @@ func TestSyncedAtIsStartOfFetch(t *testing.T) {
 }
 
 func TestStatusMapCustomNormalizedKeys(t *testing.T) {
-	require.Equal(t, "hecho", StatusMap("Won't_Fix", map[string]string{"won't-fix": "hecho"}))
+	require.Equal(t, "done", StatusMap("Won't_Fix", map[string]string{"won't-fix": "done"}))
 }
 
 func TestTokenRedactedEscaped(t *testing.T) {
@@ -216,9 +223,9 @@ func TestTokenRedactedEscaped(t *testing.T) {
 }
 
 func TestStatusMapOpenLabelOnly(t *testing.T) {
-	require.Equal(t, "en_curso", StatusMap("open:en curso", nil))
-	require.Equal(t, "en_review", StatusMap("open:review", nil))
-	require.Equal(t, "por_hacer", StatusMap("jira:in progress", nil))
+	require.Equal(t, "in_progress", StatusMap("open:en curso", nil))
+	require.Equal(t, "in_review", StatusMap("open:review", nil))
+	require.Equal(t, "todo", StatusMap("jira:in progress", nil))
 }
 
 func TestInvalidateDiscardsInFlightSync(t *testing.T) {
@@ -235,7 +242,7 @@ func TestInvalidateDiscardsInFlightSync(t *testing.T) {
 	close(gate)
 	require.NoError(t, <-done)
 	ts, _ := f.st.ListTickets(f.proj.ID)
-	require.Empty(t, ts, "lo traído del origen viejo se descarta")
+	require.Empty(t, ts, "what was fetched from the old source is discarded")
 	p, _ := f.st.GetProject(f.proj.ID)
 	require.Zero(t, p.SyncedAt)
 }
@@ -259,7 +266,7 @@ func TestSyncNowDuringSyncReruns(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- f.sy.SyncNow(f.proj.ID) }()
 	<-entered
-	require.NoError(t, f.sy.SyncNow(f.proj.ID)) // en curso: queda pendiente
+	require.NoError(t, f.sy.SyncNow(f.proj.ID)) // in progress: stays pending
 	close(gate)
 	require.NoError(t, <-done)
 	mu.Lock()
@@ -277,7 +284,7 @@ func (b blockConn) List(ctx context.Context, since int64) ([]proto.Ticket, error
 	if b.gate != nil {
 		<-b.gate
 	}
-	return []proto.Ticket{{ExternalID: "V-1", Title: "viejo", Status: "open"}}, nil
+	return []proto.Ticket{{ExternalID: "V-1", Title: "old", Status: "open"}}, nil
 }
 func (blockConn) Comment(context.Context, string, string) error   { return nil }
 func (blockConn) SetStatus(context.Context, string, string) error { return nil }

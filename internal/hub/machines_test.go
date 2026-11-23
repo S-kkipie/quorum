@@ -142,7 +142,7 @@ func TestHelloRegistersMachineAndSessions(t *testing.T) {
 		require.Equal(t, "m1", s.Machine)
 		require.NotEqual(t, "old", s.ID)
 	}
-	// las apps no escuchan hello: la cerrada sale como session_gone y las vigentes como session_upsert
+	// the apps do not listen to hello: the closed one comes out as session_gone and the current ones as session_upsert
 	eventually(t, func() bool { return len(f.cap.types()) >= 4 })
 	require.Equal(t, []string{"session_gone", "session_upsert", "session_upsert", "machine_status"}, f.cap.types()[:4])
 	require.Equal(t, "old", f.cap.envs[0].Session)
@@ -214,7 +214,7 @@ func TestNewConnectionReplacesOld(t *testing.T) {
 	c2 := f.dial(t)
 	sendHello(t, c2, "m1", "s1")
 
-	// c1 queda cerrada con estado normal
+	// c1 is left closed with normal state
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	var env proto.Envelope
@@ -224,7 +224,7 @@ func TestNewConnectionReplacesOld(t *testing.T) {
 	}
 	require.Equal(t, websocket.StatusNormalClosure, websocket.CloseStatus(err))
 
-	// los mensajes llegan por c2 y la caída de c1 no dispara la gracia
+	// messages arrive through c2 and c1 dropping does not trigger the grace period
 	eventually(t, func() bool { return f.srv.hub.SendToMachine("m1", proto.Envelope{Type: "command", Session: "s1"}) })
 	for env.Type != "command" {
 		env = proto.Envelope{}
@@ -242,10 +242,10 @@ func TestSendToMachineNotConnected(t *testing.T) {
 
 func TestMachineWSRequiresToken(t *testing.T) {
 	f := newFixture(t, "m1")
-	f.token = "malo"
+	f.token = "bad"
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	_, resp, err := websocket.Dial(ctx, f.url, &websocket.DialOptions{HTTPHeader: http.Header{"Authorization": {"Bearer malo"}}})
+	_, resp, err := websocket.Dial(ctx, f.url, &websocket.DialOptions{HTTPHeader: http.Header{"Authorization": {"Bearer bad"}}})
 	require.Error(t, err)
 	require.Equal(t, 401, resp.StatusCode)
 }
@@ -260,7 +260,7 @@ func TestReplacedConnectionMessagesIgnored(t *testing.T) {
 	c := f.dial(t)
 	sendHello(t, c, "m1", "s1")
 	eventually(t, func() bool { return online(f, "m1") })
-	stale := &machineConn{name: "m1"} // una conexión que ya no es la vigente
+	stale := &machineConn{name: "m1"} // a connection that is no longer the current one
 	ev := proto.Event{Session: "s1", TS: 1, Kind: proto.KindInfo}
 	f.srv.hub.onMessage(stale, proto.Envelope{Type: "event", Session: "s1", Payload: mustJSON(ev)})
 	f.srv.hub.onMessage(stale, proto.Envelope{Type: "session_gone", Session: "s1"})
@@ -289,7 +289,7 @@ func TestMachineCannotTouchOtherMachinesSessions(t *testing.T) {
 	require.NoError(t, wsjson.Write(ctx, c2, proto.Envelope{Type: "session_upsert", Session: "s1", Payload: mustJSON(steal)}))
 	require.NoError(t, wsjson.Write(ctx, c2, proto.Envelope{Type: "event", Session: "s1", Payload: mustJSON(proto.Event{Session: "s1", Kind: proto.KindInfo})}))
 	require.NoError(t, wsjson.Write(ctx, c2, proto.Envelope{Type: "session_gone", Session: "s1"}))
-	// una sesión nueva sirve de marca: cuando llega, lo anterior ya se procesó
+	// a new session serves as a marker: when it arrives, everything before it has been processed
 	own := proto.SessionInfo{ID: "s2", State: proto.StateIdle}
 	require.NoError(t, wsjson.Write(ctx, c2, proto.Envelope{Type: "session_upsert", Session: "s2", Payload: mustJSON(own)}))
 	eventually(t, func() bool { o, ok, _ := f.st.SessionOwner("s2"); return ok && o == "m2" })
@@ -318,7 +318,7 @@ func TestStaleExpireDoesNotMarkOffline(t *testing.T) {
 	c2 := f.dial(t)
 	sendHello(t, c2, "m1", "s1")
 	eventually(t, func() bool { return len(f.cap.types()) >= 4 })
-	f.srv.hub.expire("m1", oldGen) // el temporizador viejo llega tarde
+	f.srv.hub.expire("m1", oldGen) // the old timer arrives late
 	require.True(t, online(f, "m1"))
 	l, _ := f.st.ListSessions(false)
 	require.Len(t, l, 1)
@@ -340,8 +340,8 @@ func TestHelloCannotStealOtherMachinesSession(t *testing.T) {
 	o, _, _ := f.st.SessionOwner("s1")
 	require.Equal(t, "A", o)
 	l, _ := f.st.ListSessions(false)
-	require.Len(t, l, 2) // s1 de A sigue abierta
-	// un segundo hello de B sin s1 tampoco la cierra
+	require.Len(t, l, 2) // s1 of A is still open
+	// a second hello from B without s1 does not close it either
 	cb2 := f.dial(t)
 	sendHello(t, cb2, "B", "s2")
 	eventually(t, func() bool { return len(f.cap.types()) >= 6 })

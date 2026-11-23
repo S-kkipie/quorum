@@ -8,7 +8,7 @@ describe('frames', () => {
     frames.set('m', 'p', f('b'))
     expect(frames.get('m', 'p')?.ansi).toBe('b')
   })
-  it('avisa a los suscritos y se puede cancelar', () => {
+  it('notifies subscribers and can be unsubscribed', () => {
     const fn = vi.fn()
     const un = frames.subscribe(frames.key('m', 'q'), fn)
     frames.set('m', 'q', f('x'))

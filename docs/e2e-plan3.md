@@ -1,39 +1,39 @@
-# Verificación de punta a punta, Plan 3 (herdr)
+# End-to-end verification, Plan 3 (herdr)
 
-**Corrida del 2026-11-23** contra el hub real ya desplegado, con la app real en el navegador.
+**Run of 2026-11-23** against the real, already deployed hub, with the real app in the browser.
 
-Montaje: app en un viewport de celular (390x844) en Chrome (Windows) emparejado como dispositivo de prueba (revocado al
-final); máquinas: un servidor Linux arm64 (herdr 0.9.5 headless por `scripts/install-herdr.sh`, servicio de usuario) y
-la PC con WSL (herdr propio del dueño, sin tocarlo salvo las pestañas que abrió la prueba).
+Setup: app in a phone viewport (390x844) in Chrome (Windows) paired as a test device (revoked at the
+end); machines: an arm64 Linux server (herdr 0.9.5 headless via `scripts/install-herdr.sh`, user service) and
+the PC with WSL (the owner's own herdr, untouched except for the tabs the test opened).
 
-Ningún proyecto tenía checkout en el servidor Linux. El caso 1 se corrió con "Lanzar" (diálogo de lanzamiento) sobre un
-repo git desechable creado para la prueba en el servidor. "Retomar" y "Terminal" solo existen en la pantalla de un
-proyecto con checkout en la máquina elegida, así que los casos 2, 3 y 4 se corrieron en la PC con WSL sobre un proyecto
-con checkout allí (pestañas propias de la prueba dentro del workspace del dueño).
+No project had a checkout on the Linux server. Case 1 was run with "Launch" (launch dialog) on a
+disposable git repo created for the test on the server. "Resume" and "Terminal" only exist on the screen of a
+project with a checkout on the chosen machine, so cases 2, 3 and 4 were run on the PC with WSL on a project
+with a checkout there (the test's own tabs inside the owner's workspace).
 
-Leyenda: OK / FALLA→ARREGLADO (commit) / FALLA (sin arreglar) / PENDIENTE / NO CORRIDO.
+Legend: OK / FAIL→FIXED (commit) / FAIL (not fixed) / PENDING / NOT RUN.
 
-| # | Caso | Resultado | Evidencia |
-|---|------|-----------|-----------|
-| 1 | Un proyecto → "Nueva sesión" (servidor Linux, Sin permisos): la app pasa a "Arrancando…" y abre el chat sola; en `herdr pane list` hay una pestaña nueva en el workspace del proyecto con Claude y `--dangerously-skip-permissions`; un prompt desde el celular responde | OK (por "Lanzar", sin proyecto) | Lanzar → máquina del servidor, carpeta del repo desechable, Sin permisos: la app abrió el chat sola en ~5 s. En herdr apareció un workspace nuevo con el nombre de la carpeta, una pestaña y un panel con `agent: claude`; el proceso es `claude --dangerously-skip-permissions` con cwd en la carpeta. "Responde solo: OK" → "OK · fin del turno · 4 tokens". La pantalla "Arrancando Claude en <máquina>…" se vio en el caso 6 (aquí el cambio fue más rápido que la captura) |
-| 2 | "Retomar" una conversación cerrada: abre en una pestaña nueva y la app navega a ella | OK (en la PC) | Sesión del caso 5 cerrada con "Cerrar" (confirmación): sale como "cerrada" y en CONVERSACIONES del proyecto. Un toque → pestaña nueva en el mismo workspace con `claude --dangerously-skip-permissions --resume <id>`; la app navegó sola a la sesión (mismo id), con el historial y el compositor activo |
-| 3 | "Terminal": se ve la pantalla; `git status` + ⏎ muestra la salida; Ctrl-C funciona; cerrar la vista y volver reusa el mismo panel | FALLA→ARREGLADO (re-prueba OK) | **Re-prueba tras el arreglo:** terminal abierta, `echo` + ⏎, volver y tocar "Terminal" otra vez: mismo panel y la pantalla en vivo apareció en ~1 s, sin "Conectando…". **Primera corrida:** | Pantalla visible, `git status` + ⏎ mostró la salida, `sleep 30` + Ctrl-C lo cortó (`^C`, prompt de vuelta, sin proceso). Volver y tocar "Terminal" otra vez reusa el mismo panel (ninguno nuevo en herdr), **pero la vista queda en "Conectando con la terminal…"** hasta que la pantalla del panel cambia (al mandar un `echo` apareció). Causa probable: si el vigilante del daemon sigue vivo (lease de 15 s), `watch` solo renueva el lease y el bucle solo emite foto cuando el texto cambia; la app descarta a propósito la foto guardada de la visita anterior y espera una nueva que no llega |
-| 4 | Cerrar el panel de terminal desde herdr: la app muestra "La terminal se cerró" | FALLA→ARREGLADO (re-prueba OK) | **Re-prueba tras el arreglo (en la PC):** `herdr pane close` del panel de la prueba con la app mirando: "La terminal se cerró" en ~1 s. **Primera corrida:** | Corrido en la PC (no había terminal posible en el servidor). `herdr pane close <panel>` con la app mirando: la app siguió mostrando la última foto, sin aviso. Causa: herdr 0.9.5 responde `{"code":"pane_not_found"}` y el daemon solo reconoce `not_found` (`isNotFound`), así que nunca emite el `term_frame` de cierre. Volver a tocar "Terminal" sí abrió un panel nuevo (la limpieza de `herdr-terminals.json` funciona). "Cerrar terminal" desde el menú ⋯ de la app sí cierra la pestaña |
-| 5 | PC con WSL (herdr propio): "Nueva sesión" en un proyecto aparece como pestaña en el workspace existente de ese proyecto, sin renombrarlo | OK | Antes/después de `herdr workspace list`: mismos workspaces y nombres; el del proyecto pasó de 1 a 2 pestañas (la nueva, "claude"), sin cambiar el foco. `claude --dangerously-skip-permissions` en la carpeta del proyecto. "Responde solo: OK" → "OK" |
-| 6 | Doble toque rápido en "Nueva sesión": una sola sesión | OK | Doble clic en "Nueva sesión": un solo `POST /api/launch`, "Arrancando Claude en <máquina>…", una sola pestaña nueva y un solo proceso claude |
-| — | Lanzar desde un ticket | NO CORRIDO | El único proyecto con tickets no tiene checkout en ninguna máquina (solo "Otra carpeta…"), y sus tickets son reales: lanzar mandaría el ticket como primer prompt a un Claude sin permisos |
+| # | Case | Result | Evidence |
+|---|------|--------|----------|
+| 1 | A project → "New session" (Linux server, Skip permissions): the app moves to "Starting…" and opens the chat by itself; `herdr pane list` shows a new tab in the project's workspace with Claude and `--dangerously-skip-permissions`; a prompt from the phone gets an answer | OK (via "Launch", no project) | Launch → server machine, disposable repo folder, Skip permissions: the app opened the chat by itself in ~5 s. In herdr a new workspace appeared named after the folder, one tab and one pane with `agent: claude`; the process is `claude --dangerously-skip-permissions` with cwd in the folder. "Reply only: OK" → "OK · end of turn · 4 tokens". The "Starting Claude on <machine>…" screen was seen in case 6 (here the switch was faster than the capture) |
+| 2 | "Resume" a closed conversation: opens in a new tab and the app navigates to it | OK (on the PC) | Session from case 5 closed with "Close" (confirmation): it shows as "closed" and under CONVERSATIONS of the project. One tap → new tab in the same workspace with `claude --dangerously-skip-permissions --resume <id>`; the app navigated to the session by itself (same id), with the history and the composer active |
+| 3 | "Terminal": the screen is visible; `git status` + ⏎ shows the output; Ctrl-C works; closing the view and coming back reuses the same pane | FAIL→FIXED (re-test OK) | **Re-test after the fix:** terminal opened, `echo` + ⏎, go back and tap "Terminal" again: same pane and the live screen appeared in ~1 s, with no "Connecting…". **First run:** | Screen visible, `git status` + ⏎ showed the output, `sleep 30` + Ctrl-C cut it (`^C`, prompt back, no process). Going back and tapping "Terminal" again reuses the same pane (no new one in herdr), **but the view stays at "Connecting to the terminal…"** until the pane's screen changes (sending an `echo` made it appear). Probable cause: if the daemon's watcher is still alive (15 s lease), `watch` only renews the lease and the loop only emits a snapshot when the text changes; the app deliberately discards the snapshot stored from the previous visit and waits for a new one that never arrives |
+| 4 | Close the terminal pane from herdr: the app shows "Terminal closed" | FAIL→FIXED (re-test OK) | **Re-test after the fix (on the PC):** `herdr pane close` of the test pane with the app watching: "Terminal closed" in ~1 s. **First run:** | Run on the PC (no terminal possible on the server). `herdr pane close <pane>` with the app watching: the app kept showing the last snapshot, with no notice. Cause: herdr 0.9.5 answers `{"code":"pane_not_found"}` and the daemon only recognizes `not_found` (`isNotFound`), so it never emits the closing `term_frame`. Tapping "Terminal" again did open a new pane (the `herdr-terminals.json` cleanup works). "Close terminal" from the app's ⋯ menu does close the tab |
+| 5 | PC with WSL (own herdr): "New session" on a project shows up as a tab in that project's existing workspace, without renaming it | OK | Before/after `herdr workspace list`: same workspaces and names; the project's went from 1 to 2 tabs (the new one, "claude"), without changing focus. `claude --dangerously-skip-permissions` in the project folder. "Reply only: OK" → "OK" |
+| 6 | Quick double tap on "New session": a single session | OK | Double click on "New session": a single `POST /api/launch`, "Starting Claude on <machine>…", a single new tab and a single claude process |
+| — | Launch from a ticket | NOT RUN | The only project with tickets has no checkout on any machine (only "Another folder…"), and its tickets are real: launching would send the ticket as the first prompt to a Claude with no permissions |
 
-Resumen: primera corrida 4 OK y 2 FALLA (casos 3 y 4); tras el arreglo (quorumd reiniciado en las dos máquinas) la re-prueba de los casos 3 y 4 dio OK. Queda NO CORRIDO el lanzamiento desde un ticket.
+Summary: first run 4 OK and 2 FAIL (cases 3 and 4); after the fix (quorumd restarted on both machines) the re-test of cases 3 and 4 was OK. Launching from a ticket remains NOT RUN.
 
-Hallazgos sin falla de caso:
+Findings without a case failure:
 
-- Primera corrida: cerrar una sesión desde la app terminaba Claude pero dejaba la pestaña de herdr abierta con el shell.
-  **Re-prueba tras el arreglo:** "Nueva sesión" en la PC → chat → "Cerrar" (confirmación): la pestaña de la sesión
-  desapareció de `herdr tab list` en ~1 s; los demás workspaces y pestañas del dueño quedaron iguales (antes/después).
-- `herdr-terminals.json` conserva el panel cerrado desde herdr hasta la próxima apertura de "Terminal", que lo limpia.
-- Al lanzar sin proyecto en una máquina con herdr sin workspaces, se crea un workspace nuevo con el nombre de la carpeta.
+- First run: closing a session from the app ended Claude but left the herdr tab open with the shell.
+  **Re-test after the fix:** "New session" on the PC → chat → "Close" (confirmation): the session's tab
+  disappeared from `herdr tab list` in ~1 s; the owner's other workspaces and tabs stayed the same (before/after).
+- `herdr-terminals.json` keeps the pane closed from herdr until the next "Terminal" opening, which cleans it.
+- When launching with no project on a machine whose herdr has no workspaces, a new workspace is created named after the folder.
 
-Limpieza: se cerraron con `herdr tab close` solo las pestañas que creó la prueba (en la PC las listas de workspaces y
-pestañas quedaron iguales a las de antes; en el servidor herdr quedó vacío como al principio), se borró el repo
-desechable y se revocó el dispositivo de prueba. En la re-prueba igual: dispositivo nuevo revocado al final y listas de
-workspaces y pestañas de la PC idénticas antes y después.
+Cleanup: only the tabs created by the test were closed with `herdr tab close` (on the PC the workspace and tab lists
+stayed the same as before; on the server herdr was left empty as at the start), the disposable repo was deleted and the
+test device was revoked. In the re-test likewise: new device revoked at the end and the PC's workspace and tab lists
+identical before and after.

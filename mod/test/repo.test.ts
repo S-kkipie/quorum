@@ -4,15 +4,15 @@ import { detectRepo, makeBranchRefresher, type RepoDeps } from '../src/repo'
 
 const ok = (stdout: string) => Promise.resolve({ exitCode: 0, stdout })
 
-test('usa $.session.repo cuando existe', async () => {
+test('uses $.session.repo when it exists', async () => {
   const deps: RepoDeps = {
     repo: () => ({ remote: 'git@github.com:o/r.git' }),
-    run: argv => (argv.includes('branch') ? ok('main\n') : Promise.reject(new Error('no debe llamarse'))),
+    run: argv => (argv.includes('branch') ? ok('main\n') : Promise.reject(new Error('must not be called'))),
   }
   expect(await detectRepo(deps, '/w')).toEqual({ repoUrl: 'git@github.com:o/r.git', branch: 'main' })
 })
 
-test('sin $.session.repo cae a git remote get-url', async () => {
+test('without $.session.repo falls back to git remote get-url', async () => {
   const seen: string[][] = []
   const deps: RepoDeps = {
     repo: () => { throw new TypeError('repo is not a function') },
@@ -23,7 +23,7 @@ test('sin $.session.repo cae a git remote get-url', async () => {
   expect(seen[1]).toEqual(['git', '-C', '/w', 'branch', '--show-current'])
 })
 
-test('si git falla manda vacío sin lanzar', async () => {
+test('if git fails it sends empty without throwing', async () => {
   const deps: RepoDeps = {
     repo: () => null,
     run: argv => (argv.includes('get-url') ? ok('') : Promise.reject(new Error('boom'))),
@@ -33,7 +33,7 @@ test('si git falla manda vacío sin lanzar', async () => {
   expect(await detectRepo(bad, '/w')).toEqual({ repoUrl: '', branch: '' })
 })
 
-test('el refresco de rama respeta el minuto y avisa solo si cambió', async () => {
+test('branch refresh respects the minute and notifies only if it changed', async () => {
   let t = 0
   let branch = 'main'
   const calls: string[] = []
@@ -41,25 +41,25 @@ test('el refresco de rama respeta el minuto y avisa solo si cambió', async () =
   const r = makeBranchRefresher(deps, '/w', b => calls.push(b), () => t)
   r.seed('main')
   branch = 'feat'
-  await r.refresh() // < 1 min: no consulta
+  await r.refresh() // < 1 min: does not query
   expect(calls).toEqual([])
   t = 61_000
   await r.refresh()
   expect(calls).toEqual(['feat'])
   t = 62_000
-  branch = 'otra'
+  branch = 'other'
   await r.refresh()
   expect(calls).toEqual(['feat'])
 })
 
-test('las credenciales de la URL no salen del mod', async () => {
+test('URL credentials do not leave the mod', async () => {
   const deps: RepoDeps = { repo: () => ({ remote: 'https://user:pass@github.com/o/r.git' }), run: () => ok('main') }
   expect((await detectRepo(deps, '/w')).repoUrl).toBe('https://github.com/o/r.git')
   const d2: RepoDeps = { repo: () => null, run: argv => ok(argv.includes('get-url') ? 'https://TOKEN@github.com/o/r' : 'm') }
   expect((await detectRepo(d2, '/w')).repoUrl).toBe('https://github.com/o/r')
 })
 
-test('contraseña con / y query/fragmento se descartan', async () => {
+test('a password with / and query/fragment are discarded', async () => {
   const deps: RepoDeps = { repo: () => ({ remote: 'https://u:pa/ss@github.com/o/r.git?access_token=x#f' }), run: () => ok('main') }
   expect((await detectRepo(deps, '/w')).repoUrl).toBe('https://github.com/o/r.git')
 })

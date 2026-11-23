@@ -1,10 +1,10 @@
 #!/bin/sh
-# Instala quorum-hub como servicio de usuario de systemd. Idempotente.
-# Uso: scripts/install-hub.sh [ruta-al-binario]
-#   (por defecto ./bin/<os>-<arch>/quorum-hub, luego ./bin/quorum-hub, luego el de PATH)
+# Installs quorum-hub as a systemd user service. Idempotent.
+# Usage: scripts/install-hub.sh [path-to-binary]
+#   (default ./bin/<os>-<arch>/quorum-hub, then ./bin/quorum-hub, then the one on PATH)
 set -eu
 
-# bin/<os>-<arch>/ de 'make cross' para esta máquina (p. ej. linux-arm64).
+# bin/<os>-<arch>/ from 'make cross' for this machine (e.g. linux-arm64).
 case "$(uname -s)" in Linux) OS=linux ;; Darwin) OS=darwin ;; *) OS=$(uname -s | tr 'A-Z' 'a-z') ;; esac
 case "$(uname -m)" in x86_64|amd64) ARCH=amd64 ;; aarch64|arm64) ARCH=arm64 ;; *) ARCH=$(uname -m) ;; esac
 HERE="$(dirname "$0")/.."
@@ -14,7 +14,7 @@ if [ -z "$BIN" ]; then
   elif [ -x "$HERE/bin/quorum-hub" ]; then BIN="$HERE/bin/quorum-hub"
   else BIN="$(command -v quorum-hub || true)"; fi
 fi
-[ -n "$BIN" ] && [ -x "$BIN" ] || { echo "error: no encuentro el binario quorum-hub (compílalo con 'make build')" >&2; exit 1; }
+[ -n "$BIN" ] && [ -x "$BIN" ] || { echo "error: quorum-hub binary not found (build it with 'make build')" >&2; exit 1; }
 
 DEST="$HOME/.local/bin"
 UNITDIR="$HOME/.config/systemd/user"
@@ -23,7 +23,7 @@ if [ "$(readlink -f "$BIN")" != "$(readlink -f "$DEST/quorum-hub" 2>/dev/null ||
   cp "$BIN" "$DEST/quorum-hub.new" && mv "$DEST/quorum-hub.new" "$DEST/quorum-hub"
 fi
 chmod 755 "$DEST/quorum-hub"
-echo "binario instalado en $DEST/quorum-hub"
+echo "binary installed at $DEST/quorum-hub"
 
 cat > "$UNITDIR/quorum-hub.service" <<UNIT
 [Unit]
@@ -39,29 +39,29 @@ RestartSec=2
 WantedBy=default.target
 UNIT
 
-# linger primero: arranca el administrador de usuario de systemd aunque no haya sesión abierta.
-loginctl enable-linger "$(id -un)" || echo "aviso: no se pudo activar linger; el hub no arrancará sin sesión abierta" >&2
+# linger first: starts the systemd user manager even with no open session.
+loginctl enable-linger "$(id -un)" || echo "warning: could not enable linger; the hub will not start without an open session" >&2
 if ! systemctl --user daemon-reload; then
   cat >&2 <<HINT
-error: 'systemctl --user' no funciona (no hay bus de usuario).
-  - En WSL, activa systemd en /etc/wsl.conf ([boot] systemd=true) y reinicia con 'wsl --shutdown'.
-  - Por SSH o su/sudo, entra con una sesión de login real del usuario (o exporta
-    XDG_RUNTIME_DIR=/run/user/\$(id -u)) y vuelve a correr este script.
-  - Mientras tanto puedes correrlo a mano: $DEST/quorum-hub serve --addr 127.0.0.1:7420
+error: 'systemctl --user' does not work (no user bus).
+  - On WSL, enable systemd in /etc/wsl.conf ([boot] systemd=true) and restart with 'wsl --shutdown'.
+  - Over SSH or su/sudo, use a real login session of the user (or export
+    XDG_RUNTIME_DIR=/run/user/\$(id -u)) and run this script again.
+  - Meanwhile you can run it by hand: $DEST/quorum-hub serve --addr 127.0.0.1:7420
 HINT
   exit 1
 fi
 systemctl --user enable quorum-hub.service
 systemctl --user restart quorum-hub.service
-echo "servicio quorum-hub activo en 127.0.0.1:7420"
+echo "quorum-hub service active on 127.0.0.1:7420"
 
 cat <<MSG
 
-Siguientes pasos:
-  1. Publícalo en tu tailnet (NUNCA uses 'tailscale funnel'):
+Next steps:
+  1. Publish it on your tailnet (NEVER use 'tailscale funnel'):
        tailscale serve --bg 7420
-  2. Genera un código y empareja el celular desde la app:
+  2. Generate a code and pair your phone from the app:
        quorum-hub pair
-  3. Para enlazar una máquina:
-       quorum-hub link-code     (luego 'quorumd link <url> <código>' en esa máquina)
+  3. To link a machine:
+       quorum-hub link-code     (then 'quorumd link <url> <code>' on that machine)
 MSG
