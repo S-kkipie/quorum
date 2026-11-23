@@ -48,6 +48,7 @@ type Pane struct {
 	Cwd          string `json:"cwd"`
 	Focused      bool   `json:"focused"`
 	Agent        string `json:"agent"`
+	AgentStatus  string `json:"agent_status"` // p. ej. idle, working, blocked
 	AgentSession *struct {
 		Value string `json:"value"`
 	} `json:"agent_session"`

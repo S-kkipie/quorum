@@ -61,6 +61,7 @@ func machineEnv() string {
 // backoff. Mientras no hay conexión sigue vaciando reg.Out(): el hello de la
 // próxima conexión restituye el estado de las sesiones.
 func RunHubLink(ctx context.Context, cfg Config, reg *Registry, host *Host) {
+	host.trackSessions(reg)
 	backoff := backoffMin
 	for ctx.Err() == nil {
 		start := time.Now()
@@ -178,6 +179,9 @@ func readLoop(ctx context.Context, ws *websocket.Conn, reg *Registry, host *Host
 			if err := json.Unmarshal(env.Payload, &cmd); err != nil {
 				log.Printf("hub: command inválido: %v", err)
 				continue
+			}
+			if cmd.Type == "close" {
+				host.closeRequested(reg, env.Session) // antes de que la sesión termine
 			}
 			if !reg.Send(env.Session, cmd) {
 				log.Printf("hub: command para %s sin suscriptor", env.Session)

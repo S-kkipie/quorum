@@ -28,6 +28,10 @@ type Host struct {
 	// vigilantes de terminal activos por panel (ver terminal.go)
 	wmu     sync.Mutex
 	watches map[string]*termWatch
+
+	// cierres de pestaña pendientes por sesión (ver sessionclose.go)
+	cmu     sync.Mutex
+	closing map[string]*pendingClose
 }
 
 // NewHost arma el Host desde la config (socket de herdr y workspaces guardados).

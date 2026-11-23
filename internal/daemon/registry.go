@@ -25,6 +25,7 @@ type Registry struct {
 	mu       sync.Mutex
 	sessions map[string]proto.SessionInfo
 	subs     map[string]*sub
+	onGone   func(id string) // bajo mu; ver SetOnGone
 }
 
 type sub struct{ ch chan proto.Command }
@@ -143,8 +144,20 @@ func (r *Registry) Gone(id string) {
 		close(s.ch)
 		delete(r.subs, id)
 	}
+	hook := r.onGone
 	r.mu.Unlock()
 	r.emit(proto.Envelope{Type: "session_gone", Machine: r.machine, Session: id}, false, time.Now().Add(outBlockMax))
+	if hook != nil {
+		hook(id)
+	}
+}
+
+// SetOnGone registra la función (rápida, no bloqueante) que se llama tras cada
+// Gone; una nueva reemplaza a la anterior.
+func (r *Registry) SetOnGone(fn func(id string)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.onGone = fn
 }
 
 func (r *Registry) Snapshot() []proto.SessionInfo {
