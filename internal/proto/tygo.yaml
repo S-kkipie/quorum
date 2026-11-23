@@ -1,0 +1,3 @@
+packages:
+  - path: "github.com/S-kkipie/quorum/internal/proto"
+    output_path: "../../mod/src/proto.gen.ts"

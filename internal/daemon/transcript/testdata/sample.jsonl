@@ -1,0 +1,6 @@
+{"type":"mode","mode":"normal","sessionId":"s1"}
+{"type":"user","isSidechain":false,"message":{"role":"user","content":"Hola, revisa el archivo de ejemplo"},"timestamp":"2026-01-02T03:04:05.678Z","uuid":"u1"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","thinking":"..."},{"type":"text","text":"Voy a leerlo."},{"type":"tool_use","id":"toolu_A1","name":"Read","input":{"file_path":"/tmp/ejemplo.txt"}}]},"timestamp":"2026-01-02T03:04:06.000Z","uuid":"a1"}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_A1","content":"contenido inventado","is_error":false}]},"timestamp":"2026-01-02T03:04:07.000Z","uuid":"u2"}
+{"type":"user","isMeta":true,"message":{"role":"user","content":"nota interna"},"timestamp":"2026-01-02T03:04:07.500Z"}
+esto no es json {{{

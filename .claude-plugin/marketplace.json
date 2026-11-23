@@ -1,0 +1,1 @@
+{"name":"quorum","description":"Quorum: centro de mando personal para sesiones de Claude Code en varias máquinas.","owner":{"name":"S-kkipie"},"plugins":[{"name":"quorum","source":"./mod"}]}
