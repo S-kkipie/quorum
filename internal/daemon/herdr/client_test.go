@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 
@@ -36,6 +37,25 @@ func TestCallServerError(t *testing.T) {
 	var he *Error
 	if !errors.As(err, &he) || he.Code != "not_found" {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// herdr 0.9.5 responde pane_not_found (y workspace_not_found, tab_not_found...);
+// versiones viejas, not_found.
+func TestIsNotFound(t *testing.T) {
+	for code, want := range map[string]bool{
+		"not_found": true, "pane_not_found": true, "workspace_not_found": true, "tab_not_found": true,
+		"agent_not_ready": false, "unknown_method": false, "found": false, "": false,
+	} {
+		if got := IsNotFound(&Error{Code: code}); got != want {
+			t.Errorf("IsNotFound(%q) = %v", code, got)
+		}
+	}
+	if IsNotFound(errors.New("not_found")) || IsNotFound(nil) {
+		t.Error("solo errores de herdr")
+	}
+	if !IsNotFound(fmt.Errorf("envuelto: %w", &Error{Code: "pane_not_found"})) {
+		t.Error("debe ver errores envueltos")
 	}
 }
 

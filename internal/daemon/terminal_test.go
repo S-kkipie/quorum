@@ -253,11 +253,14 @@ func TestTermWatchEmitsOnlyOnChange(t *testing.T) {
 	require.Equal(t, proto.TermFrame{Pane: "w1:p1", Cols: 80, Rows: 24, ANSI: "uno"}, got[0])
 	require.Equal(t, "dos", got[1].ANSI)
 
-	// renovar el lease no arranca un segundo vigilante ni repite frames
+	// renovar el lease no arranca un segundo vigilante; reenvía el frame actual
+	// una sola vez (ver TestTermWatchResendsOnRenew)
 	watch(t, ctx, h, reg, "w1:p1")
 	n := reads.Load()
 	time.Sleep(50 * time.Millisecond)
-	require.Empty(t, frames(reg))
+	got = frames(reg)
+	require.Len(t, got, 1)
+	require.Equal(t, "dos", got[0].ANSI)
 	require.Less(t, reads.Load()-n, int32(20)) // ~10 lecturas en 50 ms con un solo vigilante
 }
 
@@ -283,7 +286,7 @@ func TestTermWatchClosed(t *testing.T) {
 	var reads atomic.Int32
 	f.Handle("pane.read", func(json.RawMessage) (any, string) {
 		if reads.Add(1) > 2 {
-			return nil, "not_found"
+			return nil, "pane_not_found" // el código real de herdr 0.9.5
 		}
 		return map[string]any{"read": map[string]any{"text": "hola"}}, ""
 	})
@@ -301,6 +304,35 @@ func TestTermWatchClosed(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	require.Equal(t, n, reads.Load())
 	require.Equal(t, 0, h.watching())
+}
+
+// Al reabrir la vista, la app descarta frames viejos: cada term_watch hace que
+// el vigilante vuelva a mandar el frame actual aunque no haya cambiado.
+func TestTermWatchResendsOnRenew(t *testing.T) {
+	fastTerm(t, time.Minute)
+	f := newTermFake(t)
+	reads := readSeq(f, "igual")
+	h := termHost(t, f.Socket)
+	reg := NewRegistry("m1")
+	ctx := linkCtx(t)
+	watch(t, ctx, h, reg, "w1:p1")
+	var got []proto.TermFrame
+	require.Eventually(t, func() bool {
+		got = append(got, frames(reg)...)
+		return len(got) == 1
+	}, 3*time.Second, 5*time.Millisecond)
+	n := reads.Load()
+	require.Eventually(t, func() bool { return reads.Load() >= n+5 }, 3*time.Second, 5*time.Millisecond)
+	require.Empty(t, frames(reg)) // sin cambios, sin frames
+	watch(t, ctx, h, reg, "w1:p1")
+	require.Eventually(t, func() bool {
+		got = append(got, frames(reg)...)
+		return len(got) == 2
+	}, 3*time.Second, 5*time.Millisecond)
+	require.Equal(t, got[0], got[1])
+	require.Equal(t, 1, h.watching())
+	time.Sleep(50 * time.Millisecond)
+	require.Empty(t, frames(reg)) // y vuelve a callar
 }
 
 func TestTermWatchLeaseExpires(t *testing.T) {
@@ -562,7 +594,7 @@ func TestRPCTimeoutMessage(t *testing.T) {
 func TestTermWatchClosedNotDroppable(t *testing.T) {
 	fastTerm(t, time.Minute)
 	f := newTermFake(t)
-	f.Handle("pane.read", func(json.RawMessage) (any, string) { return nil, "not_found" })
+	f.Handle("pane.read", func(json.RawMessage) (any, string) { return nil, "pane_not_found" })
 	h := termHost(t, f.Socket)
 	reg := NewRegistry("m1")
 	for len(reg.out) < cap(reg.out) {

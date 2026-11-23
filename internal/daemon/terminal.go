@@ -429,18 +429,13 @@ func rpcTermClose(ctx context.Context, h *Host, params json.RawMessage) (any, er
 	case got != tid:
 		return nil, errNotOwnTerm // id reusado: ese panel ya no es el que abrió Quorum
 	}
-	if err := h.Herdr.ClosePane(ctx, pane); err != nil && !isNotFound(err) {
+	if err := h.Herdr.ClosePane(ctx, pane); err != nil && !herdr.IsNotFound(err) {
 		return nil, err
 	}
 	if err := h.Terms.forget(pane); err != nil {
 		log.Printf("terminal: no se pudo olvidar %s: %v", pane, err)
 	}
 	return struct{}{}, nil
-}
-
-func isNotFound(err error) bool {
-	var he *herdr.Error
-	return errors.As(err, &he) && he.Code == "not_found"
 }
 
 // trimFront deja s en max bytes como mucho quitando líneas del principio.
@@ -467,6 +462,7 @@ type termWatch struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	until  time.Time // bajo Host.wmu
+	resend bool      // bajo Host.wmu: manda el frame actual aunque no haya cambiado
 }
 
 // watch arranca o renueva el vigilante de pane. link es el ctx del enlace con el hub.
@@ -479,6 +475,9 @@ func (h *Host) watch(link context.Context, reg *Registry, pane string) {
 	until := time.Now().Add(termLease)
 	if w := h.watches[pane]; w != nil && w.ctx.Err() == nil {
 		w.until = until
+		// la app ignora frames anteriores a su montaje: cada term_watch (al abrir
+		// la vista y cada 5 s) recibe el frame actual aunque no haya cambiado.
+		w.resend = true
 		return
 	}
 	ctx, cancel := context.WithCancel(link)
@@ -499,6 +498,15 @@ func (h *Host) alive(w *termWatch, pane string, closed bool) bool {
 	}
 	w.cancel()
 	return false
+}
+
+// takeResend dice si hay que reenviar el frame actual y baja la marca.
+func (h *Host) takeResend(w *termWatch) bool {
+	h.wmu.Lock()
+	defer h.wmu.Unlock()
+	r := w.resend
+	w.resend = false
+	return r
 }
 
 // watching cuenta los vigilantes activos (para tests).
@@ -549,16 +557,22 @@ func (h *Host) runWatch(w *termWatch, reg *Registry, pane string) {
 		if lines <= 0 {
 			lines = 200
 		}
+		resend := h.takeResend(w)
 		err := call(func(ctx context.Context) (err error) {
 			text, err = h.Herdr.ReadPane(ctx, pane, "visible", lines)
 			return err
 		})
+		if err != nil && resend {
+			h.wmu.Lock()
+			w.resend = true // no se pudo leer: que lo intente el próximo poll
+			h.wmu.Unlock()
+		}
 		switch {
-		case isNotFound(err):
+		case herdr.IsNotFound(err):
 			emit(proto.TermFrame{Pane: pane, Closed: true})
 			h.alive(w, pane, true)
 			return
-		case err == nil && (!sent || text != last || cols != sentCols || rows != sentRs):
+		case err == nil && (!sent || resend || text != last || cols != sentCols || rows != sentRs):
 			emit(proto.TermFrame{Pane: pane, Cols: cols, Rows: rows, ANSI: trimFront(text, termFrameMax)})
 			last, sentCols, sentRs, sent = text, cols, rows, true
 		}

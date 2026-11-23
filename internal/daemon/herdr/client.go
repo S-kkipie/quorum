@@ -5,10 +5,12 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"time"
 )
@@ -22,6 +24,14 @@ type Client struct{ Socket string }
 type Error struct{ Code, Message string }
 
 func (e *Error) Error() string { return "herdr: " + e.Code + ": " + e.Message }
+
+// IsNotFound dice si err es un error de herdr por algo que no existe: not_found
+// o cualquier código <algo>_not_found (herdr 0.9.5 responde pane_not_found,
+// workspace_not_found, tab_not_found...).
+func IsNotFound(err error) bool {
+	var he *Error
+	return errors.As(err, &he) && (he.Code == "not_found" || strings.HasSuffix(he.Code, "_not_found"))
+}
 
 type Workspace struct {
 	ID      string `json:"workspace_id"`
