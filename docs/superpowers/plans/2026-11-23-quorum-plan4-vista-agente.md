@@ -63,6 +63,28 @@
 
 ---
 
+### Task 0: Translate the whole repository to English (owner request, before anything else)
+
+The owner wants EVERYTHING in the repo in English: code comments, user-facing UI strings, error messages (API and daemon), log lines, test names and expectations, README, docs, specs, plans, scripts' output, the plugin skill and descriptions. Done in five batches (0a–0e), each its own commit with tests green. Identifiers are already English; keep them. From now on commit messages are English.
+
+**Data values (ruling — they are stored, so they need a migration):**
+- Normalized ticket statuses `por_hacer|en_curso|en_review|hecho|bloqueado` → `todo|in_progress|in_review|done|blocked`.
+- Proposal statuses `pendiente|enviando|aprobada|rechazada|fallida` → `pending|sending|approved|rejected|failed`.
+- Hub store migration (idempotent): rewrite `tickets.status`, `proposals.status`, `proposals.body` where `kind='status'`, and the values inside each project's connector `settings.statusMap` JSON.
+- The connector status normalizer accepts the old Spanish values as aliases (so an old exec connector keeps working).
+- Docs file names in Spanish are renamed to English (e.g. `docs/conectores.md` → `docs/connectors.md`, `docs/e2e-etapa1.md` → `docs/e2e-stage1.md`); specs/plans keep their dated names but their slugs become English (`…-quorum-agent-view-design.md`, `…-quorum-plan4-agent-view.md`, etc.); update every reference.
+- The skill in Task 9 is named `local-artifacts` (folder `mod/skills/local-artifacts/`).
+- This plan's own Spanish UI strings (Global Constraints and tasks) are translated in batch 0e; the English versions become the binding values.
+
+**Batches:**
+- **0a Go hub** (`internal/hub/**`, `internal/proto`, `cmd/quorum-hub`): comments, API error strings, logs, tests; the status migration + aliases; `make proto` (generated TS comments follow).
+- **0b Go daemon** (`internal/daemon/**`, `cmd/quorumd`): comments, RPC error strings (e.g. "la terminal está desactivada en esta máquina" → "terminal is disabled on this machine"), logs, tests. The hub and app match daemon error strings only by passing them through — check `git grep` for any string comparison across packages and update both sides.
+- **0c Mod** (`mod/**`): comments, `/quorum` command output, permission dialog labels (`Permitir`/`Denegar` → `Allow`/`Deny`), deny reason (`Sin respuesta en 19 min (Quorum)` → `No answer in 19 min (Quorum)`), the recap prompt (ask for a short English phrase; non-answer filters accept English and Spanish), `ERROR_ANSWER`, plugin description; bump plugin version to `0.1.3`.
+- **0d App** (`app/src/**`, `app/index.html`): every UI string and test expectation; status labels follow the new data values.
+- **0e Docs & scripts** (`README.md`, `docs/**`, `scripts/**`, this plan and the agent-view spec included): translate, rename files per the ruling, fix links.
+
+**Each batch:** `git grep -nP '[áéíóúñ¿¡]'` over the batch's paths must return nothing except intentional data (e.g. a test fixture proving Unicode handling, or the Spanish status aliases); the full relevant test suite passes; commit `chore(i18n): translate <area> to English`.
+
 ### Task 1: `ToolStart.Input` desde el mod
 
 **Files:**
