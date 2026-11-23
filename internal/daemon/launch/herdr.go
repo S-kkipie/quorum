@@ -224,4 +224,4 @@ func RunHerdrCause(ctx context.Context, c *herdr.Client, ws *Workspaces, req pro
 }
 
 // ErrHerdrUnavailable: herdr did not answer before touching anything; the fallback can be used.
-var ErrHerdrUnavailable = errors.New("herdr no disponible")
+var ErrHerdrUnavailable = errors.New("herdr unavailable")

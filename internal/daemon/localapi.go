@@ -22,7 +22,7 @@ func NewLocalAPIWithReload(reg *Registry, token, version string, reload func() e
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/reload", auth(token, func(w http.ResponseWriter, r *http.Request) {
 		if reload == nil {
-			http.Error(w, "reload no disponible", http.StatusNotImplemented)
+			http.Error(w, "reload not available", http.StatusNotImplemented)
 			return
 		}
 		if err := reload(); err != nil {

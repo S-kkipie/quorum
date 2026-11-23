@@ -41,7 +41,7 @@ Avoid the generic AI look:
 
 ## Save and finish
 
-1. Save to `<project root>/.claude/quorum/artifacts/<clear-name>.html` (create the folder; use a short descriptive kebab-case name), unless the user asks for another path.
+1. Save to `<project root>/.claude/quorum/artifacts/<clear-name>.html` (short descriptive kebab-case name), unless the user asks for another path. Always write it with the `Write` tool (it creates missing folders) and edit it with `Edit`; never through shell redirection or heredocs, so Quorum can show it as an artifact.
 2. Read the file back before finishing: check it is complete, has no external URLs, tables and long words do not overflow at 390 px, and both themes have readable contrast.
 3. In your final answer, give the file path and a one-line summary of what the page shows.
 
