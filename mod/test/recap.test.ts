@@ -111,3 +111,26 @@ test('una frase buena se sigue aceptando', async () => {
   r.onFirstPrompt('x'); await tick(); await tick()
   expect(updates).toEqual(['Migrando el login a OAuth'])
 })
+
+test('primer prompt ausente de messages() se añade como último Usuario', async () => {
+  const { r, calls } = mk(async () => 'Algo')
+  ;(r as unknown as { deps: { messages: () => Promise<{ role: string; text: string }[]> } }).deps.messages =
+    async () => [{ role: 'user', text: 'antes' }, { role: 'assistant', text: 'resp previa' }]
+  r.onFirstPrompt('prompt nuevo'); await tick(); await tick()
+  expect(calls[0]!.trimEnd().endsWith('Usuario: prompt nuevo')).toBe(true)
+  expect(calls[0]).toContain('antes')
+})
+
+test('onTurnEnd añade la respuesta si falta y no duplica si ya está', async () => {
+  const mkWith = (rows: { role: string; text: string }[]) => {
+    const m = mk(async () => 'Algo')
+    ;(m.r as unknown as { deps: { messages: () => Promise<typeof rows> } }).deps.messages = async () => rows
+    return m
+  }
+  const a = mkWith([{ role: 'user', text: 'p' }])
+  a.r.onTurnEnd('p', 'la respuesta'); await tick(); await tick()
+  expect(a.calls[0]!.trimEnd().endsWith('Asistente: la respuesta')).toBe(true)
+  const b = mkWith([{ role: 'user', text: 'p' }, { role: 'assistant', text: 'la respuesta' }])
+  b.r.onTurnEnd('p', 'la respuesta'); await tick(); await tick()
+  expect(b.calls[0]!.match(/la respuesta/g)!.length).toBe(1)
+})

@@ -105,7 +105,14 @@ export class Recap {
   private async run(prompt: string, answer: string): Promise<void> {
     try {
       let ctx = ''
-      try { ctx = buildContext((await this.deps.messages?.()) ?? []) } catch { /* sin contexto: cae al fallback */ }
+      try {
+        const msgs = [...((await this.deps.messages?.()) ?? [])]
+        // el prompt (y la respuesta) que disparan el recap siempre van en el contexto
+        const lastOf = (role: string) => msgs.filter(m => m.role === role && m.text?.trim()).at(-1)?.text.trim()
+        if (prompt.trim() && msgs.length && lastOf('user') !== prompt.trim()) msgs.push({ role: 'user', text: prompt })
+        if (answer.trim() && msgs.length && lastOf('assistant') !== answer.trim()) msgs.push({ role: 'assistant', text: answer })
+        ctx = buildContext(msgs)
+      } catch { /* sin contexto: cae al fallback */ }
       const text = ctx
         ? `${INSTRUCTION}\n\nConversación reciente (lo más nuevo al final):\n${ctx}`
         : `${INSTRUCTION}\n\nÚltimo mensaje del usuario:\n${prompt.slice(0, IN_MAX)}\n\nRespuesta:\n${answer.slice(0, IN_MAX)}`
