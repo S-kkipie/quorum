@@ -1,6 +1,6 @@
 {
   "name": "quorum",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "author": { "name": "S-kkipie" },
   "description": "Quorum: centro de mando personal para tus sesiones de Claude Code en varias máquinas. Conecta cada sesión con el daemon quorumd local.",
   "keywords": ["claude-code-mod", "claude-code-plugin", "sessions"]

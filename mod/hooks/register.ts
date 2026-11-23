@@ -93,6 +93,11 @@ export const register: Register = on => {
         now: () => Date.now(),
         sleep: ms => $.clock.sleep(ms),
         update: recap => link.update({ recap }),
+        messages: async () => {
+          // optional: sin $.session.messages (builds viejos) se usa último prompt + respuesta
+          const rows = await optional(() => $.session.messages({ last: 30 }), undefined)
+          return Array.isArray(rows) ? rows.map(m => ({ role: m.role, text: m.text })) : []
+        },
         complete: async prompt => {
           // optional: sin $.model.complete (builds viejos) no hay recap y tampoco error
           const res = await optional(() => $.model.complete({ model: 'haiku', prompt, maxTokens: 40, timeoutMs: 8000 }), undefined)

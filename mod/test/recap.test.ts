@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { Recap, cleanRecap } from '../src/recap'
+import { Recap, buildContext, cleanRecap } from '../src/recap'
 
 const tick = () => new Promise<void>(r => setTimeout(r, 0))
 
@@ -67,4 +67,47 @@ test('complete que tarda más del límite no actualiza', async () => {
   r.onFirstPrompt('hola')
   await new Promise(res => setTimeout(res, 150))
   expect(updates).toEqual([])
+})
+
+test('buildContext: acotado, más nuevo al final, sin herramientas', () => {
+  const msgs = Array.from({ length: 10 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', text: `m${i} ` + 'x'.repeat(1000) }))
+  const withTool = [...msgs, { role: 'assistant', text: '' }, { role: 'user', text: '   ' }]
+  const c = buildContext(withTool)
+  expect(Array.from(c).length).toBeLessThanOrEqual(4000)
+  expect(c).toContain('m9 ')
+  expect(c).not.toContain('m3 ')
+  expect(c.indexOf('m8 ')).toBeLessThan(c.indexOf('m9 '))
+  expect(buildContext([{ role: 'assistant', text: 'a'.repeat(700) }]).length).toBeLessThan(620)
+})
+
+test('el prompt usa el contexto de messages y no el último prompt suelto', async () => {
+  const { r, calls } = mk(async () => 'Migrando el login')
+  ;(r as unknown as { deps: { messages: () => Promise<{ role: string; text: string }[]> } }).deps.messages =
+    async () => [{ role: 'user', text: 'migra el login' }, { role: 'assistant', text: 'listo' }, { role: 'user', text: 'ya esta' }]
+  r.onFirstPrompt('ya esta'); await tick(); await tick()
+  expect(calls[0]).toContain('migra el login')
+  expect(calls[0]).toContain('`-`')
+})
+
+test('sin API de messages (o que falla) cae a prompt + respuesta', async () => {
+  const { r, calls, t } = mk(async () => 'Algo')
+  ;(r as unknown as { deps: { messages: () => Promise<never> } }).deps.messages = async () => { throw new Error('x') }
+  r.onTurnEnd('mi prompt', 'mi respuesta'); await tick(); await tick()
+  expect(calls[0]).toContain('mi prompt')
+  expect(calls[0]).toContain('mi respuesta')
+  void t
+})
+
+test('no-respuestas se rechazan y no llaman a update', async () => {
+  for (const bad of ['-', '"-"', '', 'No hay contexto suficiente sobre la tarea', 'Sin contexto', 'No está claro', 'No se puede determinar', 'No sé', 'No context', 'Unclear', 'Cannot determine the task', 'Not enough information']) {
+    const { r, updates } = mk(async () => bad)
+    r.onFirstPrompt('x'); await tick(); await tick()
+    expect(updates).toEqual([])
+  }
+})
+
+test('una frase buena se sigue aceptando', async () => {
+  const { r, updates } = mk(async () => 'Migrando el login a OAuth')
+  r.onFirstPrompt('x'); await tick(); await tick()
+  expect(updates).toEqual(['Migrando el login a OAuth'])
 })
