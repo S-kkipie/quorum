@@ -232,6 +232,7 @@ export const register: Register = on => {
 
   const h = makeHandlers(() => quorum.link, {
     fromDevice: t => quorum.control?.takeFromDevice(t) ?? false,
+    fromCommand: (n, a) => quorum.control?.takeCommand(n, a) ?? false,
     background: () => quorum.control?.background(),
   })
 

@@ -183,6 +183,22 @@ type CallResult = { deny?: string; result?: unknown; context?: readonly string[]
 type CheckInput = { tool: string; input: unknown; tool_use_id?: string; agentId?: string }
 
 const FROM_DEVICE_MAX = 50
+/** How long after it settled a device command may still claim its turn's command markup (takeCommand). */
+export const COMMAND_CLAIM_MS = 60_000
+/**
+ * Claude Code trims a `prompt.submit` text and refuses one that then starts with `/` (it would run
+ * a command as the user). A leading zero-width space (not whitespace to `trim`) keeps it literal.
+ */
+export const LITERAL_MARK = '\u200b'
+const literal = (text: string) => (text.trimStart().startsWith('/') ? LITERAL_MARK + text : text)
+const unescape = (text: string) => (text.startsWith(LITERAL_MARK) ? text.slice(LITERAL_MARK.length) : text)
+/**
+ * The text some built-ins return, instead of failing, when the run did not come from the person
+ * (Claude Code 2.1.331: /recap "only runs when you ask for it yourself in this session",
+ * /send-to-project "runs only when you type it yourself").
+ */
+export const REFUSED = /only runs when you ask for it yourself|runs only when you type it yourself/i
+export const REFUSED_ERROR = 'This command only runs when typed in the terminal.'
 const DETAIL_MAX = 4000
 
 function randomId(): string {
@@ -198,6 +214,9 @@ export function makeControl(deps: ControlDeps) {
   let turnId: string | undefined
   const midTurn: string[] = []
   const fromDevice: string[] = []
+  // device commands whose turn may start with Claude Code's command markup (takeCommand); `settledAt` once it settled
+  const ranCommands: Array<{ key: string; settledAt?: number }> = []
+  const commandKey = (name: string, args: string) => `${name}\n${String(args ?? '').trim()}`
   const tasks = new Set<string>() // known live background tasks and subagents
   const wakes = new Map<string, Wake>() // scheduled wake-ups (ScheduleWakeup, CronCreate)
   const now = () => { try { return deps.now?.() ?? Date.now() } catch { return Date.now() } }
@@ -212,7 +231,8 @@ export function makeControl(deps: ControlDeps) {
   const info = (text: string) => emit('info', { text })
 
   /** Sends the prompt as from the device; false if the submit failed. */
-  const submitDevice = async (text: string): Promise<boolean> => {
+  const submitDevice = async (original: string): Promise<boolean> => {
+    const text = literal(original)
     fromDevice.push(text)
     if (fromDevice.length > FROM_DEVICE_MAX) fromDevice.shift()
     return deps.submit(text).then(() => true, err => {
@@ -246,13 +266,22 @@ export function makeControl(deps: ControlDeps) {
       const bad = check()
       if (bad) { send({ status: 'failed', error: bad }); return }
     }
+    const ran: { key: string; settledAt?: number } = { key: commandKey(base.name, base.args) }
+    ranCommands.push(ran)
+    if (ranCommands.length > FROM_DEVICE_MAX) ranCommands.shift()
     await settle(send, () => deps.commandRun!(name, args), r => {
+      ran.settledAt = now()
       if ('err' in r) {
         send({ status: 'failed', error: `Could not run /${base.name}: ${errText(r.err)}` })
         settled(name, args, false)
         return
       }
       const text = (r.value as { text?: unknown } | undefined)?.text
+      if (typeof text === 'string' && REFUSED.test(text)) {
+        send({ status: 'failed', error: REFUSED_ERROR })
+        settled(name, args, false)
+        return
+      }
       send(typeof text === 'string' && text ? { status: 'done', text: text.slice(0, COMMAND_TEXT_MAX) } : { status: 'done' })
       settled(name, args, true)
     }, { waitMs: commandWaitMs(name), queue: true })
@@ -604,10 +633,28 @@ export function makeControl(deps: ControlDeps) {
     takeFromDevice(text: string): boolean {
       // use-haiku / think-hard strip a leading `_` / `+` (and the spaces after it) before the turn starts
       const unmarked = (t: string) => (/^(_(?!_)|\+)/.test(t) ? t.slice(1).trimStart() : t)
+      // a `/` prompt was sent with LITERAL_MARK: the turn may start with or without it
+      const plain = unescape(text)
       let i = fromDevice.indexOf(text)
-      if (i < 0) i = fromDevice.findIndex(t => unmarked(t) === text)
+      if (i < 0) i = fromDevice.findIndex(t => unescape(t) === plain || unmarked(unescape(t)) === plain)
       if (i < 0) return false
       fromDevice.splice(i, 1)
+      return true
+    },
+
+    /**
+     * A turn started with the command markup of `/name args`: true (and consumed, once) when a
+     * device just ran that command (still running, or settled less than COMMAND_CLAIM_MS ago).
+     */
+    takeCommand(name: string, args: string): boolean {
+      const t = now()
+      for (let j = ranCommands.length - 1; j >= 0; j--) {
+        const s = ranCommands[j]!.settledAt
+        if (s !== undefined && t - s > COMMAND_CLAIM_MS) ranCommands.splice(j, 1)
+      }
+      const i = ranCommands.findIndex(r => r.key === commandKey(name, args))
+      if (i < 0) return false
+      ranCommands.splice(i, 1)
       return true
     },
 

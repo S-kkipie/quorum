@@ -87,7 +87,9 @@ test('built-ins are an allowlist: interactive ones and unknown ones are terminal
     'memory', 'theme', 'vim', 'terminal-setup', 'statusline', 'export', 'bug', 'feedback', 'rewind',
     'diff', 'usage', 'artifacts', 'workflows', 'session', 'install', 'import', 'rename', 'color', 'branch',
     'fork', 'btw', 'plan', 'goal', 'background', 'advisor', 'ultraplan', 'ultrareview', 'subtask', 'cd',
-    'exit', 'context', 'restart', 'voice', 'stickers', 'radio', 'keybindings', 'model', 'effort', 'output-style']) {
+    'exit', 'context', 'restart', 'voice', 'stickers', 'radio', 'keybindings', 'model', 'effort', 'output-style',
+    // refuses a plugin-origin run (2.1.331: "/recap only runs when you ask for it yourself")
+    'recap']) {
     expect(BUILTIN_RUNNABLE.has(n), n).toBe(false)
     const m = byName(toSessionCommands([{ name: n, description: '', source: 'builtin' }] as never, []))
     expect(m[n]!.terminalOnly, n).toBe(true)
@@ -96,7 +98,7 @@ test('built-ins are an allowlist: interactive ones and unknown ones are terminal
   const future = byName(toSessionCommands([{ name: 'brand-new-thing', description: '', source: 'builtin' }] as never, []))
   expect(future['brand-new-thing']!.terminalOnly).toBe(true)
   // the non-interactive ones run
-  for (const n of ['clear', 'compact', 'recap', 'reload-plugins', 'init', 'batch', 'debug']) {
+  for (const n of ['clear', 'compact', 'reload-plugins', 'init', 'batch', 'debug']) {
     expect(byName(toSessionCommands([{ name: n, description: '', source: 'builtin' }] as never, []))[n]!.terminalOnly, n).toBe(false)
   }
   // a bundled skill (in the skill listing) runs even if not in the allowlist
@@ -355,6 +357,20 @@ test('command: during a turn → queued, then done when run settles (same id)', 
   await p
   expect(f.runs).toEqual([['compact', 'keep it']])
   expect(f.cmds().map(c => [c.id, c.status, c.text])).toEqual([['id1', 'queued', undefined], ['id1', 'done', 'Compacted']])
+})
+
+// Claude Code 2.1.331 answers some plugin-origin runs with a refusal text instead of an error
+test('command: a built-in refusing a plugin-origin run → failed, not done', async () => {
+  for (const text of [
+    '/recap only runs when you ask for it yourself in this session: from the terminal, the Claude app or claude.ai/code.',
+    '/send-to-project posts in a project as you, so it runs only when you type it yourself.',
+  ]) {
+    const ok: boolean[] = []
+    const f = fake({ run: async () => ({ text }), settled: v => ok.push(v) })
+    await f.control.handle(cmd({ type: 'command', command: 'compact', args: '' }))
+    expect(f.cmds().map(c => [c.status, c.error, c.text])).toEqual([['failed', 'This command only runs when typed in the terminal.', undefined]])
+    expect(ok).toEqual([false])
+  }
 })
 
 const flush = () => new Promise(r => setTimeout(r, 0))

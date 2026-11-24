@@ -45,17 +45,37 @@ type Done = {
 }
 
 /**
+ * A slash command's turn starts with Claude Code's command markup (`<command-message>x</command-message>`,
+ * `<command-name>/x</command-name>`, `<command-args>a b</command-args>`, in any order): its name
+ * (without the `/`) and trimmed args; undefined for any other text.
+ */
+export function commandOf(text: string): { name: string; args: string } | undefined {
+  if (typeof text !== 'string' || !text.startsWith('<command-')) return undefined
+  const name = /<command-name>\/?([^<\s]+)<\/command-name>/.exec(text)?.[1]
+  if (!name) return undefined
+  const args = /<command-args>([\s\S]*?)<\/command-args>/.exec(text)?.[1] ?? ''
+  return { name, args: args.trim() }
+}
+
+/**
  * Pure handlers of the session hooks. `getLink` is queried on every call
  * (the Link is born in session.start); `turnComplete` receives `getPct` for the context percentage.
  * `opts.fromDevice(text)` says (and consumes) whether the prompt came from the device: its
  * `user` was already emitted by the control, so turnStart does not repeat it.
+ * A command turn (Claude Code's command markup) emits `user` as `{text: '/name args', command}`;
+ * `opts.fromCommand(name, args)` says (and consumes) whether a device just ran it: then
+ * `device: true` (the hub does not mark the session seen; the app shows the command card instead).
  * `opts.background()` says what is left when a main turn ends (live background tasks, next
  * wake-up): with any, the session is `background` instead of `idle`.
  * Nothing here throws or waits on anything slow.
  */
 export function makeHandlers(
   getLink: () => Link | undefined,
-  opts: { fromDevice?: (text: string) => boolean; background?: () => BackgroundInfo | undefined } = {},
+  opts: {
+    fromDevice?: (text: string) => boolean
+    fromCommand?: (name: string, args: string) => boolean
+    background?: () => BackgroundInfo | undefined
+  } = {},
 ) {
   const safe = (fn: (l: Link) => void): void => {
     try {
@@ -80,7 +100,12 @@ export function makeHandlers(
       safe(l => {
         if (full(l)) {
           l.emit({ kind: 'turn_start', data: {} })
-          if (!opts.fromDevice?.(e.text)) {
+          const c = commandOf(e.text)
+          if (c) {
+            const text = c.args ? `/${c.name} ${c.args}` : `/${c.name}`
+            const device = opts.fromCommand?.(c.name, c.args) === true
+            l.emit({ kind: 'user', data: device ? { text, command: c, device: true } : { text, command: c } })
+          } else if (!opts.fromDevice?.(e.text)) {
             l.emit({ kind: 'user', data: e.images?.length ? { text: e.text, images: e.images } : { text: e.text } })
           }
         }

@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { contextPct, ERROR_ANSWER, fromPlugin, makeHandlers, newStep, stepHook, summarize, toolHook } from '../src/events'
+import { commandOf, contextPct, ERROR_ANSWER, fromPlugin, makeHandlers, newStep, stepHook, summarize, toolHook } from '../src/events'
 import type { Link } from '../src/link'
 
 function fakeLink(role = 'work') {
@@ -263,4 +263,22 @@ test('Stop pressed in Claude Code on a running turn: its aborted turn_end carrie
   h.sessionStop(true)
   h.turnComplete({ answer: 'done', reason: 'answer' })
   expect(end().stopped).toBeUndefined()
+})
+
+test('commandOf: parses Claude Code command markup, anything else is undefined', () => {
+  expect(commandOf('<command-message>humanizer</command-message>\n<command-name>/humanizer</command-name>\n<command-args>a\nb</command-args>'))
+    .toEqual({ name: 'humanizer', args: 'a\nb' })
+  expect(commandOf('<command-name>/superpowers:brainstorming</command-name>\n<command-message>superpowers:brainstorming</command-message>'))
+    .toEqual({ name: 'superpowers:brainstorming', args: '' })
+  expect(commandOf('<command-name>/init</command-name>\n<command-args>  </command-args>')).toEqual({ name: 'init', args: '' })
+  expect(commandOf('hello <command-name>/x</command-name>')).toBe(undefined)
+  expect(commandOf('/x args')).toBe(undefined)
+  expect(commandOf('')).toBe(undefined)
+})
+
+test('turnStart: a command turn emits /name args with command; no fromCommand → no device flag', () => {
+  const f = fakeLink()
+  const h = makeHandlers(() => f.link)
+  h.turnStart({ text: '<command-message>humanizer</command-message>\n<command-name>/humanizer</command-name>\n<command-args>fix this</command-args>' })
+  expect(f.evs.filter(e => e.kind === 'user').map(e => e.data)).toEqual([{ text: '/humanizer fix this', command: { name: 'humanizer', args: 'fix this' } }])
 })

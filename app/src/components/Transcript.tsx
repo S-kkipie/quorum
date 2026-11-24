@@ -82,7 +82,13 @@ export default function Transcript({ events, base = '', machine = '', sessionId 
         {hasMore && <button type="button" onClick={onLoadMore} className="mx-auto mb-2 block min-h-11 text-xs text-zinc-500 hover:text-zinc-300">Load earlier</button>}
         {rows.map((r) => {
           switch (r.t) {
-            case 'user': return (
+            case 'user': return r.command ? (
+              <Message key={`u${r.seq}`} from="user" role="article" aria-label="You" className="my-3 max-w-[85%]">
+                <MessageContent data-testid="command-prompt" className="whitespace-pre-wrap break-all font-mono text-xs text-zinc-200 group-[.is-user]:rounded-xl group-[.is-user]:rounded-br-md group-[.is-user]:bg-blue-600/20 group-[.is-user]:px-3 group-[.is-user]:py-1.5">
+                  {r.command.args ? `/${r.command.name} ${r.command.args}` : `/${r.command.name}`}
+                </MessageContent>
+              </Message>
+            ) : (
               <Message key={`u${r.seq}`} from="user" role="article" aria-label="You" className="my-3 max-w-[85%]">
                 <MessageContent className="whitespace-pre-wrap break-words text-zinc-100 group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:bg-blue-600/25 group-[.is-user]:px-3.5 group-[.is-user]:py-2">
                   {r.text}

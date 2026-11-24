@@ -31,14 +31,23 @@ export function pastedImagesOf(v: unknown): PastedImage[] | undefined {
   return out.length ? out : undefined
 }
 
+/** A slash command the user event stands for (the mod parses Claude Code's command markup). */
+export type CommandRef = { name: string; args: string }
+
 export type Item =
   | TurnItem
-  | { t: 'user' | 'assistant' | 'info'; seq: number; text: string; agent?: string; images?: PastedImage[] }
+  | { t: 'user' | 'assistant' | 'info'; seq: number; text: string; agent?: string; images?: PastedImage[]; command?: CommandRef }
   | ToolItem
   | ReadsItem
   | AgentItem
   | ArtifactItem
   | CommandItem
+
+/** How many timeline items away a device command's card may be to stand in for its user event. */
+const CARD_NEAR = 200
+
+const commandRefOf = (v: any): CommandRef | undefined =>
+  v && typeof v === 'object' && typeof v.name === 'string' && v.name ? { name: v.name, args: typeof v.args === 'string' ? v.args : '' } : undefined
 
 const VIEWABLE = new Set(['html', 'htm', 'md', 'svg', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'pdf'])
 const EDIT_VIEWABLE = new Set(['html', 'htm', 'svg'])
@@ -217,6 +226,31 @@ function groupState(ts: ToolItem[]): ToolState {
 }
 
 /**
+ * Drops (in place) the user event of each command a device ran when a card of the same command
+ * is nearby: the card already shows it. Each card stands in for one user event, the closest
+ * (same args first); a device command without a card keeps its user event.
+ */
+function hideDeviceCommands(flat: Item[], device: Set<Item>): void {
+  if (!device.size) return
+  const used = new Set<Item>()
+  const drop = new Set<Item>()
+  flat.forEach((it, i) => {
+    if (!device.has(it) || it.t !== 'user' || !it.command) return
+    const { name, args } = it.command
+    let best = -1
+    let bestScore = Infinity
+    for (let j = Math.max(0, i - CARD_NEAR); j < Math.min(flat.length, i + CARD_NEAR + 1); j++) {
+      const c = flat[j]
+      if (c.t !== 'command' || c.name !== name || used.has(c)) continue
+      const score = Math.abs(j - i) + (c.args.trim() === args.trim() ? 0 : CARD_NEAR * 2)
+      if (score < bestScore) { best = j; bestScore = score }
+    }
+    if (best >= 0) { used.add(flat[best]); drop.add(it) }
+  })
+  for (let i = flat.length - 1; i >= 0; i--) if (drop.has(flat[i])) flat.splice(i, 1)
+}
+
+/**
  * Turns session events (seq order) into timeline items: tool_start/tool_end paired by id,
  * consecutive Reads of the same agent merged, one artifact card per viewable file (the last one wins).
  * `base` is the session's root, else its cwd.
@@ -226,6 +260,8 @@ export function buildTimeline(events: Event[], base: string): Item[] {
   const tools = new Map<string, ToolItem>()
   const agents = new Map<string, AgentItem>()
   const commands = new Map<string, CommandItem>()
+  // user events of commands a device ran: the command card shows them (see hideDeviceCommands)
+  const deviceCommands = new Set<Item>()
   const settle = (t: ToolItem) => { const a = artifactFor(t, base); if (a) flat.push(a) }
 
   for (const e of events) {
@@ -234,7 +270,9 @@ export function buildTimeline(events: Event[], base: string): Item[] {
       case 'user': case 'assistant': case 'info':
       {
         const images = e.kind === 'user' ? pastedImagesOf(d.images) : undefined
-        flat.push({ t: e.kind, seq: e.seq, text: d.text ?? '', agent: d.agent || undefined, ...(images ? { images } : {}) })
+        const command = e.kind === 'user' ? commandRefOf(d.command) : undefined
+        flat.push({ t: e.kind, seq: e.seq, text: d.text ?? '', agent: d.agent || undefined, ...(images ? { images } : {}), ...(command ? { command } : {}) })
+        if (command && d.device === true) deviceCommands.add(flat[flat.length - 1])
       }
         break
       case 'turn_end':
@@ -289,6 +327,8 @@ export function buildTimeline(events: Event[], base: string): Item[] {
       }
     }
   }
+
+  hideDeviceCommands(flat, deviceCommands)
 
   // one card per file: the last one wins
   const lastCard = new Map<string, ArtifactItem>()

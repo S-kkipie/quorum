@@ -91,6 +91,20 @@ test('dedupe: the device prompt emits a single user', async () => {
   expect(f.kinds()).toEqual(['user', 'turn_start', 'status', 'turn_start', 'user', 'status'])
 })
 
+// Claude Code trims a prompt.submit text and refuses one starting with `/`: a zero-width space keeps it literal
+test('a device prompt starting with / (after spaces) is submitted with a leading U+200B; its user event keeps the text', async () => {
+  const f = fake()
+  const h = makeHandlers(() => f.link, { fromDevice: t => f.control.takeFromDevice(t) })
+  await f.control.handle(cmd({ type: 'prompt', text: ' /notacommand reply', mode: 'queue' }))
+  await f.control.handle(cmd({ type: 'prompt', text: 'plain /x', mode: 'queue' }))
+  expect(f.calls).toEqual(['submit:\u200b /notacommand reply', 'submit:plain /x'])
+  // the turn starts with the escaped text (or with it stripped): still recognised as the device's
+  h.turnStart({ text: '\u200b /notacommand reply' })
+  h.turnStart({ text: 'plain /x' })
+  const users = f.evs.filter(e => e.kind === 'user').map(e => e.data)
+  expect(users).toEqual([{ text: ' /notacommand reply', device: true }, { text: 'plain /x', device: true }])
+})
+
 // Plan 7: the hub marks a session seen on a prompt typed in the terminal, never on one sent from a device.
 test('device prompts carry device: true; terminal-typed prompts do not', async () => {
   const f = fake()
@@ -409,4 +423,49 @@ test('a device prompt whose _ or + mark a plugin stripped is still recognised (n
   expect(f.control.takeFromDevice('Reply with ok')).toBe(true)
   expect(f.control.takeFromDevice('think about it')).toBe(true)
   expect(f.control.takeFromDevice('Reply with ok')).toBe(false)
+})
+
+// a slash command's turn starts with Claude Code's command markup
+const markup = (name: string, args: string) =>
+  `<command-message>${name}</command-message>\n<command-name>/${name}</command-name>\n<command-args>${args}</command-args>`
+
+test('a device-run command turn emits a user event with command and device: true; a typed one without device', async () => {
+  const evs: Array<{ kind: string; data: any }> = []
+  const link = { role: 'work', emit: (e: any) => evs.push(e), update: () => {} } as unknown as Link
+  const control = makeControl({
+    getLink: () => link, submit: async () => {}, abort: async () => {}, stopTask: async () => {}, exit: async () => {},
+    sleep: () => new Promise<void>(() => {}),
+    commandRun: async () => ({ text: '' }),
+    commands: () => [{ name: 'humanizer', description: '', source: 'user', plugin: '', group: 'skill', terminalOnly: false }],
+  })
+  const h = makeHandlers(() => link, {
+    fromDevice: t => control.takeFromDevice(t),
+    fromCommand: (n, a) => control.takeCommand(n, a),
+  })
+  await control.handle(cmd({ type: 'command', command: 'humanizer', args: 'make it plain' }))
+  h.turnStart({ text: markup('humanizer', 'make it plain') })
+  // consumed once: the same command typed in the terminal afterwards is the person's
+  h.turnStart({ text: markup('humanizer', 'make it plain') })
+  h.turnStart({ text: markup('humanizer', '') })
+  const users = evs.filter(e => e.kind === 'user').map(e => e.data)
+  expect(users).toEqual([
+    { text: '/humanizer make it plain', command: { name: 'humanizer', args: 'make it plain' }, device: true },
+    { text: '/humanizer make it plain', command: { name: 'humanizer', args: 'make it plain' } },
+    { text: '/humanizer', command: { name: 'humanizer', args: '' } },
+  ])
+})
+
+test('a device command settled long ago no longer claims a typed one', async () => {
+  let t = 1_000_000
+  const evs: Array<{ kind: string; data: any }> = []
+  const link = { role: 'work', emit: (e: any) => evs.push(e), update: () => {} } as unknown as Link
+  const control = makeControl({
+    getLink: () => link, submit: async () => {}, abort: async () => {}, stopTask: async () => {}, exit: async () => {},
+    sleep: () => new Promise<void>(() => {}), now: () => t,
+    commandRun: async () => ({ text: 'Reloaded' }),
+    commands: () => [{ name: 'reload-plugins', description: '', source: 'builtin', plugin: '', group: 'session', terminalOnly: false }],
+  })
+  await control.handle(cmd({ type: 'command', command: 'reload-plugins', args: '' }))
+  t += 10 * 60_000
+  expect(control.takeCommand('reload-plugins', '')).toBe(false)
 })

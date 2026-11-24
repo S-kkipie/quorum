@@ -281,6 +281,19 @@ describe('Transcript: command cards', () => {
     expect(screen.getByTestId('command-output').textContent).toContain('line 10')
     expect(screen.getByRole('button', { name: 'Show less' })).toBeTruthy()
   })
+  it('a command user event renders a compact mono /name args bubble; a device one next to its card renders nothing', () => {
+    render(<Transcript events={[
+      ev(1, 'user', { text: '/humanizer fix it', command: { name: 'humanizer', args: 'fix it' }, device: true }),
+      cmd(2, { id: 'a', name: 'humanizer', args: 'fix it', status: 'done' }),
+      ev(3, 'user', { text: '/init', command: { name: 'init', args: '' } }),
+    ]} />)
+    const you = screen.getAllByRole('article', { name: 'You' })
+    expect(you).toHaveLength(1)
+    const bubble = screen.getByTestId('command-prompt')
+    expect(bubble.textContent).toBe('/init')
+    expect(bubble.className).toContain('font-mono')
+    expect(screen.queryByText(/<command-/)).toBeNull()
+  })
   it('short output has no Show more', () => {
     render(<Transcript events={[cmd(1, { id: 'a', name: 'recap', status: 'done', text: 'one\ntwo' })]} />)
     expect(screen.queryByRole('button', { name: 'Show more' })).toBeNull()

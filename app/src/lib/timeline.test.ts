@@ -267,3 +267,32 @@ describe('buildTimeline: command events', () => {
     expect(items[0]).toMatchObject({ status: 'failed', error: 'Waiting for an answer in the terminal.' })
   })
 })
+
+describe('buildTimeline: command user events', () => {
+  const cmdUser = (seq: number, name: string, args: string, device?: boolean) =>
+    ev('user', { text: args ? `/${name} ${args}` : `/${name}`, command: { name, args }, ...(device ? { device: true } : {}) }, seq)
+  const card = (seq: number, id: string, name: string, args = '') => ev('command', { id, name, args, origin: 'device', status: 'done' }, seq)
+  it('a user event with command keeps it on the item', () => {
+    const items = buildTimeline([cmdUser(1, 'humanizer', 'fix it')], BASE)
+    expect(items).toEqual([{ t: 'user', seq: 1, text: '/humanizer fix it', command: { name: 'humanizer', args: 'fix it' } }])
+  })
+  it("a device command's user event is dropped when its command card is nearby; a typed one stays", () => {
+    const items = buildTimeline([
+      cmdUser(1, 'humanizer', 'fix it', true),
+      ev('assistant', { text: 'rewritten' }, 2),
+      card(3, 'c1', 'humanizer', 'fix it'),
+      cmdUser(4, 'humanizer', 'again'),
+    ], BASE)
+    expect(items.map((i) => i.t)).toEqual(['assistant', 'command', 'user'])
+    expect(items[2]).toMatchObject({ text: '/humanizer again' })
+  })
+  it('a device command user event without a matching card stays; one card hides only one', () => {
+    const items = buildTimeline([
+      cmdUser(1, 'humanizer', '', true),
+      card(2, 'c1', 'humanizer'),
+      cmdUser(3, 'humanizer', '', true),
+      cmdUser(4, 'other', '', true),
+    ], BASE)
+    expect(items.map((i) => (i.t === 'user' ? `user:${i.seq}` : i.t))).toEqual(['command', 'user:3', 'user:4'])
+  })
+})

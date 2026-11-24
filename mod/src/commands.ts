@@ -42,7 +42,7 @@ export { TERMINAL_ONLY_ERROR, TERMINAL_WHEN_BARE }
  * command definitions in its bundled JS, read with `strings`):
  * - `type:"local"` commands marked `supportsNonInteractive:!0` with no `type:"local-jsx"` twin
  *   (a twin, even one behind a flag, is the variant an interactive session may resolve): clear,
- *   compact, recap, reload-plugins, reload-skills, list-agents, project, design-consent,
+ *   compact, reload-plugins, reload-skills, list-agents, project, design-consent,
  *   design-revoke, agents (prints where agents now live), heapdump.
  * - `type:"prompt"` commands (a turn for the model): init, insights, team-onboarding. statusline
  *   is a prompt too but is left out: it is marked `terminalOriented` and `disableNonInteractive`.
@@ -56,9 +56,13 @@ export { TERMINAL_ONLY_ERROR, TERMINAL_WHEN_BARE }
  * `set_model` command instead (control.ts). Also left out: `local` commands marked
  * `supportsNonInteractive:!1` (rewind, keybindings, radio, stickers, install-slack-app), restart,
  * voice and the internal __remote-workflow / workflow-launch-exec.
+ * Also left out: recap. Its 2.1.331 implementation answers a run that the person did not submit
+ * themselves (`zyl(o)`: local stdin or a verified human turn; a mod's `$.command.run` is neither)
+ * with "/recap only runs when you ask for it yourself in this session: ..." instead of running.
+ * (control.ts also turns that kind of refusal text into a failed command, for any build.)
  */
 export const BUILTIN_RUNNABLE = new Set([
-  'clear', 'compact', 'recap', 'reload-plugins', 'reload-skills', 'list-agents', 'project',
+  'clear', 'compact', 'reload-plugins', 'reload-skills', 'list-agents', 'project',
   'design-consent', 'design-revoke', 'agents', 'heapdump',
   'init', 'insights', 'team-onboarding',
   'batch', 'claude-in-chrome', 'debug', 'doctor', 'fewer-permission-prompts', 'keybindings-help', 'run',

@@ -215,8 +215,10 @@ export interface Attention {
 }
 export type EventKind = string;
 /**
- * KindUser data: {text, images?, device?}. device is true when the prompt was sent from a Quorum
- * device; without it the prompt was typed in the terminal and the hub marks the session seen.
+ * KindUser data: {text, images?, command?, device?}. device is true when the prompt was sent from a
+ * Quorum device (or is the turn of a slash command a device ran); without it the prompt was typed
+ * in the terminal and the hub marks the session seen. command {name, args}: the turn of a slash
+ * command (text is then "/name args").
  */
 export const KindUser: EventKind = "user";
 export const KindAssistantDelta: EventKind = "assistant_delta";
