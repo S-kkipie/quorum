@@ -34,7 +34,7 @@ function ClampedText({ text, className = '', as: Tag = 'div' }: { text: string; 
     <>
       <Tag className={`whitespace-pre-wrap font-mono [overflow-wrap:anywhere] ${long ? (open ? 'max-h-[50dvh] overflow-auto' : 'line-clamp-8') : ''} ${className}`}>{text}</Tag>
       {long && (
-        <button type="button" aria-expanded={open} onClick={() => setOpen((o) => !o)} className="mt-1 flex min-h-11 items-center gap-1 text-xs font-medium text-blue-400 hover:text-blue-300">
+        <button type="button" aria-expanded={open} onClick={() => setOpen((o) => !o)} className="mt-1 flex min-h-11 items-center gap-1 text-xs font-medium text-accent hover:underline">
           {open ? <ChevronUp size={14} aria-hidden /> : <ChevronDown size={14} aria-hidden />}{open ? 'Show less' : 'Show all'}
         </button>
       )}
@@ -76,7 +76,7 @@ export default function AskCard({ session, ask, onDone }: { session: string; ask
     }
   }
 
-  if (gone) return <div className="mx-3 my-2 rounded-xl border border-zinc-800 bg-zinc-900/60 p-3 text-xs text-zinc-500">already answered</div>
+  if (gone) return <div className="mx-3 my-2 rounded-xl border border-line bg-surface p-3 text-xs text-muted-foreground">already answered</div>
 
   const toggle = (qi: number, label: string, multi: boolean) =>
     setPicked((p) => {
@@ -97,26 +97,26 @@ export default function AskCard({ session, ask, onDone }: { session: string; ask
   }
   const complete = questions.length > 0 && questions.every((_, i) => (picked[i]?.length ?? 0) > 0 || (other[i] ?? '').trim())
 
-  const btn = 'flex min-h-11 items-center gap-1.5 rounded-lg px-4 text-sm font-medium disabled:opacity-40'
+  const btn = 'press flex min-h-11 items-center gap-1.5 rounded-lg px-4 text-sm font-medium disabled:opacity-40'
   return (
-    <div className="mx-3 my-2 rounded-xl border border-amber-500/30 bg-zinc-900/80 p-3 text-sm">
+    <div className="mx-3 my-2 rounded-xl border border-accent bg-surface p-3 text-sm text-ink">
       {ask.kind === 'question' ? (
         <>
-          <div className="mb-2 flex items-center gap-2 text-xs font-medium text-amber-300"><MessageCircleQuestion size={14} aria-hidden />Question</div>
+          <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-accent"><MessageCircleQuestion size={14} aria-hidden />Question</div>
           {questions.map((q, qi) => (
             <fieldset key={qi} className="mb-3">
-              {q.header && <div className="text-[11px] uppercase tracking-wide text-amber-400/80">{q.header}</div>}
+              {q.header && <div className="text-xs font-medium text-muted-foreground">{q.header}</div>}
               <legend className="w-full font-medium"><ClampedText text={q.question} className="font-sans" /></legend>
               {(q.options ?? []).map((o) => (
-                <label key={o.label} className="mt-1 flex min-h-11 cursor-pointer items-start gap-2.5 rounded-lg px-2 py-2 hover:bg-zinc-800/60">
+                <label key={o.label} className="mt-1 flex min-h-11 cursor-pointer items-start gap-2.5 rounded-lg px-2 py-2 hover:bg-chip">
                   <input
                     type={q.multiSelect ? 'checkbox' : 'radio'}
                     name={`q${qi}`}
                     checked={(picked[qi] ?? []).includes(o.label)}
                     onChange={() => toggle(qi, o.label, !!q.multiSelect)}
-                    className="mt-0.5 accent-blue-500"
+                    className="mt-0.5 accent-accent"
                   />
-                  <span>{o.label}{o.description && <span className="block text-xs text-zinc-500">{o.description}</span>}</span>
+                  <span>{o.label}{o.description && <span className="block text-xs text-muted-foreground">{o.description}</span>}</span>
                 </label>
               ))}
               <input
@@ -124,13 +124,13 @@ export default function AskCard({ session, ask, onDone }: { session: string; ask
                 onChange={(e) => setOther({ ...other, [qi]: e.target.value })}
                 placeholder="Other…"
                 aria-label={`Other: ${q.question}`}
-                className="mt-2 min-h-11 w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 text-sm placeholder:text-zinc-600 focus:border-zinc-600 focus:outline-none"
+                className="mt-2 min-h-11 w-full rounded-lg border border-line bg-background px-3 text-sm placeholder:text-muted-foreground focus:border-accent focus:outline-none"
               />
             </fieldset>
           ))}
           <div className="flex gap-2">
-            <button disabled={busy || !complete} onClick={() => send({ askId: ask.askId, decision: 'allow', answers: answers() })} className={`${btn} bg-blue-600 text-white hover:bg-blue-500`}><Send size={14} aria-hidden />Send answers</button>
-            <button disabled={busy} onClick={() => send({ askId: ask.askId, decision: 'deny' })} className={`${btn} bg-zinc-800 text-zinc-200 hover:bg-zinc-700`}><X size={14} aria-hidden />Deny</button>
+            <button disabled={busy || !complete} onClick={() => send({ askId: ask.askId, decision: 'allow', answers: answers() })} className={`${btn} bg-accent text-on-accent hover:bg-accent/90`}><Send size={14} aria-hidden />Send answers</button>
+            <button disabled={busy} onClick={() => send({ askId: ask.askId, decision: 'deny' })} className={`${btn} bg-chip text-ink hover:bg-line`}><X size={14} aria-hidden />Deny</button>
           </div>
         </>
       ) : (
@@ -138,22 +138,22 @@ export default function AskCard({ session, ask, onDone }: { session: string; ask
           approval={decided ? { id: ask.askId, approved: decided === 'allow' } : { id: ask.askId }}
           state={decided ? 'approval-responded' : 'approval-requested'}
           role="group" aria-label="Permission request"
-          className="block border-0 bg-transparent p-0 text-zinc-200"
+          className="block border-0 bg-transparent p-0 text-ink"
         >
-          <div className="flex items-center gap-2 text-xs font-medium text-amber-300"><ShieldAlert size={14} aria-hidden />Permission · {ask.tool}</div>
-          <ConfirmationTitle className="mt-1 block font-medium text-zinc-100"><ClampedText text={ask.summary} className="font-sans" /></ConfirmationTitle>
+          <div className="flex items-center gap-2 text-xs font-semibold text-accent"><ShieldAlert size={14} aria-hidden />Permission · {ask.tool}</div>
+          <ConfirmationTitle className="mt-1 block font-medium text-ink"><ClampedText text={ask.summary} className="font-sans" /></ConfirmationTitle>
           <ConfirmationRequest>
-            {ask.detail && <ClampedText as="pre" text={ask.detail} className="mt-2 rounded-lg border border-zinc-800 bg-zinc-950 p-2.5 text-[11px] text-zinc-400" />}
+            {ask.detail && <ClampedText as="pre" text={ask.detail} className="mt-2 rounded-lg bg-chip p-2.5 text-xs text-muted-foreground" />}
           </ConfirmationRequest>
-          <ConfirmationAccepted><p className="mt-2 flex items-center gap-1.5 text-xs text-emerald-400"><Check size={14} aria-hidden />Allowed</p></ConfirmationAccepted>
-          <ConfirmationRejected><p className="mt-2 flex items-center gap-1.5 text-xs text-zinc-400"><X size={14} aria-hidden />Denied</p></ConfirmationRejected>
-          <ConfirmationActions className="sticky bottom-0 -mx-3 -mb-3 mt-3 justify-start self-stretch rounded-b-xl border-t border-zinc-800 bg-zinc-900 p-3">
-            <ConfirmationAction disabled={busy} onClick={() => send({ askId: ask.askId, decision: 'allow' })} className={`${btn} h-auto bg-emerald-600 text-white hover:bg-emerald-500`}><Check size={14} aria-hidden />Allow</ConfirmationAction>
-            <ConfirmationAction disabled={busy} onClick={() => send({ askId: ask.askId, decision: 'deny' })} className={`${btn} h-auto bg-zinc-800 text-zinc-200 hover:bg-zinc-700`}><X size={14} aria-hidden />Deny</ConfirmationAction>
+          <ConfirmationAccepted><p className="mt-2 flex items-center gap-1.5 text-xs text-success"><Check size={14} aria-hidden />Allowed</p></ConfirmationAccepted>
+          <ConfirmationRejected><p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground"><X size={14} aria-hidden />Denied</p></ConfirmationRejected>
+          <ConfirmationActions className="sticky bottom-0 -mx-3 -mb-3 mt-3 justify-start self-stretch rounded-b-xl border-t border-line bg-surface p-3">
+            <ConfirmationAction disabled={busy} onClick={() => send({ askId: ask.askId, decision: 'allow' })} className={`${btn} h-auto bg-accent text-on-accent hover:bg-accent/90`}><Check size={14} aria-hidden />Allow</ConfirmationAction>
+            <ConfirmationAction disabled={busy} onClick={() => send({ askId: ask.askId, decision: 'deny' })} className={`${btn} h-auto bg-chip text-ink hover:bg-line`}><X size={14} aria-hidden />Deny</ConfirmationAction>
           </ConfirmationActions>
         </Confirmation>
       )}
-      {error && <p role="alert" className="mt-2 text-xs text-red-400">{error}</p>}
+      {error && <p role="alert" className="mt-2 text-xs text-danger">{error}</p>}
     </div>
   )
 }

@@ -13,7 +13,7 @@ export function BypassToggle({ checked, root, onChange }: { checked: boolean; ro
   return (
     <label className="mt-3 flex items-center gap-2 text-sm" title={root ? ROOT_REASON : undefined}>
       <input type="checkbox" checked={checked && !root} disabled={root} onChange={(e) => onChange(e.target.checked)} /> Skip permissions
-      {root && <span className="text-[11px] text-zinc-500">{ROOT_REASON}</span>}
+      {root && <span className="text-xs text-muted-foreground">{ROOT_REASON}</span>}
     </label>
   )
 }
@@ -50,32 +50,32 @@ export default function LaunchDialog({ state, onClose, onLaunched, projectId = '
     }
   }
 
-  const field = 'mt-1 min-h-11 w-full rounded border border-zinc-800 bg-zinc-900 p-2 text-sm'
+  const field = 'mt-1 min-h-11 w-full rounded-lg border border-line bg-surface p-2 text-sm'
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose() }}>
       <DialogContent showCloseButton={false} aria-describedby={undefined}
         // an accidental tap outside or Esc must not drop a typed folder; Cancel still closes
         onInteractOutside={(e) => { if (dir.trim()) e.preventDefault() }}
         onEscapeKeyDown={(e) => { if (dir.trim()) e.preventDefault() }}
-        className="top-auto bottom-0 left-0 max-w-none translate-x-0 translate-y-0 gap-0 rounded-b-none rounded-t-xl p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:top-[50%] sm:bottom-auto sm:left-[50%] sm:max-w-md sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-lg sm:pb-4">
+        className="top-auto bottom-0 left-0 max-w-none translate-x-0 translate-y-0 gap-0 rounded-b-none rounded-t-xl p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:top-[50%] sm:bottom-auto sm:left-[50%] sm:max-w-md sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-lg sm:pb-4 max-sm:motion-safe:starting:translate-y-full max-sm:motion-safe:starting:scale-100 max-sm:data-[state=closed]:slide-out-to-bottom max-sm:data-[state=closed]:zoom-out-100">
         <DialogTitle className="text-base font-semibold">New session</DialogTitle>
         {online.length === 0 ? (
-          <p className="mt-3 text-sm text-zinc-500">No machines online.</p>
+          <p className="mt-3 text-sm text-muted-foreground">No machines online.</p>
         ) : (
           <>
-            <label className="mt-3 block text-xs text-zinc-400">Machine
+            <label className="mt-3 block text-xs text-muted-foreground">Machine
               <select value={machine} onChange={(e) => setMachine(e.target.value)} className={field}>
                 {online.map((m) => <option key={m}>{m}</option>)}
               </select>
             </label>
-            <label className="mt-3 block text-xs text-zinc-400">Folder
+            <label className="mt-3 block text-xs text-muted-foreground">Folder
               <Input list="launch-dirs" value={dir} onChange={(e) => setDir(e.target.value)} placeholder="/path/to/project" className={field} />
               <datalist id="launch-dirs">{dirs.map((d) => <option key={d} value={d} />)}</datalist>
             </label>
             <BypassToggle checked={bypass} root={root} onChange={setBypass} />
           </>
         )}
-        {error && <p role="alert" className="mt-3 text-xs text-red-400">{error}</p>}
+        {error && <p role="alert" className="mt-3 text-xs text-danger">{error}</p>}
         <DialogFooter className="mt-4 flex-row justify-end gap-2 sm:flex-row">
           <Button variant="secondary" className="min-h-11" onClick={onClose}>Cancel</Button>
           <Button className="min-h-11" disabled={busy || !machine || !dir.trim()} onClick={go}>Start</Button>

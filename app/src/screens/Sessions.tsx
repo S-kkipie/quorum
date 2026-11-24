@@ -11,7 +11,7 @@ export default function Sessions({ state, onOpen, selected }: { state: AppState;
   return (
     <div className="mx-auto max-w-3xl pb-8 lg:max-w-none">
 
-      {machines.length === 0 && <p className="p-6 text-center text-sm text-zinc-500">No machines yet. Connect a daemon to the hub.</p>}
+      {machines.length === 0 && <p className="p-6 text-center text-sm text-muted-foreground">No machines yet. Connect a daemon to the hub.</p>}
 
       {machines.map((m) => {
         const info = state.machines[m]
@@ -19,16 +19,16 @@ export default function Sessions({ state, onOpen, selected }: { state: AppState;
         const list = byAttention(work.filter((s) => s.machine === m))
         return (
           <section key={m} className={`mt-4 ${offline ? 'opacity-60' : ''}`}>
-            <h2 className="flex items-center gap-2 px-3 pb-1 text-xs font-semibold uppercase tracking-wide text-zinc-400">
-              <span className={`h-2 w-2 rounded-full ${offline ? 'bg-zinc-600' : 'bg-emerald-500'}`} />
+            <h2 className="flex items-center gap-2 px-3 pb-1 text-[13px] font-medium text-muted-foreground">
+              <span className={`h-2 w-2 rounded-full ${offline ? 'bg-state-closed' : 'bg-success'}`} />
               {m}
-              {info?.env && <span className="font-normal normal-case text-zinc-600">{info.env}</span>}
-              {offline && <span className="font-normal normal-case text-zinc-500">offline</span>}
+              {info?.env && <span className="font-normal">{info.env}</span>}
+              {offline && <span className="font-normal">offline</span>}
             </h2>
             {list.length ? (
-              <ul className="divide-y divide-zinc-900 border-y border-zinc-900">{list.map((s) => <SessionRowView key={s.id} row={{ kind: 'live', id: s.id, session: s }} detailed onOpen={onOpen} active={s.id === selected} project={state.projects[s.projectId]?.name} />)}</ul>
+              <ul className="divide-y divide-line border-y border-line">{list.map((s) => <SessionRowView key={s.id} row={{ kind: 'live', id: s.id, session: s }} detailed onOpen={onOpen} active={s.id === selected} project={state.projects[s.projectId]?.name} />)}</ul>
             ) : (
-              <p className="px-3 text-xs text-zinc-600">No sessions.</p>
+              <p className="px-3 text-xs text-muted-foreground">No sessions.</p>
             )}
           </section>
         )
@@ -36,8 +36,8 @@ export default function Sessions({ state, onOpen, selected }: { state: AppState;
 
       {services.length > 0 && (
         <section className="mt-6">
-          <h2 className="px-3 pb-1 text-xs font-semibold uppercase tracking-wide text-zinc-400">Services</h2>
-          <ul className="divide-y divide-zinc-900 border-y border-zinc-900">{byAttention(services).map((s) => <SessionRowView key={s.id} row={{ kind: 'live', id: s.id, session: s }} detailed onOpen={onOpen} active={s.id === selected} />)}</ul>
+          <h2 className="px-3 pb-1 text-[13px] font-medium text-muted-foreground">Services</h2>
+          <ul className="divide-y divide-line border-y border-line">{byAttention(services).map((s) => <SessionRowView key={s.id} row={{ kind: 'live', id: s.id, session: s }} detailed onOpen={onOpen} active={s.id === selected} />)}</ul>
         </section>
       )}
     </div>

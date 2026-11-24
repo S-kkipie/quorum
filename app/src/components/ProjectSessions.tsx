@@ -75,20 +75,20 @@ export default function ProjectSessions({ state, projectId, busy = false, onOpen
   const note = 'px-3 pt-1 text-xs'
   return (
     <section>
-      <h3 className="mb-1 mt-5 px-3 text-xs font-semibold uppercase tracking-wide text-zinc-400">Sessions</h3>
-      {all && <input value={q} onChange={(e) => { setQ(e.target.value); setLimit(PAGE) }} placeholder="Search by title" aria-label="Search by title" className="mx-3 mb-2 w-[calc(100%-1.5rem)] rounded border border-zinc-800 bg-zinc-900 p-2 text-sm" />}
+      <h3 className="mb-1 mt-5 px-3 text-[13px] font-medium text-muted-foreground">Sessions</h3>
+      {all && <input value={q} onChange={(e) => { setQ(e.target.value); setLimit(PAGE) }} placeholder="Search by title" aria-label="Search by title" className="mx-3 mb-2 w-[calc(100%-1.5rem)] rounded-lg border border-line bg-surface p-2 text-sm" />}
       {shown.length > 0 && (
-        <ul className="divide-y divide-zinc-900 border-y border-zinc-900">
+        <ul className="divide-y divide-line border-y border-line">
           {shown.map((r) => <SessionRowView key={r.id} row={r} disabled={busy} onOpen={onOpen} onResume={resume} />)}
         </ul>
       )}
-      {all && left > 0 && <button onClick={() => setLimit((l) => l + PAGE)} className="min-h-11 px-3 text-xs text-blue-400">Show more ({left} left)</button>}
-      {!all && closedCount > SHOWN && <button onClick={() => setAll(true)} className="min-h-11 px-3 text-xs text-blue-400">See all ({closedCount})</button>}
-      {rows.length === 0 && settled && Object.keys(errors).length === 0 && <p className={`${note} text-zinc-500`}>No sessions yet. Start one above.</p>}
-      {rows.length === 0 && !settled && fetchable.length > 0 && <p className={`${note} text-zinc-600`}>Loading sessions…</p>}
-      {Object.keys(errors).map((m) => <p key={m} role="alert" className={`${note} text-red-400`}>{m}: could not list conversations</p>)}
-      {outdated.map((m) => <p key={m} className={`${note} text-zinc-600`}>Update quorumd on {m} to see its conversations</p>)}
-      {resumeError && <p role="alert" className={`${note} text-red-400`}>{resumeError}</p>}
+      {all && left > 0 && <button onClick={() => setLimit((l) => l + PAGE)} className="min-h-11 px-3 text-xs text-accent">Show more ({left} left)</button>}
+      {!all && closedCount > SHOWN && <button onClick={() => setAll(true)} className="min-h-11 px-3 text-xs text-accent">See all ({closedCount})</button>}
+      {rows.length === 0 && settled && Object.keys(errors).length === 0 && <p className={`${note} text-muted-foreground`}>No sessions yet. Start one above.</p>}
+      {rows.length === 0 && !settled && fetchable.length > 0 && <p className={`${note} text-muted-foreground`}>Loading sessions…</p>}
+      {Object.keys(errors).map((m) => <p key={m} role="alert" className={`${note} text-danger`}>{m}: could not list conversations</p>)}
+      {outdated.map((m) => <p key={m} className={`${note} text-muted-foreground`}>Update quorumd on {m} to see its conversations</p>)}
+      {resumeError && <p role="alert" className={`${note} text-danger`}>{resumeError}</p>}
     </section>
   )
 }

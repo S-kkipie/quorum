@@ -28,18 +28,18 @@ export default function ArtifactCard({ item, machine = '', base = '', onOpen }: 
   const Icon = IMAGE.test(item.name) ? Image : /\.html?$/i.test(item.name) ? FileCode : FileText
   const where = item.inBase ? [machine, folderOf(item.path, base)].filter(Boolean).join(' · ') : 'outside the project folder'
   return (
-    <Artifact className="my-2 border-zinc-800 bg-zinc-900/60 shadow-none">
+    <Artifact className="my-2 rounded-xl border-line bg-surface shadow-none">
       <ArtifactHeader className="gap-3 border-b-0 bg-transparent p-3">
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-blue-500/15 text-blue-300">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent-soft text-accent">
           <Icon size={20} aria-hidden />
         </span>
         <div className="min-w-0 flex-1">
-          <ArtifactTitle title={item.name} className="line-clamp-2 text-zinc-100 [overflow-wrap:anywhere]">{middleTruncate(item.name, 48)}</ArtifactTitle>
-          <ArtifactDescription className="truncate text-xs text-zinc-500">{where}</ArtifactDescription>
+          <ArtifactTitle title={item.name} className="line-clamp-2 font-serif text-[15.5px] text-ink [overflow-wrap:anywhere]">{middleTruncate(item.name, 48)}</ArtifactTitle>
+          <ArtifactDescription className="truncate text-xs text-muted-foreground">{where}</ArtifactDescription>
         </div>
         {item.inBase && (
           <ArtifactActions className="shrink-0">
-            <Button type="button" onClick={() => onOpen?.(item.path)} className="min-h-11 bg-blue-600 px-3 text-white hover:bg-blue-500">
+            <Button type="button" onClick={() => onOpen?.(item.path)} className="min-h-11 rounded-lg bg-accent px-3 text-on-accent hover:bg-accent/90">
               <ExternalLink size={14} aria-hidden />Open
             </Button>
           </ArtifactActions>

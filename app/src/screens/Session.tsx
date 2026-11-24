@@ -144,11 +144,11 @@ export default function Session({ state, id, onBack, onEvents, onSeen, onCommand
     return (
       <div className="flex h-full flex-col">
         {onBack && (
-          <div className="border-b border-zinc-800 px-1.5 py-1">
-            <Button variant="ghost" size="icon" onClick={onBack} aria-label="Back" className="size-11 shrink-0 text-zinc-400 hover:text-zinc-200"><ChevronLeft size={22} aria-hidden /></Button>
+          <div className="border-b border-line px-1.5 py-1">
+            <Button variant="ghost" size="icon" onClick={onBack} aria-label="Back" className="size-11 shrink-0 text-muted-foreground hover:text-ink"><ChevronLeft size={22} aria-hidden /></Button>
           </div>
         )}
-        <div className="p-6 text-sm text-zinc-500">Session not found.</div>
+        <div className="p-6 text-sm text-muted-foreground">Session not found.</div>
       </div>
     )
   }
@@ -169,7 +169,7 @@ export default function Session({ state, id, onBack, onEvents, onSeen, onCommand
   const modelText = current && current.value === s.model ? current.label : modelLabel(s.model) || 'Model'
   const answered = !!pick && !!modelCmd && modelCmd.seq > pick.seq && modelCmd.status !== 'queued'
   const spinning = queuedLeft > 0 || (!!pick && !answered)
-  const chip = 'relative inline-flex shrink-0 items-center gap-1 rounded-full border border-zinc-700 bg-zinc-900 px-2 py-px text-zinc-300 hover:border-zinc-500 after:absolute after:-inset-y-3 after:inset-x-0 after:content-[\'\']'
+  const chip = 'press relative inline-flex shrink-0 items-center gap-1 rounded-lg bg-chip px-2 py-0.5 text-ink hover:bg-line after:absolute after:-inset-y-3 after:inset-x-0 after:content-[\'\']'
   const chooseModel = (value: string) => {
     setSheet(false)
     if (value === current?.value) return
@@ -181,10 +181,10 @@ export default function Session({ state, id, onBack, onEvents, onSeen, onCommand
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <header className="border-b border-zinc-800 bg-zinc-950 px-1.5 py-1">
+      <header className="border-b border-line bg-background px-1.5 py-1">
         <div className="flex min-h-11 items-center gap-1.5">
           {onBack && (
-            <Button variant="ghost" size="icon" onClick={onBack} aria-label="Back" className="size-11 shrink-0 text-zinc-400 hover:text-zinc-200">
+            <Button variant="ghost" size="icon" onClick={onBack} aria-label="Back" className="size-11 shrink-0 text-muted-foreground hover:text-ink">
               <ChevronLeft size={22} aria-hidden />
             </Button>
           )}
@@ -198,16 +198,16 @@ export default function Session({ state, id, onBack, onEvents, onSeen, onCommand
           )}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" aria-label="More actions" className="size-11 shrink-0 text-zinc-400 hover:text-zinc-200"><MoreHorizontal size={20} aria-hidden /></Button>
+              <Button variant="ghost" size="icon" aria-label="More actions" className="size-11 shrink-0 text-muted-foreground hover:text-ink"><MoreHorizontal size={20} aria-hidden /></Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56">
               <DropdownMenuItem className={item} disabled={busy} onSelect={() => { act(async () => {
                 const dir = s.root || s.cwd
                 await onGuard?.(() => launchIn({ machine: s.machine, dir, bypass: loadPrefs(s.projectId || '_').bypass, root: !!state.machines[s.machine]?.caps?.root, projectId: s.projectId }))
-              }) }}><Plus size={16} aria-hidden className="text-zinc-400" />New session here</DropdownMenuItem>
+              }) }}><Plus size={16} aria-hidden className="text-muted-foreground" />New session here</DropdownMenuItem>
               {!closed && s.herdrPane && state.machines[s.machine]?.caps?.terminal && (
                 <DropdownMenuItem className={item} onSelect={() => onViewTerminal?.(s.machine, s.herdrPane)}>
-                  <MonitorPlay size={16} aria-hidden className="text-zinc-400" />View in terminal
+                  <MonitorPlay size={16} aria-hidden className="text-muted-foreground" />View in terminal
                 </DropdownMenuItem>
               )}
               {!closed && (
@@ -220,10 +220,10 @@ export default function Session({ state, id, onBack, onEvents, onSeen, onCommand
         </div>
         {(sub || narrow || meters || showModel || showEffort) && (
           // wraps at 320 px: pill + subtitle + account + usage + ctx + tokens never overflow the header
-          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 pb-1 pl-2.5 text-xs text-zinc-500">
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 pb-1 pl-2.5 text-xs text-muted-foreground">
             {narrow && <StatePill session={s} />}
             {sub && <span className="min-w-0 max-w-full shrink truncate">{sub}</span>}
-            {s.account && <span className="max-w-24 shrink-0 truncate rounded bg-zinc-800 px-1.5 text-zinc-300">{s.account}</span>}
+            {s.account && <span className="max-w-24 shrink-0 truncate rounded-lg bg-chip px-2 py-0.5 text-muted-foreground">{s.account}</span>}
             {showModel && (
               <button type="button" aria-label={`Model: ${modelText}`} aria-busy={spinning} onClick={() => setSheet(true)} className={`${chip} max-w-40`}>
                 <span className="min-w-0 truncate">{modelText}</span>
@@ -241,7 +241,7 @@ export default function Session({ state, id, onBack, onEvents, onSeen, onCommand
           </div>
         )}
       </header>
-      {error && <p role="alert" className="bg-red-950/40 px-3 py-1 text-xs text-red-400">{error}</p>}
+      {error && <p role="alert" className="bg-del-soft px-3 py-1 text-xs text-danger">{error}</p>}
       <Transcript
         events={events}
         base={s.root || s.cwd}

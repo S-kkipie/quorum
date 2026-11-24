@@ -114,12 +114,12 @@ export default function Composer({ session, commands }: {
   const send: PromptMode = session.state === 'working' || session.state === 'needs_you' ? 'now' : 'queue'
   const btn = 'min-h-11 gap-1.5 rounded-lg px-3 text-sm disabled:opacity-40'
   return (
-    <div className="relative border-t border-zinc-800 bg-zinc-950 p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+    <div className="relative border-t border-line bg-background p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
       {menuOpen && <SlashMenu groups={groups} reported={reported} active={active?.name} hint={hint} onPick={complete} />}
-      {block && <p className="px-1 pb-1 text-xs text-zinc-500">{block}</p>}
-      {error && <p role="alert" className="px-1 pb-1 text-xs text-red-400">{error}</p>}
+      {block && <p className="px-1 pb-1 text-xs text-muted-foreground">{block}</p>}
+      {error && <p role="alert" className="px-1 pb-1 text-xs text-danger">{error}</p>}
       {/* Send is the submit button; the draft lives in useDraft, not in the form */}
-      <PromptInput onSubmit={() => go(send)} className="[&_[data-slot=input-group]]:rounded-xl [&_[data-slot=input-group]]:border-zinc-800 [&_[data-slot=input-group]]:bg-zinc-900">
+      <PromptInput onSubmit={() => go(send)} className="[&_[data-slot=input-group]]:rounded-2xl [&_[data-slot=input-group]]:border-line [&_[data-slot=input-group]]:bg-surface [&_[data-slot=input-group]]:shadow-none">
         <PromptInputTextarea
           ref={box}
           value={text}
@@ -136,17 +136,17 @@ export default function Composer({ session, commands }: {
           submitOn="mod-enter"
           rows={2}
           placeholder="Type a message or / for commands"
-          className="min-h-14 px-3 py-2 text-sm placeholder:text-zinc-600 disabled:opacity-40"
+          className="min-h-14 px-3 py-2 text-sm text-ink placeholder:text-muted-foreground disabled:opacity-40"
         />
         <PromptInputFooter className="justify-end gap-2 px-2 pb-2">
-          <PromptInputSubmit disabled={off} aria-label="Send" size="sm" className={`${btn} bg-blue-600 font-medium text-white hover:bg-blue-500`}><ArrowUp size={14} aria-hidden />Send</PromptInputSubmit>
+          <PromptInputSubmit disabled={off} aria-label="Send" size="sm" className={`${btn} bg-accent font-medium text-on-accent hover:bg-accent/90`}><ArrowUp size={14} aria-hidden />Send</PromptInputSubmit>
           <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
-              <PromptInputButton variant="secondary" size="sm" aria-label="More send options" title="More send options" className={`${btn} size-11 shrink-0 bg-zinc-800 px-0 text-zinc-200 hover:bg-zinc-700`}><ChevronUp size={16} aria-hidden /></PromptInputButton>
+              <PromptInputButton variant="secondary" size="sm" aria-label="More send options" title="More send options" className={`${btn} size-11 shrink-0 bg-chip px-0 text-ink hover:bg-line`}><ChevronUp size={16} aria-hidden /></PromptInputButton>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" side="top">
-              <DropdownMenuItem className="min-h-11 gap-2.5 px-3" disabled={off} onSelect={() => go('queue')}><ListPlus size={14} aria-hidden className="text-zinc-400" />Queue</DropdownMenuItem>
-              <DropdownMenuItem className="min-h-11 gap-2.5 px-3 text-amber-300" disabled={off} onSelect={() => go('interrupt')}><Zap size={14} aria-hidden />Interrupt and send</DropdownMenuItem>
+              <DropdownMenuItem className="min-h-11 gap-2.5 px-3" disabled={off} onSelect={() => go('queue')}><ListPlus size={14} aria-hidden className="text-muted-foreground" />Queue</DropdownMenuItem>
+              <DropdownMenuItem className="min-h-11 gap-2.5 px-3 text-warning" disabled={off} onSelect={() => go('interrupt')}><Zap size={14} aria-hidden />Interrupt and send</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </PromptInputFooter>

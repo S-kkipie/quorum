@@ -104,7 +104,7 @@ describe('ticketLine (combined state)', () => {
   })
   it('needs you', () => {
     const { s, t } = base({ state: 'needs_you' })
-    expect(ticketLine(s, t, now)).toEqual({ text: 'needs you · vps-2', tone: 'amber' })
+    expect(ticketLine(s, t, now)).toEqual({ text: 'needs you · vps-2', tone: 'needs' })
   })
   it('in_review in the ticket source', () => {
     const { s, t } = base({ state: 'closed' }, { status: 'in_review' })
@@ -117,7 +117,7 @@ describe('ticketLine (combined state)', () => {
   })
   it('a suggested session does not count; without a session, the ticket source\'s status', () => {
     let s = run([env('session_upsert', sess('s1', { state: 'working' })), env('session_ticket', { sessionId: 's1', ticketId: 't1', confirmed: false })])
-    expect(ticketLine(s, tk('t1', { status: 'blocked' }), now)).toEqual({ text: 'blocked', tone: 'red' })
+    expect(ticketLine(s, tk('t1', { status: 'blocked' }), now)).toEqual({ text: 'blocked', tone: 'blocked' })
   })
 })
 

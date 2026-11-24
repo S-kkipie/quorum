@@ -64,8 +64,8 @@ export default function NewSessionCard({ state, projectId, pending, onLaunched, 
   if (cos.length === 0) {
     return (
       <div className="px-3 pt-3">
-        <p className="text-sm text-zinc-500">This project has no folder on any machine yet</p>
-        <Button variant="link" onClick={() => setOther(true)} className="mt-1 min-h-11 px-0 text-blue-400">Another folder…</Button>
+        <p className="text-sm text-muted-foreground">This project has no folder on any machine yet</p>
+        <Button variant="link" onClick={() => setOther(true)} className="mt-1 min-h-11 px-0 text-accent">Another folder…</Button>
         {other && <LaunchDialog state={state} projectId={projectId} onClose={() => setOther(false)} onLaunched={(p) => { setOther(false); onLaunched(p) }} />}
       </div>
     )
@@ -76,10 +76,10 @@ export default function NewSessionCard({ state, projectId, pending, onLaunched, 
       <Button size="lg" disabled={busy || pending || !chosen} onClick={go} className="min-h-14 w-full rounded-lg px-4 text-base font-semibold">
         {busy || pending ? 'Launching…' : 'New session'}
       </Button>
-      {!chosen && <p className="mt-2 text-xs text-amber-400">No machine of this project is online.</p>}
+      {!chosen && <p className="mt-2 text-xs text-warning">No machine of this project is online.</p>}
       <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2">
-        <label className="flex items-center gap-1 rounded-full bg-zinc-800 px-3 py-1 text-xs text-zinc-300">
-          <span className={online(machine) ? 'text-emerald-400' : 'text-zinc-600'}>●</span>
+        <label className="flex items-center gap-1 rounded-full bg-chip px-3 py-1 text-xs text-ink">
+          <span className={online(machine) ? 'text-success' : 'text-muted-foreground'}>●</span>
           <select aria-label="Machine" value={chosen ? chosen.machine + sep + chosen.root : ''} onChange={(e) => setPick(e.target.value)} className="bg-transparent text-xs">
             {!chosen && <option value="">no machine</option>}
             {cos.map((c) => (
@@ -93,10 +93,10 @@ export default function NewSessionCard({ state, projectId, pending, onLaunched, 
         {caps?.terminal ? (
           <Button variant="secondary" disabled={!chosen || termBusy} onClick={term} className="ml-auto min-h-11 px-4">Terminal</Button>
         ) : (
-          chosen && <span className="text-xs text-zinc-500">Terminal not available on this machine (herdr missing)</span>
+          chosen && <span className="text-xs text-muted-foreground">Terminal not available on this machine (herdr missing)</span>
         )}
       </div>
-      {error && <p role="alert" className="mt-2 text-xs text-red-400">{error}</p>}
+      {error && <p role="alert" className="mt-2 text-xs text-danger">{error}</p>}
     </div>
   )
 }

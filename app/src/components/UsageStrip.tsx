@@ -10,7 +10,7 @@ function Win({ label, w, now }: { label: string; w: UsageWindow; now: number }) 
   return (
     <span className="whitespace-nowrap">
       <span data-tone={tone} className={toneClass[tone]}>{`${label} ${Math.round(w.pct)}%`}</span>
-      {reset && <span className="text-zinc-600">{` · ${reset}`}</span>}
+      {reset && <span className="text-muted-foreground">{` · ${reset}`}</span>}
     </span>
   )
 }
@@ -20,12 +20,12 @@ export default function UsageStrip({ usage, now = Date.now() }: { usage: Record<
   const list = Object.values(usage).sort((a, b) => Math.max(b.fiveHour.pct, b.sevenDay.pct) - Math.max(a.fiveHour.pct, a.sevenDay.pct) || a.alias.localeCompare(b.alias))
   if (list.length === 0) return null
   return (
-    <div aria-label="Account usage" className="flex flex-wrap gap-x-4 gap-y-1 border-b border-zinc-800 px-3 py-2 text-xs">
+    <div aria-label="Account usage" className="flex flex-wrap gap-x-4 gap-y-1 border-b border-line px-3 py-2 text-xs">
       {list.map((u) => {
         const stale = now - u.at > STALE_MS
         return (
           <div key={u.key} data-testid="usage-account" data-stale={stale ? '' : undefined} className={`flex min-w-0 items-baseline gap-x-2 ${stale ? 'opacity-50' : ''}`}>
-            <span className="max-w-[10rem] truncate font-medium text-zinc-300">{u.alias}</span>{' '}
+            <span className="max-w-[10rem] truncate font-medium text-ink">{u.alias}</span>{' '}
             <Win label="5h" w={u.fiveHour} now={now} />{' '}
             <Win label="week" w={u.sevenDay} now={now} />
           </div>

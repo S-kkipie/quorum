@@ -10,7 +10,7 @@ class Boundary extends Component<{ children: ReactNode }, { failed: boolean }> {
   render() {
     if (!this.state.failed) return this.props.children
     return (
-      <div role="alert" className="flex h-full flex-col items-center justify-center gap-3 p-6 text-sm text-zinc-400">
+      <div role="alert" className="flex h-full flex-col items-center justify-center gap-3 p-6 text-sm text-muted-foreground">
         <p>This view could not load.</p>
         <Button variant="secondary" className="min-h-11" onClick={() => location.reload()}>Reload</Button>
       </div>
@@ -22,7 +22,7 @@ class Boundary extends Component<{ children: ReactNode }, { failed: boolean }> {
 export default function LazyBoundary({ children }: { children: ReactNode }) {
   return (
     <Boundary>
-      <Suspense fallback={<div className="flex h-full items-center justify-center text-zinc-500"><Spinner /></div>}>{children}</Suspense>
+      <Suspense fallback={<div className="flex h-full items-center justify-center text-muted-foreground"><Spinner /></div>}>{children}</Suspense>
     </Boundary>
   )
 }

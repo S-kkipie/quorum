@@ -10,7 +10,7 @@ export default function StatePill({ session }: { session: Pick<SessionInfo, 'sta
   const p = stateStyle(d)
   const { text, title } = stateText(session, useWakeClock([session]))
   return (
-    <Badge title={title} aria-label={title} className={`min-w-0 gap-1.5 text-[11px] ring-1 ${p.pill}`}>
+    <Badge title={title} aria-label={title} className={`min-w-0 gap-1.5 text-xs font-medium ${p.pill}`}>
       {d !== 'idle' && d !== 'closed' && <span aria-hidden className={`h-1.5 w-1.5 shrink-0 rounded-full ${p.dot}`} />}
       <span className="min-w-0 truncate">{text}</span>
     </Badge>

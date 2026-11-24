@@ -1,9 +1,22 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
-    <meta name="theme-color" content="#0b0d10" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#FAF9F6" />
+    <script>
+      // Pre-paint theme (mirrors src/lib/theme.ts): no flash of the wrong theme on first load.
+      (function () {
+        var p = 'system', dark = false
+        try { p = localStorage.getItem('quorum.theme') || 'system' } catch (e) {}
+        try { dark = p === 'dark' || (p !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches) } catch (e) {}
+        var r = document.documentElement
+        if (dark) r.classList.add('dark')
+        r.style.colorScheme = dark ? 'dark' : 'light'
+        document.querySelector('meta[name="theme-color"]').setAttribute('content', dark ? '#1B1A18' : '#FAF9F6')
+      })()
+    </script>
     <link rel="manifest" href="/manifest.webmanifest" />
     <title>Quorum</title>
   </head>

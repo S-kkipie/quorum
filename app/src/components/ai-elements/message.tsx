@@ -11,6 +11,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { CODE_THEMES } from "@/lib/tokens";
 import { cn } from "@/lib/utils";
 import type { UIMessage } from "ai";
 import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
@@ -51,7 +52,7 @@ export const MessageContent = ({
 }: MessageContentProps) => (
   <div
     className={cn(
-      "is-user:dark flex w-fit min-w-0 max-w-full flex-col gap-2 overflow-hidden text-sm",
+      "flex w-fit min-w-0 max-w-full flex-col gap-2 overflow-hidden text-sm",
       "group-[.is-user]:ml-auto group-[.is-user]:rounded-lg group-[.is-user]:bg-secondary group-[.is-user]:px-4 group-[.is-user]:py-3 group-[.is-user]:text-foreground",
       "group-[.is-assistant]:text-foreground",
       className
@@ -320,11 +321,14 @@ export type MessageResponseProps = ComponentProps<typeof Streamdown>;
 
 // Quorum: math, mermaid and cjk plugins are not vendored (bundle size). Raw HTML is
 // dropped and remote images become links, matching components/Markdown.tsx.
-// Syntax highlighting is loaded on demand so shiki stays out of the entry chunk.
+// Syntax highlighting is loaded on demand so shiki stays out of the entry chunk; the light and
+// dark themes (CODE_THEMES) are both applied and switch with the `.dark` class.
 type StreamdownPlugins = NonNullable<ComponentProps<typeof Streamdown>["plugins"]>;
 let codePlugin: Promise<StreamdownPlugins> | undefined;
 const loadPlugins = () => {
-  codePlugin ??= import("@streamdown/code").then(({ code }) => ({ code }));
+  codePlugin ??= import("@streamdown/code").then(({ createCodePlugin }) => ({
+    code: createCodePlugin({ themes: [...CODE_THEMES] }),
+  }));
   return codePlugin;
 };
 
@@ -334,7 +338,7 @@ const safeComponents: NonNullable<ComponentProps<typeof Streamdown>["components"
     const label = `[image: ${alt ?? ""}]`;
     return href ? (
       <a
-        className="text-blue-400 underline hover:text-blue-300"
+        className="font-medium text-accent underline underline-offset-2"
         href={href}
         rel="noopener noreferrer"
         target="_blank"

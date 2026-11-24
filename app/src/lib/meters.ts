@@ -39,4 +39,4 @@ export function resetIn(iso: string, now: number): string {
   return `${mins}m`
 }
 
-export const toneClass: Record<Tone, string> = { ok: 'text-zinc-500', warn: 'text-amber-400', danger: 'text-red-400' }
+export const toneClass: Record<Tone, string> = { ok: 'text-muted-foreground', warn: 'text-warning', danger: 'text-danger' }

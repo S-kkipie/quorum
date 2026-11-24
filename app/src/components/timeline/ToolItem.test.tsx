@@ -24,9 +24,11 @@ describe('ToolItem', () => {
   it('edit row shows -/+ lines when expanded', () => {
     render(<ToolItem item={tool({ name: 'Edit', kind: 'edit', title: 'Edited a.go', file: '/p/a.go', input: { file_path: '/p/a.go', old_string: 'same\nold line', new_string: 'same\nnew line' } })} />)
     fireEvent.click(screen.getByRole('button', { name: /Edited a\.go/ }))
-    expect(screen.getByText('- old line')).toBeTruthy()
-    expect(screen.getByText('+ new line')).toBeTruthy()
-    expect(screen.queryByText('- same')).toBeNull()
+    // the sign is its own coloured span: match each diff line by its whole text
+    const line = (t: string) => screen.queryByText((_, el) => el?.tagName === 'DIV' && el.textContent === t)
+    expect(line('- old line')).toBeTruthy()
+    expect(line('+ new line')).toBeTruthy()
+    expect(line('- same')).toBeNull()
   })
   it('running tool shows spinner icon, no emoji', () => {
     const { container } = render(<ToolItem item={tool({ state: 'running', output: undefined })} />)

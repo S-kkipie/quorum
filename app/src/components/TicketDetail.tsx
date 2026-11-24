@@ -13,8 +13,8 @@ import { Input } from '@/components/ui/input'
 
 type OnLaunched = (p: { reqId: string; machine: string; label: string }) => void
 
-const field = 'mt-1 min-h-11 w-full rounded border border-zinc-800 bg-zinc-900 p-2 text-sm md:text-sm'
-const h3 = 'mb-1 mt-5 text-xs font-semibold uppercase tracking-wide text-zinc-400'
+const field = 'mt-1 min-h-11 w-full rounded-lg border border-line bg-surface p-2 text-sm md:text-sm'
+const h3 = 'mb-1 mt-5 text-[13px] font-medium text-muted-foreground'
 
 export default function TicketDetail({ state, ticketId, onBack, onOpenSession, onLoaded, onCheckouts, onLaunched }: {
   state: AppState
@@ -47,8 +47,8 @@ export default function TicketDetail({ state, ticketId, onBack, onOpenSession, o
 
   if (!t) {
     return (
-      <div className="p-4 text-sm text-zinc-500">
-        {onBack && <Button variant="ghost" onClick={onBack} className="mb-3 min-h-11 text-zinc-400">← Back</Button>}
+      <div className="p-4 text-sm text-muted-foreground">
+        {onBack && <Button variant="ghost" onClick={onBack} className="mb-3 min-h-11 text-muted-foreground">← Back</Button>}
         <p>{error || (loaded ? 'Ticket not found.' : 'Loading…')}</p>
       </div>
     )
@@ -63,18 +63,18 @@ export default function TicketDetail({ state, ticketId, onBack, onOpenSession, o
 
   return (
     <div className="pb-10">
-      <header className="sticky top-0 z-10 flex items-center gap-2 border-b border-zinc-800 bg-zinc-950/90 px-3 py-2 backdrop-blur">
-        {onBack && <Button variant="ghost" onClick={onBack} aria-label="Back" className="min-h-11 min-w-11 text-zinc-400">←</Button>}
-        <span className="font-mono text-xs text-zinc-500">{t.externalId}</span>
+      <header className="sticky top-0 z-10 flex items-center gap-2 border-b border-line bg-background/90 px-3 py-2 backdrop-blur">
+        {onBack && <Button variant="ghost" onClick={onBack} aria-label="Back" className="min-h-11 min-w-11 text-muted-foreground">←</Button>}
+        <span className="font-mono text-xs text-muted-foreground">{t.externalId}</span>
         <h2 className="min-w-0 flex-1 truncate text-sm font-semibold">{t.title}</h2>
-        {t.url && <a href={t.url} target="_blank" rel="noopener noreferrer" className="shrink-0 text-xs text-blue-400">View in the ticket source</a>}
+        {t.url && <a href={t.url} target="_blank" rel="noopener noreferrer" className="shrink-0 text-xs text-accent">View in the ticket source</a>}
       </header>
       <div className="px-3">
         <p className={`mt-3 text-sm ${TONE_TEXT[line.tone]}`}>{line.text}</p>
-        <p className="mt-1 text-xs text-zinc-500">
+        <p className="mt-1 text-xs text-muted-foreground">
           {STATUS_LABEL[t.status] ?? t.status}{t.rawStatus && ` (${t.rawStatus})`}{t.assignee && ` · ${t.assignee}`}
         </p>
-        {error && <p role="alert" className="mt-2 text-xs text-red-400">{error}</p>}
+        {error && <p role="alert" className="mt-2 text-xs text-danger">{error}</p>}
 
         {pending.length > 0 && (
           <section>
@@ -87,7 +87,7 @@ export default function TicketDetail({ state, ticketId, onBack, onOpenSession, o
           <h3 className={h3}>Session</h3>
           {working ? (
             <div className="flex items-center gap-2 text-sm">
-              <span className="min-w-0 flex-1 truncate text-zinc-300">A session is already working on this ticket on {working.session!.machine}.</span>
+              <span className="min-w-0 flex-1 truncate text-ink">A session is already working on this ticket on {working.session!.machine}.</span>
               <Button size="sm" onClick={() => onOpenSession?.(working.id)} className="min-h-11 text-xs">Go to session</Button>
             </div>
           ) : (
@@ -98,7 +98,7 @@ export default function TicketDetail({ state, ticketId, onBack, onOpenSession, o
         {links.length > 0 && (
           <section>
             <h3 className={h3}>Linked sessions</h3>
-            <ul className="divide-y divide-zinc-900 rounded border border-zinc-800">
+            <ul className="divide-y divide-line rounded-xl border border-line">
               {links.map((l) => <LinkRow key={l.id} {...l} ticketId={t.id} onOpenSession={onOpenSession} />)}
             </ul>
           </section>
@@ -109,7 +109,7 @@ export default function TicketDetail({ state, ticketId, onBack, onOpenSession, o
         {t.body && (
           <section>
             <h3 className={h3}>Description</h3>
-            <p className="whitespace-pre-wrap break-words text-sm text-zinc-300">{t.body}</p>
+            <p className="whitespace-pre-wrap break-words text-sm text-ink">{t.body}</p>
           </section>
         )}
         {t.comments?.length > 0 && (
@@ -117,9 +117,9 @@ export default function TicketDetail({ state, ticketId, onBack, onOpenSession, o
             <h3 className={h3}>Recent comments</h3>
             <ul className="space-y-2">
               {t.comments.map((c, i) => (
-                <li key={i} className="rounded bg-zinc-900/60 p-2 text-sm">
-                  <span className="block text-xs text-zinc-500">{c.author || 'anonymous'}{c.at ? ` · ${new Date(c.at > 1e12 ? c.at : c.at * 1000).toLocaleString()}` : ''}</span>
-                  <span className="mt-1 block whitespace-pre-wrap break-words text-zinc-300">{c.body}</span>
+                <li key={i} className="rounded-xl bg-chip p-3 text-sm">
+                  <span className="block text-xs text-muted-foreground">{c.author || 'anonymous'}{c.at ? ` · ${new Date(c.at > 1e12 ? c.at : c.at * 1000).toLocaleString()}` : ''}</span>
+                  <span className="mt-1 block whitespace-pre-wrap break-words text-ink">{c.body}</span>
                 </li>
               ))}
             </ul>
@@ -127,7 +127,7 @@ export default function TicketDetail({ state, ticketId, onBack, onOpenSession, o
         )}
         {past.length > 0 && (
           <details className="mt-5">
-            <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-zinc-400">Past proposals ({past.length})</summary>
+            <summary className="cursor-pointer text-[13px] font-medium text-muted-foreground">Past proposals ({past.length})</summary>
             <div className="mt-2 space-y-2">{past.map((p) => <ProposalCard key={p.id} proposal={p} />)}</div>
           </details>
         )}
@@ -150,14 +150,14 @@ function LinkRow({ id, session, confirmed, ticketId, onOpenSession }: { id: stri
       <span className={`h-2 w-2 shrink-0 rounded-full ${st.dot}`} />
       <button onClick={() => onOpenSession?.(id)} className="min-w-0 flex-1 truncate text-left">
         {session ? sessionTitle(session).title : id.slice(0, 8)}
-        <span className="text-xs text-zinc-500"> · {session?.machine ?? '?'} · {st.label}{confirmed ? '' : ' · suggested'}</span>
+        <span className="text-xs text-muted-foreground"> · {session?.machine ?? '?'} · {st.label}{confirmed ? '' : ' · suggested'}</span>
       </button>
-      {error && <span role="alert" className="text-xs text-red-400">{error}</span>}
+      {error && <span role="alert" className="text-xs text-danger">{error}</span>}
       {confirmed ? (
-        <Button variant="link" size="sm" disabled={busy} onClick={() => run(() => unlinkTicket(id, ticketId))} className="min-h-11 text-xs text-zinc-400">Unlink</Button>
+        <Button variant="link" size="sm" disabled={busy} onClick={() => run(() => unlinkTicket(id, ticketId))} className="min-h-11 text-xs text-muted-foreground">Unlink</Button>
       ) : (
         <>
-          <Button variant="ghost" size="sm" disabled={busy} onClick={() => run(() => unlinkTicket(id, ticketId))} className="min-h-11 text-xs text-zinc-400">Dismiss</Button>
+          <Button variant="ghost" size="sm" disabled={busy} onClick={() => run(() => unlinkTicket(id, ticketId))} className="min-h-11 text-xs text-muted-foreground">Dismiss</Button>
           <Button size="sm" disabled={busy} onClick={() => run(() => confirmTicketLink(id, ticketId))} className="min-h-11 text-xs">Confirm</Button>
         </>
       )}
@@ -182,7 +182,7 @@ function OpenSession({ state, ticketId, projectId, onLaunched, onOpenSession }: 
   const [error, setError] = useState('')
   const [other, setOther] = useState('')
 
-  if (machines.length === 0) return <p className="text-sm text-zinc-500">No machines online to open a session.</p>
+  if (machines.length === 0) return <p className="text-sm text-muted-foreground">No machines online to open a session.</p>
 
   async function go() {
     setBusy(true)
@@ -207,20 +207,20 @@ function OpenSession({ state, ticketId, projectId, onLaunched, onOpenSession }: 
   return (
     <div>
       <div className="grid gap-2 sm:grid-cols-2">
-        <label className="block text-xs text-zinc-400">Machine
+        <label className="block text-xs text-muted-foreground">Machine
           <select value={machine} onChange={(e) => pick(e.target.value)} className={field}>
             {machines.map((m) => <option key={m}>{m}</option>)}
           </select>
         </label>
         <BypassToggle checked={bypass} root={!!state.machines[machine]?.caps?.root} onChange={setBypass} />
       </div>
-      <label className="mt-2 block text-xs text-zinc-400">Checkout
+      <label className="mt-2 block text-xs text-muted-foreground">Checkout
         <Input list={`co-${ticketId}`} value={root} onChange={(e) => setRoot(e.target.value)} placeholder="/path/to/repo" className={field} />
         <datalist id={`co-${ticketId}`}>{roots.map((r) => <option key={r} value={r} />)}</datalist>
-        {roots.length === 0 && <span className="mt-1 block text-[11px] text-zinc-600">This machine has no known checkouts of the project: type the path.</span>}
+        {roots.length === 0 && <span className="mt-1 block text-xs text-muted-foreground">This machine has no known checkouts of the project: type the path.</span>}
       </label>
       {error && (
-        <p role="alert" className="mt-2 flex items-center gap-2 text-xs text-red-400">
+        <p role="alert" className="mt-2 flex items-center gap-2 text-xs text-danger">
           {error}
           {other && <Button size="sm" onClick={() => onOpenSession?.(other)} className="min-h-11 text-xs">Go to session</Button>}
         </p>
@@ -253,13 +253,13 @@ function ProposeStatus({ ticketId, current }: { ticketId: string; current: strin
     <section>
       <h3 className={h3}>Change status</h3>
       <div className="flex items-center gap-2">
-        <select aria-label="New status" value={to} onChange={(e) => setTo(e.target.value)} className="min-h-11 min-w-0 flex-1 rounded border border-zinc-800 bg-zinc-900 p-1.5 text-sm">
+        <select aria-label="New status" value={to} onChange={(e) => setTo(e.target.value)} className="min-h-11 min-w-0 flex-1 rounded-lg border border-line bg-surface p-1.5 text-sm">
           {options.map((s) => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
         </select>
         <Button variant="secondary" disabled={busy} onClick={go} className="min-h-11 text-xs">Propose</Button>
       </div>
-      <p className="mt-1 text-[11px] text-zinc-600">Quorum never writes to the ticket source on its own: it stays a proposal until you approve it.</p>
-      {msg && <p className="mt-1 text-xs text-zinc-400">{msg}</p>}
+      <p className="mt-1 text-xs text-muted-foreground">Quorum never writes to the ticket source on its own: it stays a proposal until you approve it.</p>
+      {msg && <p className="mt-1 text-xs text-muted-foreground">{msg}</p>}
     </section>
   )
 }

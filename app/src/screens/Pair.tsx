@@ -25,25 +25,25 @@ export default function Pair({ onPaired }: { onPaired: () => void }) {
     }
   }
 
-  const input = 'min-h-11 border-zinc-700 bg-zinc-900 px-3 py-2 text-sm'
+  const input = 'min-h-11 border-line bg-surface px-3 py-2 text-sm'
   return (
     <main className="flex min-h-full items-center justify-center p-4">
       <form onSubmit={submit} className="w-full max-w-sm space-y-4">
         <h1 className="text-2xl font-semibold tracking-tight">Quorum</h1>
-        <p className="text-sm text-zinc-400">Pair this device with your hub. Generate a code on the hub with <code className="text-zinc-300">quorum-hub pair</code>.</p>
+        <p className="text-sm text-muted-foreground">Pair this device with your hub. Generate a code on the hub with <code className="text-ink">quorum-hub pair</code>.</p>
         <label className="block space-y-1 text-sm">
-          <span className="text-zinc-400">Hub address</span>
+          <span className="text-muted-foreground">Hub address</span>
           <Input className={input} value={hub} onChange={(e) => setHub(e.target.value)} placeholder="http://my-hub:7420" autoCapitalize="none" autoCorrect="off" />
         </label>
         <label className="block space-y-1 text-sm">
-          <span className="text-zinc-400">Code</span>
+          <span className="text-muted-foreground">Code</span>
           <Input className={input + ' font-mono tracking-widest'} value={code} onChange={(e) => setCode(e.target.value)} autoComplete="one-time-code" required />
         </label>
         <label className="block space-y-1 text-sm">
-          <span className="text-zinc-400">Device name</span>
+          <span className="text-muted-foreground">Device name</span>
           <Input className={input} value={name} onChange={(e) => setName(e.target.value)} required />
         </label>
-        {err && <p role="alert" className="text-sm text-red-400">{err}</p>}
+        {err && <p role="alert" className="text-sm text-danger">{err}</p>}
         <Button type="submit" disabled={busy || !code.trim()} className="min-h-11 w-full">
           {busy ? 'Pairing…' : 'Pair'}
         </Button>

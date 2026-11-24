@@ -27,6 +27,7 @@ import type {
   HighlighterGeneric,
   ThemedToken,
 } from "shiki";
+import { CODE_THEMES } from "@/lib/tokens";
 
 // Shiki uses bitflags for font styles: 1=italic, 2=bold, 4=underline
 // oxlint-disable-next-line eslint(no-bitwise)
@@ -56,10 +57,17 @@ const addKeysToTokens = (lines: ThemedToken[][]): KeyedLine[] =>
     })),
   }));
 
-// Token rendering component
-const TokenSpan = ({ token }: { token: ThemedToken }) => (
+// Token rendering component. Quorum: a token that carries a background (diff, highlight) also
+// switches it in `.dark`; others keep a transparent background over the container.
+const hasDarkBg = (token: ThemedToken) =>
+  token.htmlStyle != null && "--shiki-dark-bg" in token.htmlStyle;
+
+export const TokenSpan = ({ token }: { token: ThemedToken }) => (
   <span
-    className="dark:!bg-[var(--shiki-dark-bg)] dark:!text-[var(--shiki-dark)]"
+    className={cn(
+      "dark:!text-[var(--shiki-dark)]",
+      hasDarkBg(token) && "dark:!bg-[var(--shiki-dark-bg)]"
+    )}
     style={
       {
         backgroundColor: token.bgColor,
@@ -158,7 +166,7 @@ const getHighlighter = (
   const highlighterPromise = import("shiki").then(({ createHighlighter }) =>
     createHighlighter({
       langs: [language],
-      themes: ["github-light", "github-dark"],
+      themes: [...CODE_THEMES],
     })
   );
 
@@ -215,8 +223,8 @@ export const highlightCode = (
       const result = highlighter.codeToTokens(code, {
         lang: langToUse,
         themes: {
-          dark: "github-dark",
-          light: "github-light",
+          dark: CODE_THEMES[1],
+          light: CODE_THEMES[0],
         },
       });
 
@@ -257,14 +265,8 @@ const CodeBlockBody = memo(
     showLineNumbers: boolean;
     className?: string;
   }) => {
-    const preStyle = useMemo(
-      () => ({
-        backgroundColor: tokenized.bg,
-        color: tokenized.fg,
-      }),
-      [tokenized.bg, tokenized.fg]
-    );
-
+    // Quorum: no shiki background or foreground on <pre>: the container's tokens show in both
+    // themes, and each token carries its light colour plus --shiki-dark for `.dark`.
     const keyedLines = useMemo(
       () => addKeysToTokens(tokenized.tokens),
       [tokenized.tokens]
@@ -273,10 +275,9 @@ const CodeBlockBody = memo(
     return (
       <pre
         className={cn(
-          "dark:!bg-[var(--shiki-dark-bg)] dark:!text-[var(--shiki-dark)] m-0 p-4 text-sm",
+          "m-0 bg-transparent p-4 text-sm",
           className
         )}
-        style={preStyle}
       >
         <code
           className={cn(
@@ -311,7 +312,7 @@ export const CodeBlockContainer = ({
 }: HTMLAttributes<HTMLDivElement> & { language: string }) => (
   <div
     className={cn(
-      "group relative w-full overflow-hidden rounded-md border bg-background text-foreground",
+      "group relative w-full overflow-hidden rounded-xl border border-line bg-surface text-ink",
       className
     )}
     data-language={language}
@@ -331,7 +332,7 @@ export const CodeBlockHeader = ({
 }: HTMLAttributes<HTMLDivElement>) => (
   <div
     className={cn(
-      "flex items-center justify-between border-b bg-muted/80 px-3 py-2 text-muted-foreground text-xs",
+      "flex items-center justify-between border-b border-line bg-chip px-3 py-2 text-muted-foreground text-xs",
       className
     )}
     {...props}

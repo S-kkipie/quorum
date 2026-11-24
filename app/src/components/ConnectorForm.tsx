@@ -51,21 +51,21 @@ export function validateConnector(d: ConnectorDraft): string {
   return ''
 }
 
-const field = 'mt-1 min-h-11 w-full rounded border border-zinc-800 bg-zinc-900 p-2 text-sm md:text-sm'
+const field = 'mt-1 min-h-11 w-full rounded-lg border border-line bg-surface p-2 text-sm md:text-sm'
 
 export default function ConnectorForm({ value, onChange, hasToken }: { value: ConnectorDraft; onChange: (d: ConnectorDraft) => void; hasToken?: boolean }) {
   const d = value
   const set = (k: string, v: string) => onChange({ ...d, settings: { ...d.settings, [k]: v } })
   const text = (k: string, label: string, placeholder = '', hint = '') => (
-    <label className="mt-3 block text-xs text-zinc-400">{label}
+    <label className="mt-3 block text-xs text-muted-foreground">{label}
       <Input aria-label={label} value={d.settings[k] ?? ''} onChange={(e) => set(k, e.target.value)} placeholder={placeholder} className={field} />
-      {hint && <span className="mt-1 block text-[11px] text-zinc-600">{hint}</span>}
+      {hint && <span className="mt-1 block text-xs text-muted-foreground">{hint}</span>}
     </label>
   )
   return (
-    <fieldset className="mt-3 rounded border border-zinc-800 p-3">
-      <legend className="px-1 text-xs text-zinc-400">Ticket source</legend>
-      <label className="block text-xs text-zinc-400">Connector
+    <fieldset className="mt-3 rounded-xl border border-line p-3">
+      <legend className="px-1 text-xs text-muted-foreground">Ticket source</legend>
+      <label className="block text-xs text-muted-foreground">Connector
         <select value={d.kind} onChange={(e) => onChange({ ...d, kind: e.target.value, settings: e.target.value === d.kind ? d.settings : {} })} className={field}>
           {KINDS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
         </select>
@@ -89,19 +89,19 @@ export default function ConnectorForm({ value, onChange, hasToken }: { value: Co
       {d.kind === 'exec' && (
         <>
           {text('command', 'Command', '/path/to/connector.sh', 'No shell: the program and its arguments separated by spaces.')}
-          <label className="mt-3 block text-xs text-zinc-400">Status map (JSON, optional)
+          <label className="mt-3 block text-xs text-muted-foreground">Status map (JSON, optional)
             <Textarea value={d.settings.statusMap ?? ''} onChange={(e) => set('statusMap', e.target.value)} rows={2} placeholder='{"waiting":"blocked"}' className={field + ' font-mono'} />
           </label>
         </>
       )}
       {usesToken(d.kind) && (
-        <label className="mt-3 block text-xs text-zinc-400">Token
+        <label className="mt-3 block text-xs text-muted-foreground">Token
           <Input aria-label="Token" type="password" autoComplete="new-password" value={d.token} onChange={(e) => onChange({ ...d, token: e.target.value, clearToken: false })}
             placeholder={hasToken && !d.clearToken ? 'saved · type to replace it' : 'no token'} className={field} />
           {hasToken && (
-            <span className="mt-1 flex items-center gap-2 text-[11px] text-zinc-500">
+            <span className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
               {d.clearToken ? 'Will be deleted on save.' : 'Write-only: not shown.'}
-              <Button type="button" variant="link" size="sm" onClick={() => onChange({ ...d, token: '', clearToken: !d.clearToken })} className="min-h-11 text-red-400">
+              <Button type="button" variant="link" size="sm" onClick={() => onChange({ ...d, token: '', clearToken: !d.clearToken })} className="min-h-11 text-danger">
                 {d.clearToken ? 'Keep' : 'Delete token'}
               </Button>
             </span>
@@ -109,7 +109,7 @@ export default function ConnectorForm({ value, onChange, hasToken }: { value: Co
         </label>
       )}
       {d.kind !== 'none' && (
-        <label className="mt-3 block text-xs text-zinc-400">Sync every (minutes)
+        <label className="mt-3 block text-xs text-muted-foreground">Sync every (minutes)
           <Input type="number" min={1} max={60} value={d.intervalMin} onChange={(e) => onChange({ ...d, intervalMin: Number(e.target.value) })} className={field} />
         </label>
       )}

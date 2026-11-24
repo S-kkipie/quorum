@@ -14,15 +14,15 @@ export default function Starting({ pending, terminal = false, onBack, onViewTerm
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
       {!pending ? (
-        <p className="text-sm text-zinc-400">No launch in progress.</p>
+        <p className="text-sm text-muted-foreground">No launch in progress.</p>
       ) : pending.error ? (
-        <p role="alert" className="text-sm text-red-400">{pending.error}</p>
+        <p role="alert" className="text-sm text-danger">{pending.error}</p>
       ) : late ? (
-        <p role="alert" className="text-sm text-amber-400">Claude did not register within 60 s</p>
+        <p role="alert" className="text-sm text-warning">Claude did not register within 60 s</p>
       ) : (
         <>
-          <Spinner className="size-6 text-blue-500" />
-          <p className="text-sm text-zinc-200">Starting Claude on {pending.machine}…</p>
+          <Spinner className="size-6 text-accent" />
+          <p className="text-sm text-ink">Starting Claude on {pending.machine}…</p>
         </>
       )}
       <div className="flex gap-2">

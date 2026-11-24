@@ -19,9 +19,9 @@ export default function Projects({ state, wide, selected, onOpen, onOpenSession,
 
   if (workspaces.length === 0) {
     return (
-      <div className="p-6 text-center text-sm text-zinc-500">
+      <div className="p-6 text-center text-sm text-muted-foreground">
         <p>No workspaces or projects yet.</p>
-        {onConfig && <button onClick={onConfig} className="mt-3 rounded bg-blue-600 px-3 py-1.5 text-white">Open settings</button>}
+        {onConfig && <button onClick={onConfig} className="press mt-3 min-h-11 rounded-lg bg-accent px-4 text-on-accent hover:bg-accent/90">Open settings</button>}
       </div>
     )
   }
@@ -29,15 +29,15 @@ export default function Projects({ state, wide, selected, onOpen, onOpenSession,
     const list = [...projects].sort((a, b) => projectAttention(state, a.id) - projectAttention(state, b.id) || a.name.localeCompare(b.name))
     return (
     <section key={key} className={wide ? 'flex w-[300px] shrink-0 flex-col' : 'mt-4'}>
-      <h2 className="flex items-start gap-2 px-3 pb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">
+      <h2 className="flex items-start gap-2 px-3 pb-2 text-[13px] font-medium text-muted-foreground">
         <span className="mt-0.5 h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: color || '#71717a' }} />
         {title}
-        <span className="font-normal text-zinc-600">{list.length}</span>
+        <span className="font-normal">{list.length}</span>
       </h2>
       <div className="space-y-2 px-3">
         {list.length ? list.map((p) => (
           <ProjectCard key={p.id} project={p} sessions={projectSessions(state, p.id)} pending={pending[p.id] ?? 0} lastActivity={lastActivity(state, p.id)} active={p.id === selected} onOpen={onOpen} onOpenSession={onOpenSession} />
-        )) : <p className="text-xs text-zinc-600">No projects.</p>}
+        )) : <p className="text-xs text-muted-foreground">No projects.</p>}
       </div>
     </section>
     )

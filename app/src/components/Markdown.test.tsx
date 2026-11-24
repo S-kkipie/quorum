@@ -50,11 +50,11 @@ describe('Markdown', () => {
   it('fenced block without language has no pill classes and keeps Copy', () => {
     const { container } = render(<Markdown text={'```\nplain\n```'} />)
     const code = container.querySelector('pre code')!
-    expect(code.className).not.toContain('bg-zinc-800')
+    expect(code.className).not.toContain('bg-chip')
     expect(code.className).not.toContain('px-1')
     expect(screen.getByRole('button', { name: 'Copy' })).toBeTruthy()
     render(<Markdown text={'inline `x` here'} />)
-    expect(document.querySelector('p code')!.className).toContain('bg-zinc-800')
+    expect(document.querySelector('p code')!.className).toContain('bg-chip')
   })
   it('autolink and mixed-case/whitespace javascript: scheme', () => {
     const { container } = render(<Markdown text={'<https://example.com/a> [bad]( JaVaScRiPt:alert(1))\n\n[b2](<JaVaScRiPt:x>)'} />)
@@ -62,5 +62,10 @@ describe('Markdown', () => {
     expect(links.length).toBe(1)
     expect(links[0].getAttribute('href')).toBe('https://example.com/a')
     expect(container.textContent).toContain('bad')
+  })
+  it('uses the answers typography: serif 15.5px / 1.6, ~70ch measure', () => {
+    const { container } = render(<Markdown text="Some prose" />)
+    const root = container.firstElementChild as HTMLElement
+    for (const c of ['font-serif', 'text-[15.5px]', 'leading-[1.6]', 'max-w-[70ch]']) expect(root.className).toContain(c)
   })
 })

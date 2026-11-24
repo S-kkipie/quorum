@@ -43,7 +43,7 @@ export default function Project({ state, id, onBack, onOpenTickets, onOpenSessio
   // "Syncing…" until the sync's project_upsert arrives
   useEffect(() => { setSyncing(false) }, [p?.syncedAt, p?.syncError])
 
-  if (!p) return <p className="p-4 text-sm text-zinc-500">{onBack && <button onClick={onBack} aria-label="Back" className="mr-2 inline-flex min-h-11 min-w-11 items-center justify-center text-zinc-400">←</button>}Project not found.</p>
+  if (!p) return <p className="p-4 text-sm text-muted-foreground">{onBack && <button onClick={onBack} aria-label="Back" className="mr-2 inline-flex min-h-11 min-w-11 items-center justify-center text-muted-foreground">←</button>}Project not found.</p>
 
   const ws = state.workspaces[p.workspaceId]
   const tickets = state.tickets[id] ?? []
@@ -65,13 +65,13 @@ export default function Project({ state, id, onBack, onOpenTickets, onOpenSessio
 
   return (
     <div className="pb-10">
-      <header className="sticky top-0 z-10 flex items-center gap-2 border-b border-zinc-800 bg-zinc-950/90 px-3 py-2 backdrop-blur">
-        {onBack && <button onClick={onBack} aria-label="Back" className="flex min-h-11 min-w-11 items-center justify-center text-zinc-400">←</button>}
+      <header className="sticky top-0 z-10 flex items-center gap-2 border-b border-line bg-background/90 px-3 py-2 backdrop-blur">
+        {onBack && <button onClick={onBack} aria-label="Back" className="flex min-h-11 min-w-11 items-center justify-center text-muted-foreground">←</button>}
         {ws && <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: ws.color || '#71717a' }} title={ws.name} />}
         <h2 className="min-w-0 flex-1 truncate text-base font-semibold">{p.name}</h2>
         <DropdownMenu modal={false}>
           <DropdownMenuTrigger asChild>
-            <button aria-label="Project menu" className="flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded text-zinc-400 hover:bg-zinc-900"><MoreHorizontal className="h-5 w-5" /></button>
+            <button aria-label="Project menu" className="flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-chip"><MoreHorizontal className="h-5 w-5" /></button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             <DropdownMenuItem className="min-h-11" onSelect={() => onOpenTickets?.(id)}>Tickets ({tickets.length})</DropdownMenuItem>
@@ -82,12 +82,12 @@ export default function Project({ state, id, onBack, onOpenTickets, onOpenSessio
         </DropdownMenu>
       </header>
       <div className="px-3 pt-3">
-        {p.summary && <p className="mt-2 text-sm text-zinc-300">{p.summary}</p>}
-        <p className="mt-1 text-xs text-zinc-600">
+        {p.summary && <p className="mt-2 text-sm text-ink">{p.summary}</p>}
+        <p className="mt-1 text-xs text-muted-foreground">
           {ws?.name}{p.repoUrl && ` · ${p.repoUrl}`}{p.syncedAt ? ` · ${p.syncError ? 'last attempt' : 'synced'} ${since(p.syncedAt)}` : ''}
         </p>
-        {p.syncError && <p role="alert" className="mt-2 rounded bg-red-500/10 px-2 py-1 text-xs [overflow-wrap:anywhere] text-red-300">Sync error: {p.syncError}</p>}
-        {error && <p role="alert" className="mt-2 text-xs text-red-400">{error}</p>}
+        {p.syncError && <p role="alert" className="mt-2 rounded-lg bg-del-soft px-2 py-1 text-xs [overflow-wrap:anywhere] text-danger">Sync error: {p.syncError}</p>}
+        {error && <p role="alert" className="mt-2 text-xs text-danger">{error}</p>}
       </div>
 
       <NewSessionCard state={state} projectId={id} pending={pending} onLaunched={(p) => onLaunched?.(p)} onGuard={(f) => onGuard?.(f) ?? Promise.resolve()} onTerminal={(m, r) => onTerminal?.(m, r)} />
@@ -101,15 +101,15 @@ export default function Project({ state, id, onBack, onOpenTickets, onOpenSessio
             <SheetDescription className="sr-only">Machines and folders where this project is checked out.</SheetDescription>
           </SheetHeader>
           {checkouts.length ? (
-            <ul className="px-4 pb-4 text-xs text-zinc-400">
+            <ul className="px-4 pb-4 text-xs text-muted-foreground">
               {checkouts.map((c) => (
                 <li key={c.machine + c.root} className="truncate py-1">
-                  <span className={state.machines[c.machine]?.online ? 'text-emerald-400' : 'text-zinc-600'}>●</span> {c.machine} · <span className="font-mono">{c.root}</span>{c.branch && ` · ${c.branch}`}
+                  <span className={state.machines[c.machine]?.online ? 'text-success' : 'text-muted-foreground'}>●</span> {c.machine} · <span className="font-mono">{c.root}</span>{c.branch && ` · ${c.branch}`}
                 </li>
               ))}
             </ul>
           ) : (
-            <p className="px-4 pb-4 text-xs text-zinc-600">None yet: they appear on their own when there are sessions in the project's repo.</p>
+            <p className="px-4 pb-4 text-xs text-muted-foreground">None yet: they appear on their own when there are sessions in the project's repo.</p>
           )}
         </SheetContent>
       </Sheet>

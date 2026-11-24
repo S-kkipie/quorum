@@ -294,6 +294,19 @@ describe('Transcript: command cards', () => {
     expect(bubble.className).toContain('font-mono')
     expect(screen.queryByText(/<command-/)).toBeNull()
   })
+  it('Claude answers in the reading serif at 15.5 px, capped near 70ch; your messages sit in the bubble fill', () => {
+    render(<Transcript events={[ev(1, 'user', { text: 'hello' }), ev(2, 'assistant', { text: 'hi there' })]} live="still typing" />)
+    const [answer, live] = screen.getAllByRole('article', { name: 'Claude' }).map((a) => a.firstElementChild as HTMLElement)
+    for (const el of [answer, live]) {
+      expect(el.className).toMatch(/\bfont-serif\b/)
+      expect(el.className).toContain('text-[15.5px]')
+      expect(el.className).toContain('leading-[1.6]')
+      expect(el.className).toContain('max-w-[70ch]')
+    }
+    const you = screen.getByRole('article', { name: 'You' }).firstElementChild as HTMLElement
+    expect(you.className).toContain('bg-bubble')
+    expect(you.className).not.toMatch(/font-serif/)
+  })
   it('short output has no Show more', () => {
     render(<Transcript events={[cmd(1, { id: 'a', name: 'recap', status: 'done', text: 'one\ntwo' })]} />)
     expect(screen.queryByRole('button', { name: 'Show more' })).toBeNull()

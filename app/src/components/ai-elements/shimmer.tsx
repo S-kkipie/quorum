@@ -32,6 +32,8 @@ const ShimmerComponent = ({
         "relative inline-block bg-[length:250%_100%,auto] bg-clip-text text-transparent",
         "[--bg:linear-gradient(90deg,#0000_calc(50%-var(--spread)),var(--color-background),#0000_calc(50%+var(--spread)))] [background-repeat:no-repeat,padding-box]",
         "animate-[shimmer-sweep_var(--shimmer-duration)_linear_infinite]",
+        // Quorum: reduced motion shows the plain muted label, no sweep (the inline gradient needs !)
+        "motion-reduce:animate-none motion-reduce:!bg-none motion-reduce:text-muted-foreground",
         className
       )}
       style={

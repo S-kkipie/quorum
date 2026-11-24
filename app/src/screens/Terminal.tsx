@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import { closeTerminal, openTerminal, readTerminal, sendTerminal, watchTerminal } from '../lib/api'
 import { parseAnsi, type Span } from '../lib/ansi'
 import { frames } from '../lib/frames'
+import { TOKENS } from '../lib/tokens'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
@@ -10,8 +11,9 @@ const KEYS: [string, string][] = [
   ['Esc', 'esc'], ['Tab', 'tab'], ['Ctrl-C', 'ctrl+c'], ['↑', 'up'], ['↓', 'down'], ['←', 'left'], ['→', 'right'], ['Ctrl-D', 'ctrl+d'], ['Ctrl-L', 'ctrl+l'],
 ]
 const clamp = (lo: number, hi: number, v: number) => Math.max(lo, Math.min(hi, v))
-const FG = '#e4e4e7'
-const BG = '#09090b'
+// the terminal screen is dark in both themes: its box carries .dark, so tokens inside resolve to dark values
+const FG = TOKENS.dark.ink
+const BG = TOKENS.dark.background
 
 function spanStyle(s: Span): CSSProperties {
   let fg = s.fg, bg = s.bg
@@ -123,10 +125,10 @@ export default function Terminal({ machine, pane, root, label, onBack, onReopen 
   const noBlur = { onPointerDown: (e: React.PointerEvent) => e.preventDefault() }
   const btn = 'min-h-11 shrink-0 px-2.5 text-xs'
   return (
-    <div className="flex h-full min-h-0 flex-col bg-zinc-950">
-      <header className="flex shrink-0 items-center gap-2 border-b border-zinc-800 px-3 py-2">
+    <div className="flex h-full min-h-0 flex-col bg-background">
+      <header className="flex shrink-0 items-center gap-2 border-b border-line px-3 py-2">
         <Button variant="secondary" onClick={onBack} aria-label="Back" className="min-h-11 px-2">←</Button>
-        <span className="min-w-0 flex-1 truncate text-sm">{label || 'Terminal'} <span className="text-xs text-zinc-500">{machine}</span></span>
+        <span className="min-w-0 flex-1 truncate text-sm">{label || 'Terminal'} <span className="text-xs text-muted-foreground">{machine}</span></span>
         <Button variant="secondary" onClick={() => zoom(-1)} className={btn}>A−</Button>
         <Button variant="secondary" onClick={() => zoom(1)} className={btn}>A+</Button>
         <Button variant="secondary" onClick={() => (history === null ? showHistory() : setHistory(null))} className={btn}>{history === null ? 'History' : 'Live'}</Button>
@@ -142,31 +144,31 @@ export default function Terminal({ machine, pane, root, label, onBack, onReopen 
           </DropdownMenu>
         )}
       </header>
-      <div ref={box} className="min-h-0 flex-1 overflow-auto bg-zinc-950 p-2">
+      <div ref={box} className="min-h-0 flex-1 dark overflow-auto bg-background p-2 text-ink">
         {history !== null ? (
-          <pre className="m-0 font-mono text-zinc-200" style={{ fontSize: size, lineHeight: 1.25 }}><Screen ansi={history} /></pre>
+          <pre className="m-0 font-mono text-ink" style={{ fontSize: size, lineHeight: 1.25 }}><Screen ansi={history} /></pre>
         ) : closed ? (
           <div className="flex flex-col items-center gap-3 p-6 text-center">
-            <p className="text-sm text-zinc-300">Terminal closed</p>
+            <p className="text-sm text-ink">Terminal closed</p>
             {root && <Button className="min-h-11" onClick={reopen}>Open another</Button>}
           </div>
         ) : frame ? (
-          <pre className="m-0 w-max font-mono text-zinc-200" style={{ fontSize: size, lineHeight: 1.25 }}><Screen ansi={frame.ansi} /></pre>
+          <pre className="m-0 w-max font-mono text-ink" style={{ fontSize: size, lineHeight: 1.25 }}><Screen ansi={frame.ansi} /></pre>
         ) : waited ? (
-          <p className="p-4 text-sm text-zinc-500">Connecting to the terminal…</p>
+          <p className="p-4 text-sm text-muted-foreground">Connecting to the terminal…</p>
         ) : null}
       </div>
-      {noSignal && <p role="status" className="shrink-0 bg-amber-950 px-3 py-1 text-xs text-amber-300">No signal: {watchErr || 'retrying…'}</p>}
-      {err && <p role="alert" className="shrink-0 px-3 py-1 text-xs text-red-400">{err}</p>}
+      {noSignal && <p role="status" className="shrink-0 bg-state-needs-soft px-3 py-1 text-xs text-state-needs">No signal: {watchErr || 'retrying…'}</p>}
+      {err && <p role="alert" className="shrink-0 px-3 py-1 text-xs text-danger">{err}</p>}
       {!closed && history === null && (
-        <footer className="shrink-0 border-t border-zinc-800 bg-zinc-950 pb-[env(safe-area-inset-bottom)]">
+        <footer className="shrink-0 border-t border-line bg-background pb-[env(safe-area-inset-bottom)]">
           <div className="flex gap-1.5 overflow-x-auto px-2 pt-2">
             {KEYS.map(([name, k]) => <Button key={k} variant="secondary" {...noBlur} onClick={() => key1(k)} className={btn}>{name}</Button>)}
           </div>
           <form className="flex gap-2 p-2" onSubmit={(e) => { e.preventDefault(); submit() }}>
             <Input value={text} onChange={(e) => setText(e.target.value)} placeholder="Type…" enterKeyHint="send"
               autoCapitalize="off" autoCorrect="off" autoComplete="off" spellCheck={false}
-              className="min-h-11 min-w-0 flex-1 border-0 bg-zinc-900 px-3 py-2 text-base text-zinc-100" />
+              className="min-h-11 min-w-0 flex-1 border-0 bg-surface px-3 py-2 text-base text-ink" />
             <Button type="submit" aria-label="⏎" className="min-h-11 shrink-0 px-4">⏎</Button>
           </form>
         </footer>

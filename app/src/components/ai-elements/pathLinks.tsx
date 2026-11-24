@@ -70,7 +70,7 @@ export function PathSpan(props: ComponentProps<"span"> & { node?: unknown; "data
       type="button"
       aria-label={`Open ${rel}`}
       onClick={() => ctx.onOpen(path)}
-      className="inline cursor-pointer break-all border-0 bg-transparent p-0 text-left align-baseline text-blue-400 underline decoration-blue-400/60 underline-offset-2 hover:text-blue-300"
+      className="inline cursor-pointer break-all border-0 bg-transparent p-0 text-left align-baseline font-medium text-accent underline decoration-accent/50 underline-offset-2 hover:decoration-accent"
     >
       {children}
     </button>

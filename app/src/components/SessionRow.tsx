@@ -26,7 +26,7 @@ export default function SessionRowView({ row, project, active, disabled, detaile
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const now = useWakeClock(row.kind === 'live' ? [row.session] : [])
-  const cls = `flex min-h-11 w-full items-center gap-3 px-3 py-1.5 text-left hover:bg-zinc-900 disabled:opacity-40 ${active ? 'bg-zinc-900' : ''}`
+  const cls = `flex min-h-11 w-full items-center gap-3 px-3 py-1.5 text-left hover:bg-chip active:bg-chip disabled:opacity-40 ${active ? 'bg-chip' : ''}`
   if (row.kind === 'live') {
     const s = row.session
     const display = displayState(s)
@@ -54,20 +54,20 @@ export default function SessionRowView({ row, project, active, disabled, detaile
             <span {...(display === 'done' ? { role: 'img', 'aria-label': 'Unread' } : {})} className={`h-2.5 w-2.5 shrink-0 rounded-full ${st.dot}`} />
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm font-medium">{title}</span>
-              <span className="block truncate text-xs text-zinc-500">
-                {project && <span className="text-zinc-400">{project} · </span>}{short} · {detailed ? s.cwd : s.machine}
+              <span className="block truncate text-xs text-muted-foreground">
+                {project && `${project} · `}{short} · {detailed ? s.cwd : s.machine}
               </span>
             </span>
             <span className="shrink-0 text-right text-xs">
               <span className={`block ${st.text}`}>{st.label}</span>
               {detail && <span className={`block ${st.text} opacity-80`}>{detail}</span>}
-              {detailed && <span className="block text-zinc-600">{s.contextPct > 0 ? `${s.contextPct}% · ` : ''}{since(toMs(s.updatedAt))}</span>}
+              {detailed && <span className="block text-muted-foreground">{s.contextPct > 0 ? `${s.contextPct}% · ` : ''}{since(toMs(s.updatedAt))}</span>}
             </span>
           </button>
           {closable && (
             <DropdownMenu modal={false}>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" aria-label="Session actions" className="size-11 shrink-0 text-zinc-400"><MoreHorizontal /></Button>
+                <Button variant="ghost" size="icon" aria-label="Session actions" className="size-11 shrink-0 text-muted-foreground"><MoreHorizontal /></Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuItem className="min-h-11" onSelect={() => setConfirm(true)}>Close session</DropdownMenuItem>
@@ -75,7 +75,7 @@ export default function SessionRowView({ row, project, active, disabled, detaile
             </DropdownMenu>
           )}
         </div>
-        {error && <p role="alert" className="px-3 pb-1 text-xs text-red-400">{error}</p>}
+        {error && <p role="alert" className="px-3 pb-1 text-xs text-danger">{error}</p>}
         <Dialog open={confirm} onOpenChange={setConfirm}>
           <DialogContent showCloseButton={false}>
             <DialogHeader>
@@ -94,14 +94,14 @@ export default function SessionRowView({ row, project, active, disabled, detaile
   return (
     <li>
       <button disabled={disabled} onClick={() => onResume?.(row)} className={cls}>
-        <span className="h-2.5 w-2.5 shrink-0 rounded-full border border-zinc-700" />
+        <span className="h-2.5 w-2.5 shrink-0 rounded-full border border-line" />
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm">{row.title}</span>
-          <span className="block truncate text-xs text-zinc-500">
-            {project && <span className="text-zinc-400">{project} · </span>}{row.machine}
+          <span className="block truncate text-xs text-muted-foreground">
+            {project && `${project} · `}{row.machine}
           </span>
         </span>
-        <span className="shrink-0 text-xs text-zinc-500">{since(toMs(row.updatedAt))}{row.messages > 0 && ` · ${row.messages} ${row.messages === 1 ? 'message' : 'messages'}`}</span>
+        <span className="shrink-0 text-xs text-muted-foreground">{since(toMs(row.updatedAt))}{row.messages > 0 && ` · ${row.messages} ${row.messages === 1 ? 'message' : 'messages'}`}</span>
       </button>
     </li>
   )

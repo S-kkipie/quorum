@@ -9,19 +9,25 @@ import { toolPartState, toolView, type ToolView } from '../../lib/elements'
 import { absPath, basename, inBase, type AgentItem, type OpenOpts, type ReadsItem, type ToolItem as Tool, type ToolKind } from '../../lib/timeline'
 import ViewThumb from './ViewThumb'
 
+// Colour only where it carries meaning: changes to files in the accent, subagents and skills in the
+// background-state violet, everything that only looks around stays neutral. The neutral tile turns
+// surface while its row is hovered or pressed (the row itself turns chip), so it never disappears.
+const NEUTRAL = 'bg-chip text-muted-foreground group-hover/row:bg-surface group-active/row:bg-surface'
+const CHANGE = 'bg-accent-soft text-accent'
+const DELEGATE = 'bg-state-background-soft text-state-background'
 const KIND: Record<ToolKind, { icon: LucideIcon; tint: string }> = {
-  read: { icon: FileText, tint: 'bg-sky-500/15 text-sky-300' },
-  search: { icon: Search, tint: 'bg-sky-500/15 text-sky-300' },
-  edit: { icon: FilePen, tint: 'bg-amber-500/15 text-amber-300' },
-  write: { icon: FilePlus, tint: 'bg-emerald-500/15 text-emerald-300' },
-  bash: { icon: Terminal, tint: 'bg-zinc-500/20 text-zinc-300' },
-  web_search: { icon: Search, tint: 'bg-cyan-500/15 text-cyan-300' },
-  web_fetch: { icon: Globe, tint: 'bg-cyan-500/15 text-cyan-300' },
-  skill: { icon: Sparkles, tint: 'bg-fuchsia-500/15 text-fuchsia-300' },
-  agent: { icon: Bot, tint: 'bg-violet-500/15 text-violet-300' },
-  todo: { icon: ListTodo, tint: 'bg-teal-500/15 text-teal-300' },
-  mcp: { icon: Plug, tint: 'bg-indigo-500/15 text-indigo-300' },
-  other: { icon: Wrench, tint: 'bg-zinc-500/20 text-zinc-300' },
+  read: { icon: FileText, tint: NEUTRAL },
+  search: { icon: Search, tint: NEUTRAL },
+  edit: { icon: FilePen, tint: CHANGE },
+  write: { icon: FilePlus, tint: CHANGE },
+  bash: { icon: Terminal, tint: NEUTRAL },
+  web_search: { icon: Search, tint: NEUTRAL },
+  web_fetch: { icon: Globe, tint: NEUTRAL },
+  skill: { icon: Sparkles, tint: DELEGATE },
+  agent: { icon: Bot, tint: DELEGATE },
+  todo: { icon: ListTodo, tint: NEUTRAL },
+  mcp: { icon: Plug, tint: NEUTRAL },
+  other: { icon: Wrench, tint: NEUTRAL },
 }
 
 /** Files the viewer can show when they were edited (Edit of a .md or an image gets no card). */
@@ -35,10 +41,10 @@ const MAX_CHARS = 4000
 
 function StateIcon({ state }: { state: ToolView['state'] }) {
   switch (state) {
-    case 'running': return <Loader2 size={14} aria-label="running" className="shrink-0 animate-spin text-blue-400" />
-    case 'done': return <Check size={14} aria-label="done" className="shrink-0 text-zinc-600" />
-    case 'error': return <X size={14} aria-label="failed" className="shrink-0 text-red-400" />
-    case 'denied': return <Ban size={14} aria-label="denied" className="shrink-0 text-amber-400" />
+    case 'running': return <Loader2 size={14} aria-label="running" className="shrink-0 animate-spin text-state-working" />
+    case 'done': return <Check size={14} aria-label="done" className="shrink-0 text-success" />
+    case 'error': return <X size={14} aria-label="failed" className="shrink-0 text-danger" />
+    case 'denied': return <Ban size={14} aria-label="denied" className="shrink-0 text-warning" />
   }
 }
 
@@ -47,7 +53,7 @@ function clip(s: string): string {
 }
 
 function Pre({ children }: { children: ReactNode }) {
-  return <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-zinc-400">{children}</pre>
+  return <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-muted-foreground">{children}</pre>
 }
 
 const split = (s: string): string[] => (s ? s.replace(/\n$/, '').split('\n') : [])
@@ -76,11 +82,11 @@ function Diff({ input }: { input: any }) {
   if (!rows.some(Boolean)) return <Pre>(no changes to show)</Pre>
   const shown = rows.slice(0, MAX_LINES)
   return (
-    <div className="max-h-72 overflow-auto font-mono text-[11px] leading-relaxed">
+    <div className="-mx-1 max-h-72 overflow-auto font-mono text-xs leading-relaxed">
       {shown.map((r, k) => r
-        ? <div key={k} className={`whitespace-pre-wrap break-words px-1 ${r.sign === '-' ? 'bg-red-500/10 text-red-300' : 'bg-emerald-500/10 text-emerald-300'}`}>{`${r.sign} ${r.text}`}</div>
-        : <div key={k} className="my-1 border-t border-zinc-800" />)}
-      {rows.length > shown.length && <div className="px-1 text-zinc-500">{rows.length - shown.length} more lines</div>}
+        ? <div key={k} className={`whitespace-pre-wrap break-words px-1 text-ink ${r.sign === '-' ? 'bg-del-soft' : 'bg-add-soft'}`}><span className={r.sign === '-' ? 'text-del' : 'text-add'}>{r.sign}</span>{` ${r.text}`}</div>
+        : <div key={k} className="my-1 border-t border-line" />)}
+      {rows.length > shown.length && <div className="px-1 text-muted-foreground">{rows.length - shown.length} more lines</div>}
     </div>
   )
 }
@@ -95,10 +101,10 @@ function Todos({ input }: { input: any }) {
         const done = status === 'completed'
         return (
           <li key={k} className="flex items-start gap-2">
-            {done ? <CircleCheck size={14} aria-label="completed" className="mt-0.5 shrink-0 text-emerald-400" />
-              : status === 'in_progress' ? <CircleDot size={14} aria-label="in progress" className="mt-0.5 shrink-0 text-blue-400" />
-              : <Circle size={14} aria-label="pending" className="mt-0.5 shrink-0 text-zinc-600" />}
-            <span className={done ? 'text-zinc-500 line-through' : 'text-zinc-300'}>{String(t?.content ?? t?.activeForm ?? '')}</span>
+            {done ? <CircleCheck size={14} aria-label="completed" className="mt-0.5 shrink-0 text-success" />
+              : status === 'in_progress' ? <CircleDot size={14} aria-label="in progress" className="mt-0.5 shrink-0 text-state-working" />
+              : <Circle size={14} aria-label="pending" className="mt-0.5 shrink-0 text-muted-foreground" />}
+            <span className={done ? 'text-muted-foreground line-through' : 'text-ink'}>{String(t?.content ?? t?.activeForm ?? '')}</span>
           </li>
         )
       })}
@@ -113,7 +119,7 @@ function output(t: Tool): string {
 }
 
 function Label({ children }: { children: ReactNode }) {
-  return <div className="mb-1 mt-2 text-[10px] font-medium uppercase tracking-wide text-zinc-600 first:mt-0">{children}</div>
+  return <div className="mb-1 mt-2.5 text-xs font-medium text-muted-foreground first:mt-0">{children}</div>
 }
 
 function ToolDetail({ t }: { t: Tool }) {
@@ -132,7 +138,7 @@ function ToolDetail({ t }: { t: Tool }) {
     )
     default: return (
       <>
-        {t.detail && <div className="mb-1 truncate font-mono text-[11px] text-zinc-500">{t.detail}</div>}
+        {t.detail && <div className="mb-1 truncate font-mono text-xs text-ink">{t.detail}</div>}
         <Pre>{output(t)}</Pre>
       </>
     )
@@ -156,14 +162,14 @@ function ReadThumbs({ files, machine, sessionId, onOpenFile, onMore }: {
   if (!files.length || !machine || !sessionId) return null
   const more = files.length - MAX_THUMBS
   return (
-    <div className="mb-1 ml-[2.4rem] flex flex-wrap gap-2">
+    <div className="mb-2 ml-[2.4rem] flex flex-wrap gap-2">
       {files.slice(0, MAX_THUMBS).map((f) => (
         <ViewThumb key={f} machine={machine} sessionId={sessionId} path={f} mode="read" label={basename(f)}
           onOpen={onOpenFile ? () => onOpenFile(f, { read: true }) : undefined} />
       ))}
       {more > 0 && (
         <button type="button" aria-label={`Show ${more} more images`} onClick={onMore}
-          className="flex size-16 shrink-0 items-center justify-center rounded-lg border border-zinc-800 text-xs text-zinc-500 hover:border-zinc-600 hover:text-zinc-300">{`+${more}`}</button>
+          className="press flex size-16 shrink-0 items-center justify-center rounded-lg border border-line bg-chip text-xs text-muted-foreground hover:text-ink">{`+${more}`}</button>
       )}
     </div>
   )
@@ -178,16 +184,16 @@ function Row({ name, view, tint, Icon, right, nested, below, children }: {
 }) {
   const [open, setOpen] = useState(false)
   return (
-    <ToolBox open={open} onOpenChange={setOpen} className={cn('my-0.5 mb-0.5 rounded-lg border-0', nested && 'ml-5')}>
+    <ToolBox open={open} onOpenChange={setOpen} className={cn('my-1 rounded-xl border border-line bg-surface', nested && 'ml-5')}>
       <ToolHeader
         type="dynamic-tool" toolName={name} title={view.title} state={toolPartState(view.state)}
-        className="min-h-11 gap-2.5 rounded-lg px-1.5 py-0 text-left hover:bg-zinc-900 active:bg-zinc-900 text-zinc-300"
-        icon={<span className={`flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md ${tint}`}><Icon size={13} aria-hidden /></span>}
+        className="group/row min-h-11 gap-2.5 rounded-xl px-2 py-0 text-left text-muted-foreground transition-colors duration-100 hover:bg-chip active:bg-chip"
+        icon={<span className={`flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md transition-colors duration-100 ${tint}`}><Icon size={13} aria-hidden /></span>}
         meta={right}
         status={<StateIcon state={view.state} />}
       />
       {below?.(() => setOpen(true))}
-      <ToolContent className="mb-1 ml-[2.4rem] mr-1 space-y-0 rounded-lg border border-zinc-800 bg-zinc-950 p-2.5 text-zinc-300">{children}</ToolContent>
+      <ToolContent className="mx-2 mb-2 space-y-0 rounded-lg bg-chip p-2.5 text-ink">{children}</ToolContent>
     </ToolBox>
   )
 }
@@ -211,7 +217,7 @@ export default function ToolItem({ item, live, base = '', machine = '', sessionI
     const running = item.status === 'running'
     const view: ToolView = { title: item.description || 'Subagent', icon: 'agent', state: running ? 'running' : /error|fail/i.test(item.status) ? 'error' : 'done' }
     return (
-      <Row name="Agent" view={view} Icon={Bot} tint={KIND.agent.tint} right={item.type ? <span className="min-w-0 max-w-[35%] shrink truncate text-[13px] text-zinc-600">{item.type}</span> : undefined}>
+      <Row name="Agent" view={view} Icon={Bot} tint={KIND.agent.tint} right={item.type ? <span className="min-w-0 max-w-[35%] shrink truncate text-[13px] text-muted-foreground">{item.type}</span> : undefined}>
         <Pre>{clip(item.answer || live || (running ? 'Working…' : '(no answer)'))}</Pre>
       </Row>
     )
@@ -229,8 +235,8 @@ export default function ToolItem({ item, live, base = '', machine = '', sessionI
   const canOpen = item.kind === 'edit' && item.state === 'ok' && !!item.file && OPENABLE_EDIT.test(item.file) && inBase(item.file, base)
   // same text as view.meta, coloured per side
   const diff = item.diff && (
-    <span className="shrink-0 font-mono text-[11px]">
-      <span className="text-emerald-400">+{item.diff.add}</span> <span className="text-red-400">{'\u2212'}{item.diff.del}</span>
+    <span className="shrink-0 font-mono text-xs">
+      <span className="text-add">+{item.diff.add}</span> <span className="text-del">{'\u2212'}{item.diff.del}</span>
     </span>
   )
   return (
@@ -238,7 +244,7 @@ export default function ToolItem({ item, live, base = '', machine = '', sessionI
       <ToolDetail t={item} />
       {canOpen && (
         <button type="button" onClick={() => onOpenFile?.(absPath(item.file!, base))}
-          className="mt-2 flex min-h-11 items-center gap-1.5 rounded-lg px-1 text-sm text-blue-400 hover:text-blue-300">
+          className="mt-2 flex min-h-11 items-center gap-1.5 rounded-lg px-1 text-sm font-medium text-accent hover:underline">
           <ExternalLink size={14} aria-hidden />Open
         </button>
       )}

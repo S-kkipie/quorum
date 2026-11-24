@@ -20,8 +20,8 @@ export default function ViewerCode({ text, name, cutBytes = false }: { text: str
   const lang = (LANGS[name.split('.').pop()?.toLowerCase() ?? ''] ?? 'text') as BundledLanguage
   return (
     <div className="p-2">
-      {cut ? <p className="px-1 pb-2 text-xs text-zinc-500">Showing the first 2,000 lines.</p>
-        : cutBytes && <p className="px-1 pb-2 text-xs text-zinc-500">Showing the first 1 MB.</p>}
+      {cut ? <p className="px-1 pb-2 text-xs text-muted-foreground">Showing the first 2,000 lines.</p>
+        : cutBytes && <p className="px-1 pb-2 text-xs text-muted-foreground">Showing the first 1 MB.</p>}
       <CodeBlock code={code} language={lang} showLineNumbers className="text-xs" />
     </div>
   )

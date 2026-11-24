@@ -19,7 +19,7 @@ function kindOf(name: string): Kind {
   return 'code'
 }
 
-const btn = 'size-11 shrink-0 text-zinc-400 hover:text-zinc-200'
+const btn = 'size-11 shrink-0 text-muted-foreground hover:text-ink'
 
 /** The code view reads at most this much of a file (it shows at most 2,000 lines anyway). */
 const CODE_MAX_BYTES = 1 << 20
@@ -108,16 +108,16 @@ export default function Viewer({ machine, sessionId, path, base = '', images = f
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <header className="flex min-h-11 items-center gap-1 border-b border-zinc-800 bg-zinc-950 px-1.5 py-1">
+      <header className="flex min-h-11 items-center gap-1 border-b border-line bg-background px-1.5 py-1">
         <Button variant="ghost" size="icon" onClick={onBack} aria-label="Close" title="Close" className={btn}><X size={20} aria-hidden /></Button>
         <div className="min-w-0 flex-1">
           <div className="truncate text-[15px] font-semibold">{name}</div>
-          <div className="truncate text-xs text-zinc-500">{where}</div>
+          <div className="truncate text-xs text-muted-foreground">{where}</div>
         </div>
         {kind === 'image' && src && (
           <>
             <Button variant="ghost" size="icon" onClick={() => step(-1)} aria-label="Zoom out" title="Zoom out" className={btn}><Minus size={18} aria-hidden /></Button>
-            <span className="w-10 text-center text-xs text-zinc-500">{zoom}%</span>
+            <span className="w-10 text-center text-xs text-muted-foreground">{zoom}%</span>
             <Button variant="ghost" size="icon" onClick={() => step(1)} aria-label="Zoom in" title="Zoom in" className={btn}><Plus size={18} aria-hidden /></Button>
           </>
         )}
@@ -127,22 +127,22 @@ export default function Viewer({ machine, sessionId, path, base = '', images = f
       <div className="min-h-0 flex-1 overflow-auto">
         {error ? (
           <div className="flex flex-col items-start gap-3 p-4">
-            <p role="alert" className="text-sm text-red-400">{error}</p>
+            <p role="alert" className="text-sm text-danger">{error}</p>
             <Button variant="secondary" onClick={onBack} className="min-h-11 px-4">Back</Button>
           </div>
         ) : !src ? (
-          <p className="p-4 text-sm text-zinc-500">Loading…</p>
+          <p className="p-4 text-sm text-muted-foreground">Loading…</p>
         ) : kind === 'frame' ? (
-          <iframe key={nonce} title={name} src={src} sandbox={SANDBOX} className="h-full w-full border-0 bg-white" />
+          <iframe key={nonce} title={name} src={src} sandbox={SANDBOX} className="h-full w-full border-0 bg-background" />
         ) : kind === 'pdf' ? (
           // the browser's PDF viewer does not work inside a sandbox; a PDF does not run app code
           <iframe key={nonce} title={name} src={src} className="h-full w-full border-0" />
         ) : kind === 'md' ? (
-          <div className="mx-auto max-w-3xl p-4"><Markdown text={text} /></div>
+          <div className="p-4"><Markdown text={text} /></div>
         ) : kind === 'code' ? (
           text.includes('\u0000')
-            ? <p className="p-4 text-sm text-zinc-400">This file cannot be previewed.</p>
-            : <Suspense fallback={<p className="p-4 text-sm text-zinc-500">Loading…</p>}><ViewerCode text={text} name={name} cutBytes={cut} /></Suspense>
+            ? <p className="p-4 text-sm text-muted-foreground">This file cannot be previewed.</p>
+            : <Suspense fallback={<p className="p-4 text-sm text-muted-foreground">Loading…</p>}><ViewerCode text={text} name={name} cutBytes={cut} /></Suspense>
         ) : (
           <img key={nonce} src={src} alt={name} style={{ width: `${zoom}%` }} className="block max-w-none" />
         )}

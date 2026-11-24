@@ -6,7 +6,7 @@ import type { AppState } from '../lib/store'
 import { sessionTitle } from '../lib/title'
 import { Button } from '@/components/ui/button'
 
-const h3 = 'mb-1 mt-5 px-3 text-xs font-semibold uppercase tracking-wide text-zinc-400'
+const h3 = 'mb-1 mt-5 px-3 text-[13px] font-medium text-muted-foreground'
 
 /** The project's tickets by status, plus the pending session-ticket link suggestions. */
 export default function ProjectTickets({ state, id, selectedTicket, onBack, onOpenTicket, onTickets }: {
@@ -25,7 +25,7 @@ export default function ProjectTickets({ state, id, selectedTicket, onBack, onOp
   }, [id, onTickets])
 
   const p = state.projects[id]
-  if (!p) return <p className="p-4 text-sm text-zinc-500">{onBack && <Button variant="ghost" onClick={onBack} className="mr-2 min-h-11 text-zinc-400">←</Button>}Project not found.</p>
+  if (!p) return <p className="p-4 text-sm text-muted-foreground">{onBack && <Button variant="ghost" onClick={onBack} className="mr-2 min-h-11 text-muted-foreground">←</Button>}Project not found.</p>
 
   const tickets = state.tickets[id] ?? []
   const pendingByTicket: Record<string, number> = {}
@@ -35,32 +35,32 @@ export default function ProjectTickets({ state, id, selectedTicket, onBack, onOp
 
   return (
     <div className="pb-10">
-      <header className="sticky top-0 z-10 flex items-center gap-2 border-b border-zinc-800 bg-zinc-950/90 px-3 py-2 backdrop-blur">
-        {onBack && <Button variant="ghost" onClick={onBack} aria-label="Back" className="min-h-11 min-w-11 text-zinc-400">←</Button>}
+      <header className="sticky top-0 z-10 flex items-center gap-2 border-b border-line bg-background/90 px-3 py-2 backdrop-blur">
+        {onBack && <Button variant="ghost" onClick={onBack} aria-label="Back" className="min-h-11 min-w-11 text-muted-foreground">←</Button>}
         <h2 className="min-w-0 flex-1 truncate text-base font-semibold">{p.name} · Tickets</h2>
       </header>
-      {error && <p role="alert" className="px-3 pt-2 text-xs text-red-400">{error}</p>}
+      {error && <p role="alert" className="px-3 pt-2 text-xs text-danger">{error}</p>}
 
       {suggestions.length > 0 && (
         <section>
           <h3 className={h3}>Link suggestions</h3>
-          <ul className="divide-y divide-zinc-900 border-y border-zinc-900">
+          <ul className="divide-y divide-line border-y border-line">
             {suggestions.map(({ t, s }) => <Suggestion key={t.id + s.id} ticketId={t.id} ticketLabel={`${t.externalId} ${t.title}`} sessionId={s.id} sessionLabel={sessionTitle(s).title} />)}
           </ul>
         </section>
       )}
 
       {tickets.length === 0 && (
-        <p className="px-3 pt-6 text-sm text-zinc-500">{p.connector?.kind === 'none' ? 'This project has no ticket source configured.' : 'No tickets yet.'}</p>
+        <p className="px-3 pt-6 text-sm text-muted-foreground">{p.connector?.kind === 'none' ? 'This project has no ticket source configured.' : 'No tickets yet.'}</p>
       )}
       {STATUSES.map((st) => {
         const list = tickets.filter((t) => (STATUSES as readonly string[]).includes(t.status) ? t.status === st : st === 'todo')
         if (!list.length) return null
-        const rows = <ul className="divide-y divide-zinc-900 border-y border-zinc-900">{list.map((t) => <TicketRow key={t.id} state={state} ticket={t} pending={pendingByTicket[t.id]} active={t.id === selectedTicket} onOpen={onOpenTicket} />)}</ul>
+        const rows = <ul className="divide-y divide-line border-y border-line">{list.map((t) => <TicketRow key={t.id} state={state} ticket={t} pending={pendingByTicket[t.id]} active={t.id === selectedTicket} onOpen={onOpenTicket} />)}</ul>
         if (st === 'done') {
           return (
             <details key={st} className="mt-5">
-              <summary className="cursor-pointer px-3 pb-1 text-xs font-semibold uppercase tracking-wide text-zinc-400">{STATUS_LABEL[st]} ({list.length})</summary>
+              <summary className="cursor-pointer px-3 pb-1 text-[13px] font-medium text-muted-foreground">{STATUS_LABEL[st]} ({list.length})</summary>
               {rows}
             </details>
           )
@@ -82,11 +82,11 @@ function Suggestion({ ticketId, ticketLabel, sessionId, sessionLabel }: { ticket
   return (
     <li className="flex items-center gap-2 px-3 py-1.5 text-sm">
       <span className="min-w-0 flex-1 truncate">
-        <span className="text-zinc-300">{sessionLabel}</span>
-        <span className="text-zinc-500"> → {ticketLabel}</span>
+        <span className="text-ink">{sessionLabel}</span>
+        <span className="text-muted-foreground"> → {ticketLabel}</span>
       </span>
-      {error && <span role="alert" className="text-xs text-red-400">{error}</span>}
-      <Button variant="ghost" size="sm" disabled={busy} onClick={() => run(() => unlinkTicket(sessionId, ticketId))} className="min-h-11 text-xs text-zinc-400">Dismiss</Button>
+      {error && <span role="alert" className="text-xs text-danger">{error}</span>}
+      <Button variant="ghost" size="sm" disabled={busy} onClick={() => run(() => unlinkTicket(sessionId, ticketId))} className="min-h-11 text-xs text-muted-foreground">Dismiss</Button>
       <Button size="sm" disabled={busy} onClick={() => run(() => confirmTicketLink(sessionId, ticketId))} className="min-h-11 text-xs">Confirm</Button>
     </li>
   )

@@ -10,12 +10,12 @@ export const STATUS_LABEL: Record<string, string> = {
 
 /** Session states with their color (shared by the session list and the board). */
 export const SESSION_STATE: Record<string, { label: string; dot: string; text: string; pill: string }> = {
-  needs_you: { label: 'Needs you', dot: 'bg-amber-500', text: 'text-amber-400', pill: 'bg-amber-500/15 text-amber-300 ring-amber-500/30' },
-  done: { label: 'Done · unread', dot: 'bg-emerald-500', text: 'text-emerald-400', pill: 'bg-emerald-500/15 text-emerald-300 ring-emerald-500/30' },
-  working: { label: 'Working', dot: 'bg-blue-500 animate-pulse', text: 'text-blue-400', pill: 'bg-blue-500/15 text-blue-300 ring-blue-500/30' },
-  background: { label: 'Background', dot: 'bg-violet-500', text: 'text-violet-400', pill: 'bg-violet-500/15 text-violet-300 ring-violet-500/30' },
-  idle: { label: 'Idle', dot: 'bg-zinc-500', text: 'text-zinc-400', pill: 'bg-zinc-500/15 text-zinc-300 ring-zinc-500/30' },
-  closed: { label: 'Closed', dot: 'bg-zinc-700', text: 'text-zinc-600', pill: 'bg-zinc-800/60 text-zinc-500 ring-zinc-700/40' },
+  needs_you: { label: 'Needs you', dot: 'bg-state-needs', text: 'text-state-needs', pill: 'bg-state-needs-soft text-state-needs' },
+  done: { label: 'Done · unread', dot: 'bg-state-done', text: 'text-state-done', pill: 'bg-state-done-soft text-state-done' },
+  working: { label: 'Working', dot: 'bg-state-working animate-pulse motion-reduce:animate-none', text: 'text-state-working', pill: 'bg-state-working-soft text-state-working' },
+  background: { label: 'Background', dot: 'bg-state-background', text: 'text-state-background', pill: 'bg-state-background-soft text-state-background' },
+  idle: { label: 'Idle', dot: 'bg-state-idle', text: 'text-state-idle', pill: 'bg-state-idle-soft text-state-idle ring-1 ring-line' },
+  closed: { label: 'Closed', dot: 'border border-state-closed', text: 'text-state-closed', pill: 'bg-state-closed-soft text-state-closed ring-1 ring-line' },
 }
 
 /** Style of a session's display state (unknown states look idle). */
@@ -60,7 +60,7 @@ export function ticketSessions(s: AppState, ticketId: string): { session: Sessio
   return Object.entries(s.links[ticketId] ?? {}).map(([id, confirmed]) => ({ id, confirmed, session: s.sessions[id] }))
 }
 
-export type Tone = 'blue' | 'amber' | 'emerald' | 'red' | 'zinc'
+export type Tone = 'working' | 'needs' | 'done' | 'blocked' | 'muted'
 
 /**
  * Combined state of a ticket (spec §10): the ticket source's plus that of its live
@@ -71,19 +71,19 @@ export function ticketLine(s: AppState, t: Ticket, now = Date.now()): { text: st
     .filter((l) => l.confirmed && l.session && l.session.state !== 'closed')
     .map((l) => l.session!)
   const needs = live.find((x) => x.state === 'needs_you')
-  if (needs) return { text: `needs you · ${needs.machine}`, tone: 'amber' }
+  if (needs) return { text: `needs you · ${needs.machine}`, tone: 'needs' }
   const working = live.find((x) => x.state === 'working')
-  if (working) return { text: `in progress · ${working.machine} · working ${since(working.updatedAt, now)}`, tone: 'blue' }
-  if (t.status === 'in_review') return { text: 'done, waiting for your review', tone: 'emerald' }
+  if (working) return { text: `in progress · ${working.machine} · working ${since(working.updatedAt, now)}`, tone: 'working' }
+  if (t.status === 'in_review') return { text: 'done, waiting for your review', tone: 'done' }
   const done = live.find((x) => s.worked[x.id])
-  if (done && t.status !== 'done') return { text: `done, waiting for your review · ${done.machine}`, tone: 'emerald' }
+  if (done && t.status !== 'done') return { text: `done, waiting for your review · ${done.machine}`, tone: 'done' }
   const label = STATUS_LABEL[t.status] ?? t.status
-  if (live.length) return { text: `${label} · session on ${live[0].machine}`, tone: 'zinc' }
-  return { text: label, tone: t.status === 'blocked' ? 'red' : 'zinc' }
+  if (live.length) return { text: `${label} · session on ${live[0].machine}`, tone: 'muted' }
+  return { text: label, tone: t.status === 'blocked' ? 'blocked' : 'muted' }
 }
 
 export const TONE_TEXT: Record<Tone, string> = {
-  blue: 'text-blue-400', amber: 'text-amber-400', emerald: 'text-emerald-400', red: 'text-red-400', zinc: 'text-zinc-400',
+  working: 'text-state-working', needs: 'text-state-needs', done: 'text-state-done', blocked: 'text-danger', muted: 'text-muted-foreground',
 }
 
 /**

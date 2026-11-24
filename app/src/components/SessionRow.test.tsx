@@ -75,7 +75,7 @@ describe('SessionRowView state', () => {
   it('shows Done · unread with a green unread dot', () => {
     render(<ul><SessionRowView row={live({ state: 'idle', unread: true })} /></ul>)
     expect(screen.getByText('Done · unread')).toBeTruthy()
-    expect(screen.getByRole('img', { name: 'Unread' }).className).toContain('bg-emerald-500')
+    expect(screen.getByRole('img', { name: 'Unread' }).className).toContain('bg-state-done')
   })
   it('no unread dot for a seen idle session', () => {
     render(<ul><SessionRowView row={live({ state: 'idle' })} /></ul>)

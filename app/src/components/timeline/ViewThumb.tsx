@@ -42,7 +42,7 @@ export default function ViewThumb({ machine, sessionId, path, mode, label, onOpe
   return (
     <button type="button" aria-label={`Open ${label}`} title={label} disabled={!onOpen}
       onClick={onOpen}
-      className="flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-zinc-700 bg-zinc-900 text-[10px] text-zinc-500 enabled:hover:border-zinc-500">
+      className="press flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-line bg-chip text-xs text-muted-foreground enabled:hover:border-muted-foreground">
       {show
         ? <img src={src} alt={label} loading="lazy" onError={() => setFailed(true)} className="size-16 object-cover" />
         : <span className="line-clamp-3 break-all px-1 text-center">{label}</span>}

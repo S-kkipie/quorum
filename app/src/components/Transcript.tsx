@@ -46,6 +46,12 @@ function HistoryLoader({ firstSeq, hasMore, autoLoad, onLoadMore }: {
   return null
 }
 
+/**
+ * Claude's answers: Newsreader at 15.5 px / 1.6, capped near 70 characters a line on wide screens
+ * (code inside stays monospace; index.css tunes Streamdown's code blocks).
+ */
+const answer = 'w-full max-w-[70ch] break-words font-serif text-[15.5px] leading-[1.6] text-ink'
+
 export default function Transcript({ events, base = '', machine = '', sessionId = '', live, liveAgent, working, hasMore, autoLoad = true, onLoadMore, onOpenFile }: {
   autoLoad?: boolean
   events: Event[]
@@ -79,18 +85,18 @@ export default function Transcript({ events, base = '', machine = '', sessionId 
     <PathLinksProvider base={linkBase} onOpen={openPath}>
     <Conversation className="min-h-0" initial="instant">
       <ConversationContent className="gap-0 px-3 py-2 sm:px-4">
-        {hasMore && <button type="button" onClick={onLoadMore} className="mx-auto mb-2 block min-h-11 text-xs text-zinc-500 hover:text-zinc-300">Load earlier</button>}
+        {hasMore && <button type="button" onClick={onLoadMore} className="mx-auto mb-2 block min-h-11 text-xs text-muted-foreground hover:text-ink">Load earlier</button>}
         {rows.map((r) => {
           switch (r.t) {
             case 'user': return r.command ? (
               <Message key={`u${r.seq}`} from="user" role="article" aria-label="You" className="my-3 max-w-[85%]">
-                <MessageContent data-testid="command-prompt" className="whitespace-pre-wrap break-all font-mono text-xs text-zinc-200 group-[.is-user]:rounded-xl group-[.is-user]:rounded-br-md group-[.is-user]:bg-blue-600/20 group-[.is-user]:px-3 group-[.is-user]:py-1.5">
+                <MessageContent data-testid="command-prompt" className="whitespace-pre-wrap break-all font-mono text-xs text-ink group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:bg-bubble group-[.is-user]:px-3 group-[.is-user]:py-1.5">
                   {r.command.args ? `/${r.command.name} ${r.command.args}` : `/${r.command.name}`}
                 </MessageContent>
               </Message>
             ) : (
               <Message key={`u${r.seq}`} from="user" role="article" aria-label="You" className="my-3 max-w-[85%]">
-                <MessageContent className="whitespace-pre-wrap break-words text-zinc-100 group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:bg-blue-600/25 group-[.is-user]:px-3.5 group-[.is-user]:py-2">
+                <MessageContent className="whitespace-pre-wrap break-words text-ink group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:bg-bubble group-[.is-user]:px-3.5 group-[.is-user]:py-2">
                   {r.text}
                   {r.images && <PastedImages machine={machine} sessionId={sessionId} images={r.images} onOpen={onOpenFile ? openImage : undefined} />}
                 </MessageContent>
@@ -98,16 +104,16 @@ export default function Transcript({ events, base = '', machine = '', sessionId 
             )
             case 'assistant': return (
               <Message key={`m${r.seq}`} from="assistant" role="article" aria-label={r.agent ? 'Subagent' : 'Claude'} className={`my-2 max-w-full ${r.agent ? 'ml-5 w-auto opacity-70' : ''}`}>
-                <MessageContent className="w-full break-words text-zinc-200"><MessageResponse>{r.text}</MessageResponse></MessageContent>
+                <MessageContent className={answer}><MessageResponse>{r.text}</MessageResponse></MessageContent>
               </Message>
             )
             case 'turn': return (
-              <div key={`n${r.seq}`} className="mb-2 flex flex-wrap gap-x-3 text-[11px] text-zinc-600">
+              <div key={`n${r.seq}`} className="mb-2 flex flex-wrap gap-x-3 text-xs text-muted-foreground">
                 {r.tokens && <span>{`↑${formatTokens(r.tokens.in)} ↓${formatTokens(r.tokens.out)} · cache ${formatTokens(r.tokens.cache)}`}</span>}
                 {/haiku/i.test(r.model) && <span>Answered by Haiku</span>}
               </div>
             )
-            case 'info': return <Message key={`i${r.seq}`} from="system" role="note" className="my-2 max-w-full text-center text-xs text-zinc-600">{r.text}</Message>
+            case 'info': return <Message key={`i${r.seq}`} from="system" role="note" className="my-2 max-w-full text-center text-xs text-muted-foreground">{r.text}</Message>
             case 'tool': case 'reads': return <ToolItem key={`t${r.seq}`} item={r} base={base} machine={machine} sessionId={sessionId} onOpenFile={onOpenFile} />
             case 'agent': return <ToolItem key={`a${r.seq}`} item={r} live={liveAgent?.[r.id]} />
             case 'artifact': return <ArtifactCard key={`f${r.seq}`} item={r} machine={machine} base={base} onOpen={onOpenFile} />
@@ -116,9 +122,9 @@ export default function Transcript({ events, base = '', machine = '', sessionId 
         })}
         {live && (
           <Message from="assistant" role="article" aria-label="Claude" className="my-2 max-w-full">
-            <MessageContent className="w-full break-words text-zinc-200">
+            <MessageContent className={answer}>
               <MessageResponse isAnimating>{live}</MessageResponse>
-              <span aria-hidden className="inline-block h-3.5 w-1.5 animate-pulse rounded-sm bg-zinc-400" />
+              <span aria-hidden className="inline-block h-3.5 w-1.5 animate-pulse motion-reduce:animate-none rounded-sm bg-muted-foreground" />
             </MessageContent>
           </Message>
         )}

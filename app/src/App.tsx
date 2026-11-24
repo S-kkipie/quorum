@@ -326,8 +326,8 @@ function Main() {
     else if (tab === 'sessions') {
       body = (
         <div className="flex min-h-0 flex-1">
-          <aside className="w-[360px] shrink-0 overflow-y-auto border-r border-zinc-800">{sessionsList}</aside>
-          <main className="min-w-0 flex-1">{sessionView ?? <p className="p-6 text-sm text-zinc-500">Pick a session.</p>}</main>
+          <aside className="w-[360px] shrink-0 overflow-y-auto border-r border-line">{sessionsList}</aside>
+          <main className="min-w-0 flex-1">{sessionView ?? <p className="p-6 text-sm text-muted-foreground">Pick a session.</p>}</main>
         </div>
       )
     } else {
@@ -335,44 +335,44 @@ function Main() {
         <div className="flex min-h-0 flex-1">
           <main className="min-w-0 flex-1 overflow-auto">{projectsView}</main>
           {project && (
-            <aside className="w-[min(560px,45vw)] shrink-0 overflow-y-auto border-l border-zinc-800">{ticketView || ticketsView || projectView}</aside>
+            <aside className="w-[min(560px,45vw)] shrink-0 overflow-y-auto border-l border-line">{ticketView || ticketsView || projectView}</aside>
           )}
         </div>
       )
     }
-    return <div className="flex h-dvh flex-col">{top}{body}{dialog}{toggle}</div>
+    return <div className="app-shell flex flex-col">{top}{body}{dialog}{toggle}</div>
   }
   let view
   if (viewerView) view = <div className="h-full">{viewerView}</div>
   else if (terminalView) view = <div className="h-full">{terminalView}</div>
   else if (startingView) view = <div className="h-full">{startingView}</div>
   else if (sessionView) view = <div className="h-full">{sessionView}</div>
-  else if (configView) view = <div className="h-full overflow-y-auto">{configView}</div>
-  else if (ticketView) view = <div className="h-full overflow-y-auto">{ticketView}</div>
-  else if (ticketsView) view = <div className="h-full overflow-y-auto">{ticketsView}</div>
-  else if (projectView) view = <div className="h-full overflow-y-auto">{projectView}</div>
-  else view = <div className="flex h-full flex-col">{top}<div className="min-h-0 flex-1 overflow-y-auto">{tab === 'sessions' ? sessionsList : projectsView}</div></div>
-  return <div className="h-dvh">{view}{dialog}{toggle}</div>
+  else if (configView) view = <div className="h-full overflow-y-auto pb-[env(safe-area-inset-bottom,0px)]">{configView}</div>
+  else if (ticketView) view = <div className="h-full overflow-y-auto pb-[env(safe-area-inset-bottom,0px)]">{ticketView}</div>
+  else if (ticketsView) view = <div className="h-full overflow-y-auto pb-[env(safe-area-inset-bottom,0px)]">{ticketsView}</div>
+  else if (projectView) view = <div className="h-full overflow-y-auto pb-[env(safe-area-inset-bottom,0px)]">{projectView}</div>
+  else view = <div className="flex h-full flex-col">{top}<div className="min-h-0 flex-1 overflow-y-auto pb-[env(safe-area-inset-bottom,0px)]">{tab === 'sessions' ? sessionsList : projectsView}</div></div>
+  return <div className="app-shell">{view}{dialog}{toggle}</div>
 }
 
 function TopBar({ tab, attention, connected, onTab, onLaunch, onConfig }: { tab: Tab; /** Sessions that need you or are done and unread. */ attention: number; connected: boolean; onTab: (t: Tab) => void; onLaunch: () => void; onConfig: () => void }) {
-  const tabCls = (t: Tab) => `min-h-11 px-2.5 ${tab === t ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-zinc-200'}`
+  const tabCls = (t: Tab) => `min-h-11 px-2 sm:px-2.5 ${tab === t ? 'bg-chip text-ink' : 'text-muted-foreground hover:text-ink'}`
   return (
-    <header className="sticky top-0 z-10 flex shrink-0 items-center gap-2 border-b border-zinc-800 bg-zinc-950/90 px-3 py-2 backdrop-blur">
+    <header className="sticky top-0 z-10 flex shrink-0 items-center gap-1.5 border-b border-line bg-background/90 px-2 py-2 backdrop-blur sm:gap-2 sm:px-3">
       <h1 className="mr-1 hidden text-base font-semibold sm:block">Quorum</h1>
-      <nav role="tablist" className="flex min-w-0 gap-1">
+      <nav role="tablist" className="flex shrink-0 gap-1">
         <Button variant="ghost" role="tab" aria-selected={tab === 'projects'} onClick={() => onTab('projects')} className={tabCls('projects')}>Projects</Button>
-        <Button variant="ghost" role="tab" aria-selected={tab === 'sessions'} onClick={() => onTab('sessions')} className={tabCls('sessions')}>Sessions{attention > 0 && <span className="ml-1.5 rounded-full bg-emerald-500/20 px-1.5 text-xs text-emerald-300">{attention}</span>}</Button>
+        <Button variant="ghost" role="tab" aria-selected={tab === 'sessions'} onClick={() => onTab('sessions')} className={tabCls('sessions')}>Sessions{attention > 0 && <span className="ml-1.5 rounded-full bg-state-done-soft px-1.5 text-xs text-state-done">{attention}</span>}</Button>
       </nav>
-      <span className="ml-auto flex shrink-0 items-center gap-2">
-        <Button variant="secondary" size="sm" onClick={onConfig} aria-label="Settings" title="Settings" className="size-11 text-xs min-[380px]:w-auto min-[380px]:px-3">
-          <Settings size={16} aria-hidden className="min-[380px]:hidden" /><span className="hidden min-[380px]:inline">Settings</span>
+      <span className="ml-auto flex shrink-0 items-center gap-1 sm:gap-2">
+        <Button variant="ghost" size="sm" onClick={onConfig} aria-label="Settings" title="Settings" className="size-11 text-xs text-muted-foreground hover:text-ink min-[440px]:w-auto min-[440px]:px-3">
+          <Settings size={16} aria-hidden className="min-[440px]:hidden" /><span className="hidden min-[440px]:inline">Settings</span>
         </Button>
-        <Button size="sm" onClick={onLaunch} aria-label="New session" title="New session" className="size-11 text-xs min-[380px]:w-auto min-[380px]:px-3">
-          <Plus size={16} aria-hidden className="min-[380px]:hidden" /><span className="hidden min-[380px]:inline">New session</span>
+        <Button size="sm" onClick={onLaunch} aria-label="New session" title="New session" className="size-11 text-xs min-[440px]:w-auto min-[440px]:px-3">
+          <Plus size={16} aria-hidden className="min-[440px]:hidden" /><span className="hidden min-[440px]:inline">New session</span>
         </Button>
-        <span className={`h-2 w-2 shrink-0 rounded-full ${connected ? 'bg-emerald-500' : 'bg-amber-500'}`} title={connected ? 'connected' : 'reconnecting…'} />
-        <span className={`hidden text-xs sm:inline ${connected ? 'text-emerald-400' : 'text-amber-400'}`}>{connected ? 'connected' : 'reconnecting…'}</span>
+        <span className={`h-2 w-2 shrink-0 rounded-full ${connected ? 'bg-success' : 'bg-warning'}`} title={connected ? 'connected' : 'reconnecting…'} />
+        <span className={`hidden text-xs sm:inline ${connected ? 'text-success' : 'text-warning'}`}>{connected ? 'connected' : 'reconnecting…'}</span>
       </span>
     </header>
   )
