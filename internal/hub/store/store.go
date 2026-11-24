@@ -870,6 +870,52 @@ func (s *Store) OpenAsks() (map[string]string, error) {
 	return scanOpenAsks(rows)
 }
 
+// OpenAskEvents returns the full ask events (latest per askId) of non-closed sessions that have
+// no later ask_resolved, in seq order per session.
+func (s *Store) OpenAskEvents() ([]proto.Event, error) {
+	rows, err := s.db.Query(`SELECT e.seq,e.session,e.ts,e.kind,e.data FROM events e JOIN sessions s ON s.id=e.session
+		WHERE s.state<>'closed' AND e.kind IN ('ask','ask_resolved') ORDER BY e.session,e.seq`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	open := map[string]proto.Event{} // session+"\x00"+askId
+	var order []string
+	for rows.Next() {
+		var e proto.Event
+		var kind, data string
+		if err := rows.Scan(&e.Seq, &e.Session, &e.TS, &kind, &data); err != nil {
+			return nil, err
+		}
+		e.Kind, e.Data = proto.EventKind(kind), json.RawMessage(data)
+		var a struct {
+			AskID string `json:"askId"`
+		}
+		if json.Unmarshal([]byte(data), &a) != nil || a.AskID == "" {
+			continue
+		}
+		key := e.Session + "\x00" + a.AskID
+		if kind == string(proto.KindAsk) {
+			if _, ok := open[key]; !ok {
+				order = append(order, key)
+			}
+			open[key] = e
+		} else {
+			delete(open, key)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	var out []proto.Event
+	for _, k := range order {
+		if e, ok := open[k]; ok {
+			out = append(out, e)
+		}
+	}
+	return out, nil
+}
+
 // SessionOpenAsks returns the open askIds (without a later ask_resolved) of a session.
 func (s *Store) SessionOpenAsks(session string) (map[string]string, error) {
 	rows, err := s.db.Query(`SELECT session,kind,data FROM events

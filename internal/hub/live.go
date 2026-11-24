@@ -80,6 +80,18 @@ func inSnapshot(t string) bool {
 	return t == "session_upsert" || t == "machine_status" || t == "workspace_upsert" || t == "project_upsert"
 }
 
+// isAskEnv: an ask event; the snapshot carries every still-open one, so a copy queued before it
+// was read would arrive twice.
+func isAskEnv(env proto.Envelope) bool {
+	if env.Type != "event" {
+		return false
+	}
+	var ev struct {
+		Kind proto.EventKind `json:"kind"`
+	}
+	return json.Unmarshal(env.Payload, &ev) == nil && ev.Kind == proto.KindAsk
+}
+
 func newLive(s *Server) *Live {
 	return &Live{srv: s, clients: map[*liveClient]struct{}{}}
 }
@@ -144,6 +156,7 @@ func (l *Live) Publish(env proto.Envelope) {
 
 func (l *Live) snapshot() []proto.Envelope {
 	var out []proto.Envelope
+	machineOf := map[string]string{}
 	if ms, err := l.srv.st.ListMachines(); err == nil {
 		for _, m := range ms {
 			p, _ := json.Marshal(m)
@@ -152,6 +165,7 @@ func (l *Live) snapshot() []proto.Envelope {
 	}
 	if ss, err := l.srv.st.ListSessions(false); err == nil {
 		for _, si := range ss {
+			machineOf[si.ID] = si.Machine
 			p, _ := json.Marshal(si)
 			out = append(out, proto.Envelope{Type: "session_upsert", Machine: si.Machine, Session: si.ID, Payload: p})
 		}
@@ -166,6 +180,12 @@ func (l *Live) snapshot() []proto.Envelope {
 		for _, pr := range ps {
 			p, _ := json.Marshal(pr)
 			out = append(out, proto.Envelope{Type: "project_upsert", Payload: p})
+		}
+	}
+	if evs, err := l.srv.st.OpenAskEvents(); err == nil {
+		for _, e := range evs {
+			p, _ := json.Marshal(e)
+			out = append(out, proto.Envelope{Type: "event", Session: e.Session, Machine: machineOf[e.Session], Payload: p})
 		}
 	}
 	return out
@@ -197,7 +217,7 @@ func (l *Live) ready(c *liveClient, snapSeq uint64) chan proto.Envelope {
 	}
 	var keep []proto.Envelope
 	for _, q := range c.pending {
-		if q.seq <= snapSeq && inSnapshot(q.env.Type) {
+		if q.seq <= snapSeq && (inSnapshot(q.env.Type) || isAskEnv(q.env)) {
 			continue
 		}
 		keep = append(keep, q.env)

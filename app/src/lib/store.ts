@@ -296,7 +296,21 @@ export function markSeen(s: AppState, id: string): AppState {
 
 /** Merges historical events (backfill/pagination) into the state. */
 export function addEvents(s: AppState, session: string, evs: Event[]): AppState {
-  return { ...s, events: { ...s.events, [session]: dropBackfillDuplicates(mergeEvents(s.events[session], evs)) } }
+  const merged = dropBackfillDuplicates(mergeEvents(s.events[session], evs))
+  // asks: the live snapshot is not the only source; an unresolved ask in history is a pending card
+  const resolved = new Set<string>()
+  for (const e of merged) if (e.kind === 'ask_resolved' && e.data?.askId) resolved.add(e.data.askId)
+  let asks = s.asks
+  for (const e of evs) {
+    const id: string | undefined = e.data?.askId
+    if (!id) continue
+    if (e.kind === 'ask_resolved') {
+      if (id in asks) asks = omit(asks, id)
+    } else if (e.kind === 'ask' && !resolved.has(id) && !(id in asks)) {
+      asks = { ...asks, [id]: { ...(e.data as Ask), session } }
+    }
+  }
+  return { ...s, events: { ...s.events, [session]: merged }, asks }
 }
 
 /**

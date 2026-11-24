@@ -260,6 +260,7 @@ func TestDecideStoreFailureNoUnsequencedEventNoClaimLeak(t *testing.T) {
 	eventually(t, func() bool { s.asks.mu.Lock(); defer s.asks.mu.Unlock(); return s.asks.open["a1"] == "s1" })
 	_, ch := f.live(t)
 	waitEnv(t, ch, func(e proto.Envelope) bool { return e.Type == "session_upsert" })
+	waitEnv(t, ch, isAskEvent) // the snapshot carries the open ask
 
 	db, err := sql.Open("sqlite", "file:"+filepath.Join(dir, "hub.db")+"?_pragma=busy_timeout(5000)")
 	require.NoError(t, err)

@@ -483,3 +483,38 @@ func TestTermFramesCoalescedNeverEvict(t *testing.T) {
 	require.Equal(t, map[string]string{"w1:p1": "999", "w1:p2": "other"}, got)
 	require.Empty(t, s.live.takeFrames(cl))
 }
+
+func isAskEvent(e proto.Envelope) bool {
+	var ev proto.Event
+	return e.Type == "event" && json.Unmarshal(e.Payload, &ev) == nil && ev.Kind == proto.KindAsk
+}
+
+func TestLiveSnapshotCarriesOpenAsks(t *testing.T) {
+	f := newAppFx(t, "s1")
+	_, ch1 := f.live(t)
+	f.machineSend(t, askEnv("s1", "a1"))
+	waitEnv(t, ch1, isAskEvent)
+	// a client that connects after the ask still sees it, in the live envelope shape
+	_, ch2 := f.live(t)
+	e := waitEnv(t, ch2, isAskEvent)
+	require.Equal(t, "s1", e.Session)
+	require.Equal(t, "m1", e.Machine)
+	var ev proto.Event
+	require.NoError(t, json.Unmarshal(e.Payload, &ev))
+	require.Contains(t, string(ev.Data), `"askId":"a1"`)
+	require.Positive(t, ev.Seq)
+	// once resolved, a new client does not get it
+	require.Equal(t, 202, f.post("/api/sessions/s1/decide", `{"askId":"a1","decision":"allow"}`).StatusCode)
+	f.nextCmd(t)
+	waitEnv(t, ch1, func(e proto.Envelope) bool {
+		var ev proto.Event
+		return e.Type == "event" && json.Unmarshal(e.Payload, &ev) == nil && ev.Kind == proto.KindAskResolved
+	})
+	_, ch3 := f.live(t)
+	waitEnv(t, ch3, func(e proto.Envelope) bool { return e.Type == "session_upsert" })
+	select {
+	case e := <-ch3:
+		require.False(t, isAskEvent(e), "resolved ask must not be in the snapshot")
+	case <-time.After(300 * time.Millisecond):
+	}
+}

@@ -320,3 +320,26 @@ describe('session commands', () => {
     expect(s.commands.s1).toBeUndefined()
   })
 })
+
+describe('addEvents asks', () => {
+  const evt = (seq: number, kind: string, data: any): Event => ({ seq, session: 'a', ts: seq, kind, data })
+  const askData = (askId: string) => ({ askId, kind: 'permission', tool: 'Bash', summary: 'ls', detail: '', questions: null })
+  it('history with an unresolved ask populates asks', () => {
+    const s = run([{ type: 'events', machine: 'm1', session: 'a', payload: [evt(1, 'user', { text: 'x' }), evt(2, 'ask', askData('k1'))] }])
+    expect(s.asks['k1']).toMatchObject({ askId: 'k1', session: 'a' })
+  })
+  it('history ask followed by ask_resolved is not an open ask', () => {
+    const s = run([{ type: 'events', machine: 'm1', session: 'a', payload: [evt(2, 'ask', askData('k1')), evt(3, 'ask_resolved', { askId: 'k1' })] }])
+    expect(s.asks['k1']).toBeUndefined()
+  })
+  it('history ask_resolved removes an ask already in state', () => {
+    let s = run([ev('a', 2, 'ask', askData('k1'))])
+    s = run([{ type: 'events', machine: 'm1', session: 'a', payload: [evt(3, 'ask_resolved', { askId: 'k1' })] }], s)
+    expect(s.asks['k1']).toBeUndefined()
+  })
+  it('does not resurrect an ask already resolved in state', () => {
+    let s = run([ev('a', 2, 'ask', askData('k1')), ev('a', 3, 'ask_resolved', { askId: 'k1' })])
+    s = run([{ type: 'events', machine: 'm1', session: 'a', payload: [evt(2, 'ask', askData('k1'))] }], s)
+    expect(s.asks['k1']).toBeUndefined()
+  })
+})
