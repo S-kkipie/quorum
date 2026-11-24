@@ -2,7 +2,7 @@ import { useRef, useState } from 'react'
 import {
   Confirmation, ConfirmationAccepted, ConfirmationAction, ConfirmationActions, ConfirmationRejected, ConfirmationRequest, ConfirmationTitle,
 } from '@/components/ai-elements/confirmation'
-import { Check, MessageCircleQuestion, Send, ShieldAlert, X } from 'lucide-react'
+import { Check, ChevronDown, ChevronUp, MessageCircleQuestion, Send, ShieldAlert, X } from 'lucide-react'
 import { decide } from '../lib/api'
 import { useDraft } from '../lib/drafts'
 import type { Ask } from '../proto.gen'
@@ -21,6 +21,25 @@ function parseOther(raw: string): Record<number, string> {
     const v = JSON.parse(raw || '{}')
     return v && typeof v === 'object' && !Array.isArray(v) ? v : {}
   } catch { return {} }
+}
+
+const CLAMP_LINES = 8
+const CLAMP_CHARS = 600
+
+// Long command/prompt text: clamped to 8 lines with a toggle so the action buttons stay in view.
+function ClampedText({ text, className = '', as: Tag = 'div' }: { text: string; className?: string; as?: 'div' | 'pre' }) {
+  const [open, setOpen] = useState(false)
+  const long = text.split('\n').length > CLAMP_LINES || text.length > CLAMP_CHARS
+  return (
+    <>
+      <Tag className={`whitespace-pre-wrap font-mono [overflow-wrap:anywhere] ${long ? (open ? 'max-h-[50dvh] overflow-auto' : 'line-clamp-8') : ''} ${className}`}>{text}</Tag>
+      {long && (
+        <button type="button" aria-expanded={open} onClick={() => setOpen((o) => !o)} className="mt-1 flex min-h-11 items-center gap-1 text-xs font-medium text-blue-400 hover:text-blue-300">
+          {open ? <ChevronUp size={14} aria-hidden /> : <ChevronDown size={14} aria-hidden />}{open ? 'Show less' : 'Show all'}
+        </button>
+      )}
+    </>
+  )
 }
 
 export default function AskCard({ session, ask, onDone }: { session: string; ask: Ask; onDone?: () => void }) {
@@ -87,7 +106,7 @@ export default function AskCard({ session, ask, onDone }: { session: string; ask
           {questions.map((q, qi) => (
             <fieldset key={qi} className="mb-3">
               {q.header && <div className="text-[11px] uppercase tracking-wide text-amber-400/80">{q.header}</div>}
-              <legend className="font-medium">{q.question}</legend>
+              <legend className="w-full font-medium"><ClampedText text={q.question} className="font-sans" /></legend>
               {(q.options ?? []).map((o) => (
                 <label key={o.label} className="mt-1 flex min-h-11 cursor-pointer items-start gap-2.5 rounded-lg px-2 py-2 hover:bg-zinc-800/60">
                   <input
@@ -122,13 +141,13 @@ export default function AskCard({ session, ask, onDone }: { session: string; ask
           className="block border-0 bg-transparent p-0 text-zinc-200"
         >
           <div className="flex items-center gap-2 text-xs font-medium text-amber-300"><ShieldAlert size={14} aria-hidden />Permission · {ask.tool}</div>
-          <ConfirmationTitle className="mt-1 block font-medium text-zinc-100">{ask.summary}</ConfirmationTitle>
+          <ConfirmationTitle className="mt-1 block font-medium text-zinc-100"><ClampedText text={ask.summary} className="font-sans" /></ConfirmationTitle>
           <ConfirmationRequest>
-            {ask.detail && <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-zinc-800 bg-zinc-950 p-2.5 font-mono text-[11px] text-zinc-400">{ask.detail}</pre>}
+            {ask.detail && <ClampedText as="pre" text={ask.detail} className="mt-2 rounded-lg border border-zinc-800 bg-zinc-950 p-2.5 text-[11px] text-zinc-400" />}
           </ConfirmationRequest>
           <ConfirmationAccepted><p className="mt-2 flex items-center gap-1.5 text-xs text-emerald-400"><Check size={14} aria-hidden />Allowed</p></ConfirmationAccepted>
           <ConfirmationRejected><p className="mt-2 flex items-center gap-1.5 text-xs text-zinc-400"><X size={14} aria-hidden />Denied</p></ConfirmationRejected>
-          <ConfirmationActions className="mt-3 justify-start self-stretch">
+          <ConfirmationActions className="sticky bottom-0 -mx-3 -mb-3 mt-3 justify-start self-stretch rounded-b-xl border-t border-zinc-800 bg-zinc-900 p-3">
             <ConfirmationAction disabled={busy} onClick={() => send({ askId: ask.askId, decision: 'allow' })} className={`${btn} h-auto bg-emerald-600 text-white hover:bg-emerald-500`}><Check size={14} aria-hidden />Allow</ConfirmationAction>
             <ConfirmationAction disabled={busy} onClick={() => send({ askId: ask.askId, decision: 'deny' })} className={`${btn} h-auto bg-zinc-800 text-zinc-200 hover:bg-zinc-700`}><X size={14} aria-hidden />Deny</ConfirmationAction>
           </ConfirmationActions>

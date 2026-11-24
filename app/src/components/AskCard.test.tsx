@@ -81,4 +81,40 @@ describe('AskCard', () => {
     a.unmount()
     expect(localStorage.getItem('quorum.draft.ask.a1')).toContain('keep me')
   })
+  describe('long text clamp', () => {
+    const long = Array.from({ length: 20 }, (_, i) => `echo line ${i}`).join('\n')
+    it('long command is clamped with Show all, toggle expands', () => {
+      render(<AskCard session="s1" ask={{ ...perm, detail: long }} />)
+      const pre = screen.getByText(/echo line 0/)
+      expect(pre.className).toContain('line-clamp-8')
+      fireEvent.click(screen.getByRole('button', { name: 'Show all' }))
+      expect(pre.className).not.toContain('line-clamp-8')
+      expect(pre.className).toContain('max-h-[50dvh]')
+      fireEvent.click(screen.getByRole('button', { name: 'Show less' }))
+      expect(pre.className).toContain('line-clamp-8')
+    })
+    it('long single-line text (over 600 chars) gets a toggle', () => {
+      render(<AskCard session="s1" ask={{ ...perm, detail: 'x'.repeat(700) }} />)
+      expect(screen.getByRole('button', { name: 'Show all' })).toBeTruthy()
+    })
+    it('short command has no toggle', () => {
+      render(<AskCard session="s1" ask={perm} />)
+      expect(screen.queryByRole('button', { name: 'Show all' })).toBeNull()
+    })
+    it('actions are sticky and decide fires exactly once', async () => {
+      render(<AskCard session="s1" ask={{ ...perm, detail: long }} />)
+      const allow = screen.getByRole('button', { name: 'Allow' })
+      expect(allow.parentElement!.className).toContain('sticky')
+      expect(allow.parentElement!.className).toContain('bottom-0')
+      fireEvent.click(allow)
+      fireEvent.click(allow)
+      await screen.findByText('Allowed')
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+    it('question prompt is clamped when long', () => {
+      const ask: Ask = { ...perm, kind: 'question', tool: 'AskUserQuestion', questions: [{ question: long, options: [{ label: 'A' }] }] as any }
+      render(<AskCard session="s1" ask={ask} />)
+      expect(screen.getByRole('button', { name: 'Show all' })).toBeTruthy()
+    })
+  })
 })
