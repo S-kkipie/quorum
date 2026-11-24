@@ -749,3 +749,112 @@ func TestMigratePromptedBackfill(t *testing.T) {
 	}
 	require.Equal(t, map[string]int{"user": 1, "big": 1, "plain": 0}, got)
 }
+
+func TestPruneClosedEventsKeepsRowsAndRecentSessions(t *testing.T) {
+	s := openMem(t)
+	base := time.Date(2026, 11, 24, 12, 0, 0, 0, time.UTC)
+	s.now = func() time.Time { return base }
+	for _, id := range []string{"old", "recent", "open", "unserved", "ancient"} {
+		require.NoError(t, s.UpsertSession(proto.SessionInfo{ID: id, Machine: "m", State: proto.StateIdle}))
+		_, err := s.AppendEvent(proto.Event{Session: id, Kind: proto.KindUser, TS: 1})
+		require.NoError(t, err)
+	}
+	closeAt := func(id string, at time.Time) {
+		_, err := s.db.Exec(`UPDATE sessions SET state=?, closed_at=? WHERE id=?`, string(proto.StateClosed), at.UnixMilli(), id)
+		require.NoError(t, err)
+	}
+	closeAt("old", base.AddDate(0, 0, -91))
+	closeAt("recent", base.AddDate(0, 0, -89))
+	closeAt("unserved", base.AddDate(0, 0, -91)) // history_ok or not: the same rule
+	closeAt("ancient", base.AddDate(0, 0, -400))
+	require.NoError(t, s.SetHistoryOK("old"))
+	n, err := s.PruneClosedEvents(s.now().AddDate(0, 0, -90))
+	require.NoError(t, err)
+	require.EqualValues(t, 3, n)
+	for id, want := range map[string]int{"old": 0, "recent": 1, "open": 1, "unserved": 0, "ancient": 0} {
+		evs, err := s.Events(id, 0, 10)
+		require.NoError(t, err)
+		require.Len(t, evs, want, id)
+	}
+	_, err = s.Session("old") // the row stays
+	require.NoError(t, err)
+}
+
+func TestAutoVacuumIsIncrementalAndEventsAfterOrdered(t *testing.T) {
+	s := openMem(t)
+	var mode int
+	require.NoError(t, s.db.QueryRow(`PRAGMA auto_vacuum`).Scan(&mode))
+	require.Equal(t, 2, mode)
+	for i := 1; i <= 3; i++ {
+		_, err := s.AppendEvent(proto.Event{Session: "a", Kind: proto.KindUser, TS: int64(i * 10)})
+		require.NoError(t, err)
+	}
+	evs, err := s.EventsAfter("a", 1, 10)
+	require.NoError(t, err)
+	require.Len(t, evs, 2)
+	require.Less(t, evs[0].Seq, evs[1].Seq)
+	ts, ok, err := s.OldestEventTS("a")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.EqualValues(t, 10, ts)
+	_, ok, _ = s.OldestEventTS("none")
+	require.False(t, ok)
+}
+
+func TestAutoVacuumMigratesExistingDatabaseOnce(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	s, err := Open(path)
+	require.NoError(t, err)
+	// Simulate a database created before the migration: no marker, auto_vacuum off.
+	_, err = s.db.Exec(`DELETE FROM meta`)
+	require.NoError(t, err)
+	_, err = s.db.Exec(`PRAGMA auto_vacuum=NONE`)
+	require.NoError(t, err)
+	_, err = s.db.Exec(`VACUUM`)
+	require.NoError(t, err)
+	_, err = s.AppendEvent(proto.Event{Session: "a", Kind: proto.KindUser})
+	require.NoError(t, err)
+	require.NoError(t, s.Close())
+	s, err = Open(path)
+	require.NoError(t, err)
+	defer s.Close()
+	var mode int
+	require.NoError(t, s.db.QueryRow(`PRAGMA auto_vacuum`).Scan(&mode))
+	require.Equal(t, 2, mode)
+	evs, err := s.Events("a", 0, 10)
+	require.NoError(t, err)
+	require.Len(t, evs, 1)
+}
+
+func TestPruneClosedEventsInBatches(t *testing.T) {
+	s := openMem(t)
+	old := pruneBatch
+	pruneBatch = 7
+	t.Cleanup(func() { pruneBatch = old })
+	require.NoError(t, s.UpsertSession(proto.SessionInfo{ID: "a", Machine: "m", State: proto.StateIdle}))
+	for i := 0; i < 50; i++ {
+		_, err := s.AppendEvent(proto.Event{Session: "a", Kind: proto.KindUser, TS: int64(i)})
+		require.NoError(t, err)
+	}
+	_, err := s.db.Exec(`UPDATE sessions SET state=?, closed_at=1 WHERE id='a'`, string(proto.StateClosed))
+	require.NoError(t, err)
+	n, err := s.PruneClosedEvents(time.Now())
+	require.NoError(t, err)
+	require.EqualValues(t, 50, n)
+	evs, err := s.Events("a", 0, 100)
+	require.NoError(t, err)
+	require.Empty(t, evs)
+}
+
+func TestSeamEventsAreTheOldestBySeq(t *testing.T) {
+	s := openMem(t)
+	for i := 0; i < 5; i++ {
+		_, err := s.AppendEvent(proto.Event{Session: "a", Kind: proto.KindUser, TS: int64(100 - i)})
+		require.NoError(t, err)
+	}
+	evs, err := s.OldestEvents("a", 3)
+	require.NoError(t, err)
+	require.Len(t, evs, 3)
+	require.EqualValues(t, 100, evs[0].TS)
+	require.Less(t, evs[0].Seq, evs[1].Seq)
+}

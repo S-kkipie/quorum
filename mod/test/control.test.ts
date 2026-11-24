@@ -168,7 +168,8 @@ test('close stops the known tasks and then exits', async () => {
   const done = f.control.handle(cmd({ type: 'close' }))
   await flush()
   expect(f.calls).toEqual(['stop:b1', 'stop:m1', 'stop:ag1'])
-  f.sleeps[0].fire()
+  // the last sleep is the close settle (the TaskStop's synthetic-end wait came first)
+  f.sleeps[f.sleeps.length - 1].fire()
   await done
   expect(f.calls).toEqual(['stop:b1', 'stop:m1', 'stop:ag1', 'abort:t1', 'exit'])
 })

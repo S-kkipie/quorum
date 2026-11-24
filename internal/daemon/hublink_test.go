@@ -284,16 +284,16 @@ func TestLaunchHandledWithoutBlocking(t *testing.T) {
 }
 
 func TestBackfillRepliesWithParsedEvents(t *testing.T) {
-	dir := t.TempDir()
+	cfgDir, dir := projectsDir(t)
 	tp := filepath.Join(dir, "t.jsonl")
 	require.NoError(t, os.WriteFile(tp, []byte(`{"type":"user","message":{"content":"hello"},"timestamp":"2026-01-02T03:04:05Z"}`+"\ngarbage\n"), 0o600))
 	reg := NewRegistry("m1")
-	reg.Upsert(proto.SessionInfo{ID: "s1", TranscriptPath: tp})
-	reg.Upsert(proto.SessionInfo{ID: "s2", TranscriptPath: "relativo.jsonl"})
-	reg.Upsert(proto.SessionInfo{ID: "s3", TranscriptPath: dir}) // not a regular file
+	reg.Upsert(proto.SessionInfo{ID: "s1", TranscriptPath: tp, ConfigDir: cfgDir})
+	reg.Upsert(proto.SessionInfo{ID: "s2", TranscriptPath: "relativo.jsonl", ConfigDir: cfgDir})
+	reg.Upsert(proto.SessionInfo{ID: "s3", TranscriptPath: dir, ConfigDir: cfgDir}) // not a regular file
 	txt := filepath.Join(dir, "t.txt")
 	require.NoError(t, os.WriteFile(txt, []byte(`{"type":"user","message":{"content":"x"}}`+"\n"), 0o600))
-	reg.Upsert(proto.SessionInfo{ID: "s4", TranscriptPath: txt}) // without .jsonl
+	reg.Upsert(proto.SessionInfo{ID: "s4", TranscriptPath: txt, ConfigDir: cfgDir}) // without .jsonl
 	drain := func() {
 		for len(reg.Out()) > 0 {
 			<-reg.Out()
@@ -331,10 +331,11 @@ func TestBackfillOversizedTranscriptFitsBudget(t *testing.T) {
 	for i := 0; i < 500; i++ {
 		sb.WriteString(`{"type":"user","message":{"content":"` + big + "\"}}\n")
 	}
-	tp := filepath.Join(t.TempDir(), "big.jsonl")
+	cfgDir, dir := projectsDir(t)
+	tp := filepath.Join(dir, "big.jsonl")
 	require.NoError(t, os.WriteFile(tp, []byte(sb.String()), 0o600))
 	reg := NewRegistry("m1")
-	reg.Upsert(proto.SessionInfo{ID: "s1", TranscriptPath: tp})
+	reg.Upsert(proto.SessionInfo{ID: "s1", TranscriptPath: tp, ConfigDir: cfgDir})
 	for len(reg.Out()) > 0 {
 		<-reg.Out()
 	}

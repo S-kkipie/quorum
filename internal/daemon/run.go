@@ -37,6 +37,9 @@ func Serve(ctx context.Context, cfg Config) error {
 		}
 	}
 	reg := NewRegistry(cfg.Machine)
+	if dir, err := ConfigDir(); err == nil {
+		reg.SetTranscriptIndex(loadTranscriptIndex(filepath.Join(dir, "transcripts.json"), maxIndexedTranscripts))
+	}
 	lk := &linker{reg: reg, parent: ctx}
 	lk.start(cfg)
 	reload := func() error {
@@ -49,6 +52,7 @@ func Serve(ctx context.Context, cfg Config) error {
 	}
 	srv := &http.Server{Handler: NewLocalAPIWithReload(reg, cfg.LocalToken, proto.Version, reload)}
 	go func() { <-ctx.Done(); srv.Close() }()
+	defer reg.FlushTranscriptIndex()
 	if err := srv.Serve(ln); err != http.ErrServerClosed {
 		return err
 	}

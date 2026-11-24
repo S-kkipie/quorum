@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { buildTimeline } from '../lib/timeline'
-import { fixtureConversations, fixtureState, TOOL_OUTPUT_MAX } from './fixtures'
+import { fixtureConversations, fixtureEvents, fixtureHistory, fixtureState, LONG_SESSION, TOOL_OUTPUT_MAX } from './fixtures'
+import type { Event } from '../proto.gen'
 
 const convKey = (m: string, r: string) => m + '\u0000' + r
 
@@ -116,4 +117,45 @@ describe('slash commands, model and effort', () => {
     expect(one.commands[x.id]).toBeUndefined()
     expect(x.modelOptions).toEqual([])
   })
+})
+
+describe('huge: a long session with history on its machine', () => {
+  it('has 1,500 events across hub and machine pages, with 3 compacts', async () => {
+    const s = fixtureState('huge')
+    const inMemory = s.events[LONG_SESSION]
+    expect(inMemory).toHaveLength(1000)
+    const page = fixtureHistory('huge')
+    const machine: Event[] = []
+    let p = await page(LONG_SESSION, '')
+    expect(p.events).toHaveLength(0)
+    expect(p.done).toBe(false)
+    while (!p.done) { p = await page(LONG_SESSION, p.cursor); machine.unshift(...p.events) }
+    expect(machine).toHaveLength(500)
+    expect(new Set(machine.map((e) => e.key)).size).toBe(500)
+    const all = [...machine, ...inMemory]
+    expect(all).toHaveLength(1500)
+    expect(all.filter((e) => e.kind === 'compact')).toHaveLength(3)
+    // ordered: machine history is older than the hub's oldest event
+    expect(machine[machine.length - 1].ts).toBeLessThan(inMemory[0].ts)
+    const hubPage = await fixtureEvents('huge')(LONG_SESSION, 951, 50)
+    expect(hubPage.map((e) => e.seq)).toEqual(Array.from({ length: 50 }, (_, i) => 950 - i))
+  })
+})
+
+describe('background fixtures (Plan 10)', () => {
+  for (const mode of ['worst', 'one'] as const) {
+    it(`${mode}: items, a running background row and task ends of every status`, () => {
+      const s = fixtureState(mode)
+      const x = Object.values(s.sessions).find((v) => v.background.items?.length)!
+      expect(x.state).toBe('background')
+      if (mode === 'worst') expect(new Set(x.background.items!.map((i) => i.kind))).toEqual(new Set(['command', 'monitor', 'subagent', 'loop', 'cron']))
+      if (mode === 'worst') expect(x.background.items!.some((i) => i.label.length > 200)).toBe(true)
+      const items = buildTimeline(s.events[x.id]!, '')
+      const rows = items.filter((i: any) => i.t === 'tool' && i.bg) as any[]
+      expect(rows.some((r) => r.bg.status === undefined)).toBe(true)
+      const ends = items.filter((i: any) => i.t === 'task_end') as any[]
+      for (const st of ['completed', 'failed', 'killed', 'stopped']) expect(ends.some((e) => e.status === st)).toBe(true)
+      expect(ends.some((e) => (e.outputTail ?? '').split('\n').length > 6)).toBe(true)
+    })
+  }
 })

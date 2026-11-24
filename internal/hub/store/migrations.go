@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"log"
 
 	"github.com/S-kkipie/quorum/internal/proto"
 )
@@ -87,6 +88,9 @@ func migrate(s *Store) error {
 	if _, err := s.db.Exec(schema); err != nil {
 		return err
 	}
+	if err := migrateAutoVacuum(s); err != nil {
+		return err
+	}
 	if _, err := s.db.Exec(schemaProjects); err != nil {
 		return err
 	}
@@ -160,6 +164,8 @@ func migrate(s *Store) error {
 		{"end_seq", "INTEGER NOT NULL DEFAULT 0"}, {"attention_end_seq", "INTEGER NOT NULL DEFAULT 0"},
 		{"needs_you_announced", "INTEGER NOT NULL DEFAULT 0"},
 		{"model_cfg", "TEXT NOT NULL DEFAULT '{}'"}, // Plan 8: effort, model options, effort options
+		// Plan 10: the session's machine served its history at least once.
+		{"history_ok", "INTEGER NOT NULL DEFAULT 0"},
 	} {
 		if err := s.db.QueryRow(`SELECT count(*) FROM pragma_table_info('sessions') WHERE name=?`, c[0]).Scan(&n); err != nil {
 			return err
@@ -338,3 +344,44 @@ CREATE TABLE IF NOT EXISTS proposals (
 );
 CREATE INDEX IF NOT EXISTS proposals_ticket ON proposals(ticket_id);
 `
+
+// migrateAutoVacuum switches the database to auto_vacuum=INCREMENTAL (Plan 10 retention frees pages
+// with incremental_vacuum). SQLite only applies the switch on an existing database after a full
+// VACUUM, so it runs once, guarded by a marker row, and is logged.
+func migrateAutoVacuum(s *Store) error {
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '')`); err != nil {
+		return err
+	}
+	var done int
+	if err := s.db.QueryRow(`SELECT count(*) FROM meta WHERE key='auto_vacuum_incremental'`).Scan(&done); err != nil {
+		return err
+	}
+	if done > 0 {
+		return nil
+	}
+	var mode int
+	if err := s.db.QueryRow(`PRAGMA auto_vacuum`).Scan(&mode); err != nil {
+		return err
+	}
+	if mode != 2 {
+		// A brand-new database has nothing to rebuild: stay quiet.
+		var used int
+		if err := s.db.QueryRow(`SELECT (SELECT count(*) FROM sessions)+(SELECT count(*) FROM events)`).Scan(&used); err != nil {
+			return err
+		}
+		if used > 0 {
+			log.Printf("hub: store: enabling incremental auto_vacuum (one-time VACUUM)")
+		}
+		if _, err := s.db.Exec(`PRAGMA auto_vacuum=INCREMENTAL`); err != nil {
+			return err
+		}
+		if _, err := s.db.Exec(`VACUUM`); err != nil {
+			return err
+		}
+		if used > 0 {
+			log.Printf("hub: store: VACUUM done")
+		}
+	}
+	_, err := s.db.Exec(`INSERT INTO meta(key,value) VALUES('auto_vacuum_incremental','1') ON CONFLICT(key) DO NOTHING`)
+	return err
+}

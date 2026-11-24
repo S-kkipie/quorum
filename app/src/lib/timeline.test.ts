@@ -296,3 +296,78 @@ describe('buildTimeline: command user events', () => {
     expect(items.map((i) => (i.t === 'user' ? `user:${i.seq}` : i.t))).toEqual(['command', 'user:3', 'user:4'])
   })
 })
+
+describe('history and compacts', () => {
+  const h = (key: string, kind: string, data: any): Event => ({ seq: 0, session: 's', ts: 1, kind, data, key })
+  it('compact events become divider items with their time and trigger', () => {
+    const items = buildTimeline([ev('compact', { at: 1234, trigger: 'auto', preTokens: 9000 }), ev('compact', { trigger: 'manual' })], BASE)
+    expect(items).toEqual([
+      { t: 'compact', seq: items[0].seq, at: 1234, trigger: 'auto' },
+      { t: 'compact', seq: items[1].seq, at: undefined, trigger: 'manual' },
+    ])
+  })
+  it('task_end passes through as its own item', () => {
+    const [it0] = buildTimeline([ev('task_end', { taskId: 'b1', kind: 'command', summary: 'npm test', status: 'completed', exitCode: 0 })], BASE)
+    expect(it0).toMatchObject({ t: 'task_end', taskId: 'b1', kind: 'command', summary: 'npm test', status: 'completed', exitCode: 0 })
+  })
+  it('machine history events (no seq) get distinct, stable row seqs and finished tools', () => {
+    const page1 = [h('b/0', 'user', { text: 'two' }), h('b/1', 'tool_start', { id: 't', name: 'Bash', summary: 'ls' })]
+    const a = buildTimeline([...page1, ev('assistant', { text: 'live' })], BASE)
+    expect(new Set(a.map((x) => x.seq)).size).toBe(3)
+    expect(a[1]).toMatchObject({ t: 'tool', state: 'ok' })
+    // an older page prepended: rows already shown keep their seq
+    const b = buildTimeline([h('a/0', 'user', { text: 'one' }), ...page1, ev('assistant', { text: 'live' }, a[2].seq)], BASE)
+    expect(b.slice(1).map((x) => x.seq)).toEqual(a.map((x) => x.seq))
+    expect(b[0].seq).not.toBe(b[1].seq)
+  })
+})
+
+describe('background tool rows and task ends', () => {
+  const start = (id: string) => ev('tool_start', { id, name: 'Bash', summary: 'npm test', input: { command: 'npm test', run_in_background: true } })
+  const end = (id: string, o: any = {}) => ev('tool_end', { id, ok: true, output: 'started', ...o })
+  const tend = (taskId: string, status: string) => ev('task_end', { taskId, kind: 'command', summary: 'npm test', status })
+  const row = (items: any[]) => items.find((x) => x.t === 'tool')
+  it('a tool_end with background.taskId marks the row as running in the background', () => {
+    expect(row(buildTimeline([start('t'), end('t', { background: { taskId: 'b1' } })], BASE)).bg).toEqual({ taskId: 'b1' })
+    expect(row(buildTimeline([start('t'), end('t')], BASE)).bg).toBeUndefined()
+  })
+  it('the matching task_end settles the row with its status; other tasks do not', () => {
+    const base = [start('t'), end('t', { background: { taskId: 'b1' } })]
+    expect(row(buildTimeline([...base, tend('b2', 'failed')], BASE)).bg).toEqual({ taskId: 'b1' })
+    expect(row(buildTimeline([...base, tend('b1', 'failed')], BASE)).bg).toEqual({ taskId: 'b1', status: 'failed' })
+  })
+  it('a task_end that arrives before the tool_end still settles the row', () => {
+    expect(row(buildTimeline([start('t'), tend('b1', 'completed'), end('t', { background: { taskId: 'b1' } })], BASE)).bg).toEqual({ taskId: 'b1', status: 'completed' })
+  })
+  it('a real task_end replaces a synthetic "stopped" one; a synthetic after a real one is ignored', () => {
+    const synth = ev('task_end', { taskId: 'b1', kind: 'command', summary: 'npm test', status: 'stopped', synthetic: true })
+    const real = ev('task_end', { taskId: 'b1', kind: 'command', summary: 'Background command "npm test" was stopped', status: 'killed', exitCode: 137 })
+    const items = buildTimeline([start('t'), end('t', { background: { taskId: 'b1' } }), synth, real], BASE)
+    const ends = items.filter((x) => x.t === 'task_end') as any[]
+    expect(ends.length).toBe(1)
+    expect(ends[0]).toMatchObject({ status: 'killed', exitCode: 137, summary: 'Background command "npm test" was stopped' })
+    expect(row(items).bg).toEqual({ taskId: 'b1', status: 'killed' })
+    const again = buildTimeline([real, synth], BASE).filter((x) => x.t === 'task_end') as any[]
+    expect(again.length).toBe(1)
+    expect(again[0].status).toBe('killed')
+  })
+  it('one card per task id (live + history duplicates)', () => {
+    const items = buildTimeline([tend('b1', 'completed'), tend('b1', 'completed'), tend('b2', 'stopped')], BASE)
+    expect(items.filter((x) => x.t === 'task_end').map((x: any) => x.taskId)).toEqual(['b1', 'b2'])
+  })
+  it('a background subagent row follows its Agent call and its task_end', () => {
+    const items = buildTimeline([
+      ev('tool_start', { id: 'tu', name: 'Agent', summary: '', input: { description: 'Audit' } }),
+      ev('agent_start', { id: 'ag', type: 'general-purpose', description: 'Audit' }),
+      ev('tool_end', { id: 'tu', ok: true, output: 'launched', background: { taskId: 'ag' } }),
+    ], BASE)
+    expect(items.find((x) => x.t === 'agent')).toMatchObject({ bg: { taskId: 'ag' } })
+    const done = buildTimeline([
+      ev('tool_start', { id: 'tu', name: 'Agent', summary: '', input: { description: 'Audit' } }),
+      ev('agent_start', { id: 'ag', type: 'x', description: 'Audit' }),
+      ev('tool_end', { id: 'tu', ok: true, output: '', background: { taskId: 'ag' } }),
+      ev('task_end', { taskId: 'ag', kind: 'subagent', summary: 'Audit', status: 'completed' }),
+    ], BASE)
+    expect(done.find((x) => x.t === 'agent')).toMatchObject({ bg: { taskId: 'ag', status: 'completed' } })
+  })
+})

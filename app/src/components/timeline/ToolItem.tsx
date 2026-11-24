@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import {
   Ban, Bot, Check, Circle, CircleCheck, CircleDot, ExternalLink, FilePen, FilePlus, FileText, Globe,
-  ListTodo, Loader2, Plug, Search, Sparkles, Terminal, Wrench, X, type LucideIcon,
+  ListTodo, Loader2, Plug, Search, Sparkles, Square, Terminal, Wrench, X, type LucideIcon,
 } from 'lucide-react'
 import { Tool as ToolBox, ToolContent, ToolHeader } from '@/components/ai-elements/tool'
 import { cn } from '@/lib/utils'
@@ -39,7 +39,25 @@ const MAX_THUMBS = 4
 const MAX_LINES = 200
 const MAX_CHARS = 4000
 
-function StateIcon({ state }: { state: ToolView['state'] }) {
+/** What a call that started background work shows: running (until its task_end), then done / failed / stopped. */
+type Bg = 'running' | 'done' | 'failed' | 'stopped' | 'ended'
+function bgState(t: { bg?: { taskId: string; status?: string } }, ended?: (id: string) => boolean): Bg | undefined {
+  if (!t.bg) return undefined
+  const st = t.bg.status
+  if (st === undefined) return ended?.(t.bg.taskId) ? 'ended' : 'running'
+  return st === 'failed' || st === 'killed' ? 'failed' : st === 'stopped' ? 'stopped' : 'done'
+}
+
+function bgNote(bg?: Bg): ReactNode {
+  return bg === 'running' ? <span className="shrink-0 text-xs font-medium text-state-background">Running in background</span>
+    : bg === 'stopped' ? <span className="shrink-0 text-xs text-muted-foreground">Stopped</span>
+    : bg === 'ended' ? <span className="shrink-0 text-xs text-muted-foreground">Ended</span> : undefined
+}
+
+function StateIcon({ state, bg }: { state: ToolView['state']; bg?: Bg }) {
+  if (bg === 'running') return <Loader2 size={14} aria-label="running in background" className="shrink-0 animate-spin text-state-background" />
+  if (bg === 'ended') return <Square size={12} aria-label="ended" className="shrink-0 fill-current text-muted-foreground" />
+  if (bg === 'stopped') return <Square size={12} aria-label="stopped" className="shrink-0 fill-current text-muted-foreground" />
   switch (state) {
     case 'running': return <Loader2 size={14} aria-label="running" className="shrink-0 animate-spin text-state-working" />
     case 'done': return <Check size={14} aria-label="done" className="shrink-0 text-success" />
@@ -176,7 +194,8 @@ function ReadThumbs({ files, machine, sessionId, onOpenFile, onMore }: {
 }
 
 /** A collapsed row on the vendored Tool (Radix Collapsible); the header toggles the detail. */
-function Row({ name, view, tint, Icon, right, nested, below, children }: {
+function Row({ name, view, tint, Icon, right, nested, below, bg, children }: {
+  bg?: Bg
   name: string; view: ToolView; tint: string; Icon: LucideIcon; right?: ReactNode; nested?: boolean
   /** shown under the header whether or not the row is open; `expand` opens the row */
   below?: (expand: () => void) => ReactNode
@@ -190,7 +209,7 @@ function Row({ name, view, tint, Icon, right, nested, below, children }: {
         className="group/row min-h-11 gap-2.5 rounded-xl px-2 py-0 text-left text-muted-foreground transition-colors duration-100 hover:bg-chip active:bg-chip"
         icon={<span className={`flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md transition-colors duration-100 ${tint}`}><Icon size={13} aria-hidden /></span>}
         meta={right}
-        status={<StateIcon state={view.state} />}
+        status={<StateIcon state={view.state} bg={bg} />}
       />
       {below?.(() => setOpen(true))}
       <ToolContent className="mx-2 mb-2 space-y-0 rounded-lg bg-chip p-2.5 text-ink">{children}</ToolContent>
@@ -202,8 +221,10 @@ function Row({ name, view, tint, Icon, right, nested, below, children }: {
  * One timeline action as a short, collapsed row; tapping it shows the detail for its kind.
  * Handles single tools, merged reads and subagents.
  */
-export default function ToolItem({ item, live, base = '', machine = '', sessionId = '', onOpenFile }: {
+export default function ToolItem({ item, live, base = '', machine = '', sessionId = '', onOpenFile, bgEnded }: {
   item: Tool | ReadsItem | AgentItem
+  /** the task left the session's live items without a task_end */
+  bgEnded?: (taskId: string) => boolean
   /** streamed text of a running subagent */
   live?: string
   /** session base: decides whether an edited file can be opened */
@@ -214,15 +235,19 @@ export default function ToolItem({ item, live, base = '', machine = '', sessionI
   onOpenFile?: (path: string, o?: OpenOpts) => void
 }) {
   if (item.t === 'agent') {
-    const running = item.status === 'running'
+    const bg = bgState(item, bgEnded)
+    const running = item.status === 'running' && (!bg || bg === 'running')
     const view: ToolView = { title: item.description || 'Subagent', icon: 'agent', state: running ? 'running' : /error|fail/i.test(item.status) ? 'error' : 'done' }
     return (
-      <Row name="Agent" view={view} Icon={Bot} tint={KIND.agent.tint} right={item.type ? <span className="min-w-0 max-w-[35%] shrink truncate text-[13px] text-muted-foreground">{item.type}</span> : undefined}>
+      <Row name="Agent" view={view} Icon={Bot} tint={KIND.agent.tint} bg={running ? undefined : bg}
+        right={bgNote(running && !!item.bg ? 'running' : bg) ?? (item.type ? <span className="min-w-0 max-w-[35%] shrink truncate text-[13px] text-muted-foreground">{item.type}</span> : undefined)}>
         <Pre>{clip(item.answer || live || (running ? 'Working…' : '(no answer)'))}</Pre>
       </Row>
     )
   }
   const view = toolView(item)
+  const bg = item.t === 'tool' ? bgState(item, bgEnded) : undefined
+  if (bg === 'failed') view.state = 'error'
   const k = KIND[view.icon]
   const thumbs = (tools: Tool[]) => (expand: () => void) => <ReadThumbs files={readImages(tools)} machine={machine} sessionId={sessionId} onOpenFile={onOpenFile} onMore={expand} />
   if (item.t === 'reads') {
@@ -240,7 +265,7 @@ export default function ToolItem({ item, live, base = '', machine = '', sessionI
     </span>
   )
   return (
-    <Row name={item.name} view={view} Icon={k.icon} tint={k.tint} right={diff} nested={!!item.agent} below={item.kind === 'read' ? thumbs([item]) : undefined}>
+    <Row name={item.name} view={view} Icon={k.icon} tint={k.tint} right={bgNote(bg) ?? diff} bg={bg} nested={!!item.agent} below={item.kind === 'read' ? thumbs([item]) : undefined}>
       <ToolDetail t={item} />
       {canOpen && (
         <button type="button" onClick={() => onOpenFile?.(absPath(item.file!, base))}

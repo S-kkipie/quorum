@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -31,22 +32,36 @@ type block struct {
 
 type line struct {
 	Type        string `json:"type"`
+	Subtype     string `json:"subtype"`
+	UUID        string `json:"uuid"`
 	IsMeta      bool   `json:"isMeta"`
 	IsSidechain bool   `json:"isSidechain"`
-	Timestamp   string `json:"timestamp"`
-	Message     struct {
+	// IsCompactSummary marks the user row Claude Code writes right after a compact boundary: the
+	// summary the model is sent in place of the earlier conversation. Nobody typed it.
+	IsCompactSummary bool `json:"isCompactSummary"`
+	// CompactMetadata rides on a compact boundary row (type "system", subtype "compact_boundary").
+	CompactMetadata *struct {
+		Trigger   string `json:"trigger"`
+		PreTokens *int64 `json:"preTokens"`
+	} `json:"compactMetadata"`
+	Timestamp string `json:"timestamp"`
+	Message   struct {
 		Content json.RawMessage `json:"content"`
 	} `json:"message"`
 }
 
-// Parse returns at most the last limit user/assistant/tool_start events.
+// Parse reads r forwards and returns at most the last limit events (0 = all). r must start at
+// byte 0 of the transcript: event keys use line offsets. ReadPage is the bounded way to read a file.
 func Parse(r io.Reader, limit int) ([]proto.Event, error) {
 	var out []proto.Event
 	br := bufio.NewReaderSize(r, 64<<10)
+	var off int64
 	for {
-		raw, err := readLine(br)
+		raw, n, err := readLine(br)
+		start := off
+		off += int64(n)
 		if len(raw) > 0 {
-			out = append(out, parseLine(raw)...)
+			out = append(out, parseLine(raw, start)...)
 			if limit > 0 && len(out) > 2*limit {
 				out = append([]proto.Event(nil), out[len(out)-limit:]...)
 			}
@@ -65,11 +80,12 @@ func Parse(r io.Reader, limit int) ([]proto.Event, error) {
 }
 
 // readLine reads a whole line; discards (returns empty) those that exceed maxLine.
-func readLine(br *bufio.Reader) ([]byte, error) {
-	var buf []byte
+// n is the number of bytes consumed, newline included.
+func readLine(br *bufio.Reader) (buf []byte, n int, err error) {
 	tooBig := false
 	for {
 		chunk, err := br.ReadSlice('\n')
+		n += len(chunk)
 		if !tooBig {
 			buf = append(buf, chunk...)
 			if len(buf) > maxLine {
@@ -81,9 +97,9 @@ func readLine(br *bufio.Reader) ([]byte, error) {
 			continue
 		}
 		if tooBig {
-			return nil, err
+			return nil, n, err
 		}
-		return buf, err
+		return buf, n, err
 	}
 }
 
@@ -102,17 +118,37 @@ func clip(s string) string {
 // SkipUserText reports whether it is text Claude Code stores as "user" but a person did not write.
 func SkipUserText(s string) bool {
 	return strings.HasPrefix(s, "<command-") || strings.HasPrefix(s, "<local-command-") ||
-		strings.HasPrefix(s, "[Request interrupted by user")
+		strings.HasPrefix(s, "[Request interrupted by user") || IsTaskNotification(s)
 }
 
-func parseLine(raw []byte) []proto.Event {
+// parseLine maps one transcript line (that starts at byte offset of the file) to events; each
+// event's Key is "<line key>/<index among the line's events>".
+func parseLine(raw []byte, offset int64) []proto.Event {
+	evs, uuid := mapLine(raw)
+	if len(evs) > 0 {
+		// the line's identity: its uuid, or "@<byte offset>" without one
+		k := uuid
+		if k == "" {
+			k = "@" + strconv.FormatInt(offset, 10)
+		}
+		for i := range evs {
+			evs[i].Key = k + "/" + strconv.Itoa(i)
+		}
+	}
+	return evs
+}
+
+// mapLine returns the line's events (without keys) and its uuid.
+func mapLine(raw []byte) ([]proto.Event, string) {
 	var l line
-	if json.Unmarshal(raw, &l) != nil || l.IsMeta || l.IsSidechain {
-		return nil
+	if len(raw) == 0 || json.Unmarshal(raw, &l) != nil || l.IsSidechain {
+		return nil, ""
 	}
-	if l.Type != "user" && l.Type != "assistant" {
-		return nil
-	}
+	evs := mapParsed(&l)
+	return evs, l.UUID
+}
+
+func mapParsed(l *line) []proto.Event {
 	var ts int64
 	if t, err := time.Parse(time.RFC3339Nano, l.Timestamp); err == nil {
 		ts = t.UnixMilli()
@@ -121,8 +157,33 @@ func parseLine(raw []byte) []proto.Event {
 		d, _ := json.Marshal(v)
 		return proto.Event{TS: ts, Kind: kind, Data: d}
 	}
+	if l.Type == "system" && l.Subtype == "compact_boundary" {
+		c := proto.CompactInfo{At: ts, Trigger: "auto"}
+		if m := l.CompactMetadata; m != nil {
+			if m.Trigger == "manual" {
+				c.Trigger = "manual"
+			}
+			c.PreTokens = m.PreTokens
+		}
+		return []proto.Event{ev(proto.KindCompact, c)}
+	}
+	// a background task's notification: task_end cards, never a user bubble (also on a meta row)
+	notice := func(s string) []proto.Event {
+		var out []proto.Event
+		for _, te := range TaskEnds(s) {
+			out = append(out, ev(proto.KindTaskEnd, te))
+		}
+		return out
+	}
 	var text string
-	if json.Unmarshal(l.Message.Content, &text) == nil {
+	isText := json.Unmarshal(l.Message.Content, &text) == nil
+	if l.Type == "user" && !l.IsCompactSummary && isText && IsTaskNotification(text) {
+		return notice(text)
+	}
+	if l.IsMeta || l.IsCompactSummary || (l.Type != "user" && l.Type != "assistant") {
+		return nil
+	}
+	if isText {
 		if text == "" || (l.Type == "user" && SkipUserText(text)) {
 			return nil
 		}
@@ -141,6 +202,10 @@ func parseLine(raw []byte) []proto.Event {
 		case b.Type == "text" && b.Text != "":
 			kind := proto.KindAssistant
 			if l.Type == "user" {
+				if IsTaskNotification(b.Text) {
+					out = append(out, notice(b.Text)...)
+					continue
+				}
 				if SkipUserText(b.Text) {
 					continue
 				}

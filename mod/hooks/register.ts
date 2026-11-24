@@ -6,6 +6,7 @@ import { optional } from '../src/compat'
 import { type Control, makeControl } from '../src/control'
 import { type Hold, makeHold } from '../src/hold'
 import { TERM_ALLOW, TERM_DENY } from '../src/permission'
+import { isTaskNotification } from '../src/background'
 import { fromPlugin, makeHandlers, stepHook, toolHook } from '../src/events'
 import { imageIds, makeImageFinder } from '../src/images'
 import { makeIO } from '../src/io'
@@ -33,6 +34,8 @@ const IMAGES_DEADLINE_MS = 300
 // last main-thread prompt and whether the first one was seen (for the recap)
 let lastPrompt = ''
 let firstSeen = false
+// the running main turn was started by a task notification (no recap from it)
+let notificationTurn = false
 // branch refresh (at most once per minute) when a turn ends
 let branchRefresh: { seed(b: string): void; refresh(): Promise<void> } | undefined
 // token totals and throttled usage reports of the current session
@@ -233,15 +236,22 @@ export const register: Register = on => {
   const h = makeHandlers(() => quorum.link, {
     fromDevice: t => quorum.control?.takeFromDevice(t) ?? false,
     fromCommand: (n, a) => quorum.control?.takeCommand(n, a) ?? false,
-    background: () => quorum.control?.background(),
+    // at the main turn's end: a subagent still running counts as background
+    background: () => quorum.control?.background(true),
+    // control.turnStart (which runs first) decided it
+    isNotification: t => quorum.control?.isNotificationTurn() ?? isTaskNotification(t),
   })
 
   // A background task's end reaches the session as a `<task-notification>` prompt: its task
-  // is no longer pending (the follow-up turn it starts reports working on its own).
+  // is no longer pending and a task_end card is emitted (the follow-up turn it starts reports
+  // working on its own; it shows no user bubble).
   on('prompt.submit', async ($, e, next) => {
-    if ((e as { origin?: { kind?: string } }).origin?.kind === 'task-notification') {
-      try { quorum.control?.taskNotification(String(e.text ?? '')) } catch { /* never toward Claude Code */ }
-    }
+    // the engine's origin stamp decides; only a build without one falls back to the text
+    const origin = (e as { origin?: { kind?: string } }).origin
+    try {
+      if (origin ? origin.kind === 'task-notification' : isTaskNotification(e.text)) quorum.control?.taskNotification(String(e.text ?? ''))
+      else if (origin) quorum.control?.ownerPrompt(String(e.text ?? ''))
+    } catch { /* never toward Claude Code */ }
     return next(e)
   })
 
@@ -291,7 +301,9 @@ export const register: Register = on => {
       images = r?.images
     }
     h.turnStart({ ...e, images })
-    if (e.agentId === undefined) {
+    // a notification turn is not the owner's prompt: no recap from it
+    if (e.agentId === undefined) notificationTurn = quorum.control?.isNotificationTurn() ?? isTaskNotification(e.text)
+    if (e.agentId === undefined && !notificationTurn) {
       lastPrompt = e.text
       if (!firstSeen) { firstSeen = true; quorum.recap?.onFirstPrompt(e.text) }
     }
@@ -341,7 +353,7 @@ export const register: Register = on => {
   on('agent.spawn', async ($, e, next) => {
     const r = await next(e)
     h.agentSpawn(e as never, r as never)
-    quorum.control?.agentSpawned((r as { agentId?: string } | undefined)?.agentId)
+    quorum.control?.agentSpawned((r as { agentId?: string } | undefined)?.agentId, e as never)
     return r
   })
 
@@ -366,7 +378,14 @@ export const register: Register = on => {
     if ((e as { agentId?: string }).agentId === undefined) void branchRefresh?.refresh().catch(() => {})
     // a skill or plugin may have come or gone during the turn: fire-and-forget, never awaited here
     if ((e as { agentId?: string }).agentId === undefined) void quorum.commands?.check().catch(() => {})
-    if ((e as { agentId?: string }).agentId === undefined) quorum.recap?.onTurnEnd(lastPrompt, String((e as { answer?: string }).answer ?? ''))
+    if ((e as { agentId?: string }).agentId === undefined && !notificationTurn) quorum.recap?.onTurnEnd(lastPrompt, String((e as { answer?: string }).answer ?? ''))
+    return r
+  })
+
+  // Live compaction (/compact, the threshold, a plugin): a `compact` divider once it stands
+  on('session.compact', async ($, e, next) => {
+    const r = await next(e)
+    try { h.compact(e as never, r as never, Date.now()) } catch { /* never toward Claude Code */ }
     return r
   })
 

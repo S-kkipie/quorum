@@ -136,6 +136,23 @@ type CommandEvent struct {
 type BackgroundInfo struct {
 	Tasks  int   `json:"tasks"`
 	WakeAt int64 `json:"wakeAt"`
+	// Items details each pending item (mod 0.2.2+; absent from older mods). Tasks and WakeAt stay
+	// for older apps.
+	Items []BackgroundItem `json:"items,omitempty"`
+}
+
+// BackgroundItem is one pending background item: Kind is "command" (a background Bash),
+// "monitor", "subagent", "loop" (ScheduleWakeup) or "cron" (CronCreate); Label says what it is
+// (the command line, the monitor's description, the subagent's description, the loop or cron
+// prompt; one line of at most 200 characters); StartedAt is when the mod first saw it (Unix ms;
+// a task first seen in a Stop report gets that time, not its real start); NextWake
+// is the next fire time of a loop or cron (Unix ms).
+type BackgroundItem struct {
+	ID        string `json:"id"`
+	Kind      string `json:"kind"`
+	Label     string `json:"label"`
+	StartedAt int64  `json:"startedAt"`
+	NextWake  int64  `json:"nextWake,omitempty"`
 }
 
 // TokenCount sums token usage: In is uncached input, Out is output, Cache is cache read plus creation.
@@ -203,6 +220,10 @@ const (
 	KindTicket EventKind = "ticket"
 	// KindCommand data: CommandEvent; one per status change of a slash command run from a device.
 	KindCommand EventKind = "command"
+	// KindCompact data: CompactInfo; one per compact boundary (from the transcript, or live from the mod).
+	KindCompact EventKind = "compact"
+	// KindTaskEnd data: TaskEnd; a background task (command, monitor, subagent) finished.
+	KindTaskEnd EventKind = "task_end"
 )
 
 type Event struct {
@@ -211,6 +232,35 @@ type Event struct {
 	TS      int64           `json:"ts"`
 	Kind    EventKind       `json:"kind"`
 	Data    json.RawMessage `json:"data"`
+	// Key is a stable identity for events rebuilt from the transcript (transcript_page, backfill):
+	// "<line uuid>/<n>", or "@<line byte offset>/<n>" when the line has no uuid, where n is the
+	// event's index among the events of that line. Use it to dedupe pages against each other and
+	// against what the hub already has. Empty on live events.
+	Key string `json:"key,omitempty"`
+}
+
+// CompactInfo is the data of a compact event: the conversation was compacted at At (Unix ms;
+// left out when the transcript row has no timestamp).
+type CompactInfo struct {
+	At int64 `json:"at,omitempty"`
+	// Trigger is "auto" or "manual".
+	Trigger string `json:"trigger"`
+	// PreTokens is the context size before compacting, when known.
+	PreTokens *int64 `json:"preTokens,omitempty"`
+}
+
+// TaskEnd is the data of a task_end event. Kind is "command", "monitor", "subagent", ...;
+// Status as Claude Code reports it ("completed", "failed", "killed", ...).
+type TaskEnd struct {
+	TaskID     string `json:"taskId"`
+	Kind       string `json:"kind"`
+	Summary    string `json:"summary"`
+	Status     string `json:"status"`
+	ExitCode   *int   `json:"exitCode,omitempty"`
+	OutputTail string `json:"outputTail,omitempty"`
+	// Synthetic marks an end the mod made up (the task left without its own notification, status
+	// "stopped"; mod 0.2.3+); a later real end of the same task replaces it.
+	Synthetic bool `json:"synthetic,omitempty"`
 }
 
 type ToolStart struct {
@@ -227,6 +277,14 @@ type ToolEnd struct {
 	OK     bool   `json:"ok"`
 	MS     int64  `json:"ms"`
 	Output string `json:"output"`
+	// Background is set when the call started background work (a run_in_background Bash, a
+	// Monitor, a background Agent): it is still running; its task_end has the same TaskID.
+	Background *ToolBackground `json:"background,omitempty"`
+}
+
+// ToolBackground names the background task a tool call started.
+type ToolBackground struct {
+	TaskID string `json:"taskId"`
 }
 
 type Ask struct {
@@ -370,6 +428,29 @@ type RPC struct {
 	ReqID  string          `json:"reqId"`
 	Method string          `json:"method"`
 	Params json.RawMessage `json:"params"`
+}
+
+// TranscriptPageParams are the params of the transcript_page RPC. Cursor is the opaque cursor of
+// the previous page ("" = start from the newest end); Limit is the wanted number of events
+// (0 = default, capped by the daemon). BeforeTS (Unix ms, 0 = none) makes the daemon skip events
+// with ts >= BeforeTS without counting them toward Limit (the hub already holds them); older
+// daemons ignore it, so the hub filters as well.
+type TranscriptPageParams struct {
+	Session  string `json:"session"`
+	Cursor   string `json:"cursor"`
+	Limit    int    `json:"limit"`
+	BeforeTS int64  `json:"beforeTs,omitempty"`
+}
+
+// TranscriptPage is one page of a session's history, oldest first. Cursor fetches the page
+// before this one; Done means there is nothing older (Cursor is then ""). A page may hold
+// fewer events than asked (even none) without being Done: the daemon bounds the bytes it scans.
+// A single transcript line whose events do not fit in one page's byte budget keeps only its
+// newest events that fit: its older events are lost.
+type TranscriptPage struct {
+	Events []Event `json:"events"`
+	Cursor string  `json:"cursor"`
+	Done   bool    `json:"done"`
 }
 
 type RPCResult struct {

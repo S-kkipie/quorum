@@ -3,13 +3,15 @@ import { ChevronDown, ChevronLeft, Loader2, MonitorPlay, MoreHorizontal, Plus, S
 import AskCard from '../components/AskCard'
 import Composer from '../components/Composer'
 import ModelEffortSheet from '../components/ModelEffortSheet'
+import BackgroundSheet from '../components/BackgroundSheet'
 import StatePill from '../components/StatePill'
 import Transcript from '../components/Transcript'
 import { UsageInline } from '../components/UsageStrip'
-import { abortSession, closeSession, listCommands, listEvents, setModel } from '../lib/api'
+import { abortSession, closeSession, listCommands, setModel } from '../lib/api'
 import { accountUsageOf, contextTone, formatTokens, toneClass } from '../lib/meters'
 import { launchIn, loadPrefs } from '../lib/launch'
 import { useMarkSeen } from '../lib/useMarkSeen'
+import { useSessionEvents, type Trim } from '../lib/useSessionEvents'
 import type { AppState } from '../lib/store'
 import type { OpenOpts } from '../lib/timeline'
 import { currentModelOption, modelLabel } from '../lib/slash'
@@ -18,7 +20,6 @@ import type { Event, SessionCommands } from '../proto.gen'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 
-const PAGE = 50
 /** A model switch with no answer from the mod by then stops spinning (an older mod emits no card). */
 const PICK_WAIT_MS = 20_000
 
@@ -51,11 +52,13 @@ function useNarrow() {
   return narrow
 }
 
-export default function Session({ state, id, onBack, onEvents, onSeen, onCommands, reconnects = 0, onGuard, busy = false, onViewTerminal, onOpenFile }: {
+export default function Session({ state, id, onBack, onEvents, onTrim, onSeen, onCommands, reconnects = 0, onGuard, busy = false, onViewTerminal, onOpenFile }: {
   state: AppState
   id: string
   onBack?: () => void
   onEvents: (id: string, evs: Event[]) => void
+  /** Drops events of the session from memory (store.trimEvents). */
+  onTrim?: (id: string, o: Trim) => void
   /** The session was marked seen (clears unread locally before the hub answers). */
   onSeen?: (id: string) => void
   /** A GET of the command list answered; `rev` is commandsRev[id] read before it was sent (store.loadCommands). */
@@ -72,35 +75,8 @@ export default function Session({ state, id, onBack, onEvents, onSeen, onCommand
   const s = state.sessions[id]
   const narrow = useNarrow()
   const events = state.events[id] ?? []
-  const [hasMore, setHasMore] = useState(true)
   const [dismissed, setDismissed] = useState<Record<string, true>>({})
-  const [failed, setFailed] = useState(false)
-  const [error, setError] = useState('')
-  const loading = useRef(false)
-  const oldest = useRef<number | undefined>(undefined)
-  oldest.current = events[0]?.seq
-
-  const load = useCallback(async (before: number) => {
-    if (loading.current) return
-    loading.current = true
-    try {
-      setFailed(false)
-      const page = await listEvents(id, before, PAGE)
-      if (page.length) onEvents(id, page)
-      if (page.length < PAGE) setHasMore(false)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'error')
-      setFailed(true)
-    } finally {
-      loading.current = false
-    }
-  }, [id, onEvents])
-
-  useEffect(() => {
-    setHasMore(true)
-    setError('')
-    load(0)
-  }, [id]) // eslint-disable-line react-hooks/exhaustive-deps
+  const { hasMore, loading, notice, error, setError, failed, loadOlder, setAtBottom, lastSeq: newestSeq, restoreFailed, retryNewest } = useSessionEvents({ id, events, reconnects, onEvents, onTrim })
 
   // The command list is not in the snapshot: read it on open and after every reconnect of the live
   // feed (envelopes sent during the outage are lost). The revision is taken before the request so
@@ -115,6 +91,12 @@ export default function Session({ state, id, onBack, onEvents, onSeen, onCommand
   }, [id, reconnects])
 
   const [sheet, setSheet] = useState(false)
+  const [bgSheet, setBgSheet] = useState(false)
+  // a background row whose task left the live items (or whose session is closed) stopped without a task_end;
+  // older mods (no items) and working sessions (the list may lag) keep rows running
+  const bgItems = s?.background?.items
+  const bgState = s?.state
+  const bgEnded = useCallback((taskId: string) => bgState === 'closed' || (bgItems !== undefined && bgState !== 'working' && !bgItems.some((i) => i.id === taskId)), [bgItems, bgState])
   // a model picked here: the chip spins until the mod answers with a model command card (or a timeout)
   const [pick, setPick] = useState<{ seq: number } | null>(null)
   useEffect(() => {
@@ -123,7 +105,8 @@ export default function Session({ state, id, onBack, onEvents, onSeen, onCommand
     return () => clearTimeout(t)
   }, [pick])
 
-  const lastSeq = events.reduce((m, e) => Math.max(m, e.seq), 0)
+  // the newest hub seq, also when the newest events were dropped from memory while scrolled up
+  const lastSeq = events.reduce((m, e) => Math.max(m, e.seq), newestSeq)
   const modelCmd = modelCommand(events)
   // a queued model command spins the chip until it is QUEUED_MAX_MS old (a re-render at that age)
   const queuedLeft = modelCmd?.status === 'queued' ? modelCmd.ts + QUEUED_MAX_MS - Date.now() : 0
@@ -189,7 +172,7 @@ export default function Session({ state, id, onBack, onEvents, onSeen, onCommand
             </Button>
           )}
           <div className={`min-w-0 flex-1 truncate text-[15px] font-semibold ${onBack ? '' : 'pl-1.5'}`}>{sessionTitle(s).title}</div>
-          {!narrow && <StatePill session={s} />}
+          {!narrow && <StatePill session={s} onPress={() => setBgSheet(true)} />}
           {s.state === 'working' && (
             <Button variant="secondary" onClick={() => act(() => abortSession(id))} aria-label="Interrupt" title="Interrupt"
               className={narrow ? 'size-11 shrink-0' : 'min-h-11 shrink-0 gap-1 px-2.5 text-xs'}>
@@ -221,7 +204,7 @@ export default function Session({ state, id, onBack, onEvents, onSeen, onCommand
         {(sub || narrow || meters || showModel || showEffort) && (
           // wraps at 320 px: pill + subtitle + account + usage + ctx + tokens never overflow the header
           <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 pb-1 pl-2.5 text-xs text-muted-foreground">
-            {narrow && <StatePill session={s} />}
+            {narrow && <StatePill session={s} onPress={() => setBgSheet(true)} />}
             {sub && <span className="min-w-0 max-w-full shrink truncate">{sub}</span>}
             {s.account && <span className="max-w-24 shrink-0 truncate rounded-lg bg-chip px-2 py-0.5 text-muted-foreground">{s.account}</span>}
             {showModel && (
@@ -241,7 +224,12 @@ export default function Session({ state, id, onBack, onEvents, onSeen, onCommand
           </div>
         )}
       </header>
-      {error && <p role="alert" className="bg-del-soft px-3 py-1 text-xs text-danger">{error}</p>}
+      {error && (
+        <p role="alert" className="flex items-center gap-2 bg-del-soft px-3 py-1 text-xs text-danger">
+          <span className="min-w-0 flex-1">{error}</span>
+          {restoreFailed && <button type="button" onClick={retryNewest} className="min-h-11 shrink-0 px-2 font-medium hover:underline">Try again</button>}
+        </p>
+      )}
       <Transcript
         events={events}
         base={s.root || s.cwd}
@@ -250,13 +238,18 @@ export default function Session({ state, id, onBack, onEvents, onSeen, onCommand
         live={state.live[id]}
         liveAgent={state.liveAgent[id]}
         working={s.state === 'working'}
+        bgEnded={bgEnded}
         hasMore={hasMore}
+        loading={loading}
+        notice={notice}
         autoLoad={!failed}
-        onLoadMore={() => oldest.current !== undefined && load(oldest.current)}
+        onLoadMore={loadOlder}
+        onAtBottom={setAtBottom}
         onOpenFile={onOpenFile ? (path, o) => (o ? onOpenFile(s.machine, path, o) : onOpenFile(s.machine, path)) : undefined}
       />
       {asks.map((a) => <AskCard key={a.askId} session={id} ask={a} onDone={() => setDismissed((d) => ({ ...d, [a.askId]: true }))} />)}
       <Composer session={s} commands={state.commands[id]} />
+      <BackgroundSheet open={bgSheet} onOpenChange={setBgSheet} background={s.background} />
       {(showModel || showEffort) && (
         <ModelEffortSheet open={sheet} onOpenChange={setSheet} options={modelOptions} current={current?.value} effort={s.effort} efforts={efforts} onPick={chooseModel} />
       )}

@@ -216,6 +216,7 @@ func (s *Server) routes() {
 	dev("GET /api/sessions", s.handleSessions)
 	dev("GET /api/usage", s.handleUsage)
 	dev("GET /api/sessions/{id}/events", s.handleEvents)
+	dev("GET /api/sessions/{id}/history", s.handleHistory)
 	dev("POST /api/sessions/{id}/prompt", s.handlePrompt)
 	dev("POST /api/sessions/{id}/seen", s.handleSeen)
 	dev("GET /api/sessions/{id}/plugins/{plugin}", s.handlePluginState)
@@ -288,6 +289,10 @@ func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
+	if a := q.Get("after"); a != "" {
+		s.handleEventsAfter(w, r, a)
+		return
+	}
 	before, _ := strconv.ParseInt(q.Get("before"), 10, 64)
 	limit, err := strconv.Atoi(q.Get("limit"))
 	if err != nil || limit <= 0 {
@@ -307,6 +312,28 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		if si, err := s.st.Session(r.PathValue("id")); err == nil {
 			s.hub.requestBackfill(si.Machine, si.ID)
 		}
+	}
+	if evs == nil {
+		evs = []proto.Event{}
+	}
+	writeJSON(w, 200, evs)
+}
+
+// handleEventsAfter serves the delta sync: events with seq > after, ascending, at most 500.
+func (s *Server) handleEventsAfter(w http.ResponseWriter, r *http.Request, a string) {
+	after, err := strconv.ParseInt(a, 10, 64)
+	if err != nil {
+		apiErr(w, 400, "invalid after")
+		return
+	}
+	limit, err := strconv.Atoi(r.URL.Query().Get("limit"))
+	if err != nil || limit <= 0 || limit > maxDeltaEvents {
+		limit = maxDeltaEvents
+	}
+	evs, err := s.st.EventsAfter(r.PathValue("id"), after, limit)
+	if err != nil {
+		apiErr(w, 500, "internal error")
+		return
 	}
 	if evs == nil {
 		evs = []proto.Event{}

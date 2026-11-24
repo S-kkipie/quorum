@@ -3,7 +3,7 @@ import { Plus, Settings } from 'lucide-react'
 import { UNAUTH_EVENT, getToken, listMachines, listUsage, openTerminal, listProjects, loadProposals, listSessions, listTickets, listWorkspaces, setDevApi, type TicketView } from './lib/api'
 import { connectLive, type Live } from './lib/live'
 import { EarlyLaunches, pendingReducer, type Pending } from './lib/launch'
-import { addEvents, initialState, loadCommands, markSeen, reduce, replaceSessions, seed, setCheckouts, setConversations, setProjectsData, setTicketDetail, setTickets, setUsage } from './lib/store'
+import { addEvents, evictEvents, idleSessions, initialState, trimEvents, loadCommands, markSeen, reduce, replaceSessions, seed, setCheckouts, setConversations, setProjectsData, setTicketDetail, setTickets, setUsage } from './lib/store'
 import LaunchDialog from './components/LaunchDialog'
 import TicketDetail from './components/TicketDetail'
 import type { Checkout, Conversation, Envelope, Event, SessionCommands, TermFrame } from './proto.gen'
@@ -25,14 +25,18 @@ import { Button } from './components/ui/button'
 // The session view (AI Elements, markdown) is the heaviest screen: it loads on first open.
 const Session = lazy(() => import('./screens/Session'))
 
+/** Forgets the local event cache (unpair / logout); loaded on demand like the session view. */
+const clearLocalCache = () => import('./lib/cache').then((c) => c.clearCache()).catch(() => { /* no storage */ })
+
 export default function App() {
   const [authed, setAuthed] = useState(() => !!getToken())
   useEffect(() => {
-    const h = () => setAuthed(false)
+    const h = () => { setAuthed(false); clearLocalCache() }
     window.addEventListener(UNAUTH_EVENT, h)
     return () => window.removeEventListener(UNAUTH_EVENT, h)
   }, [])
-  if (!authed) return <Pair onPaired={() => setAuthed(true)} />
+  // a new pairing starts without what another hub (or an earlier pairing) left in the cache
+  if (!authed) return <Pair onPaired={async () => { await clearLocalCache(); setAuthed(true) }} />
   return <Main />
 }
 
@@ -99,6 +103,7 @@ function Main() {
     setState((s) => reduce(s, e))
   }, [])
   const onEvents = useCallback((id: string, evs: Event[]) => setState((s) => addEvents(s, id, evs)), [])
+  const onTrim = useCallback((id: string, o: { max?: number; below?: number; keepOldest?: number }) => setState((s) => trimEvents(s, id, o)), [])
   const onSeen = useCallback((id: string) => setState((s) => markSeen(s, id)), [])
   const onCommands = useCallback((sc: SessionCommands, rev: number | undefined) => setState((s) => loadCommands(s, sc, rev)), [])
   const onTickets = useCallback((pid: string, v: TicketView[]) => setState((s) => setTickets(s, pid, v)), [])
@@ -194,6 +199,31 @@ function Main() {
     else if (seenSession.current === current) { seenSession.current = null; back() }
   }, [current, state.sessions]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Sessions not open for 2 minutes keep only their newest page in memory (the rest is saved to the
+  // local cache first, and read back from it, the hub or the machine when the session is opened).
+  const viewed = useRef<Record<string, number>>({})
+  const latestState = useRef(state)
+  latestState.current = state
+  const openId = useRef(current)
+  openId.current = current
+  useEffect(() => {
+    const c = current
+    return () => { if (c) viewed.current[c] = Date.now() }
+  }, [current])
+  useEffect(() => {
+    const t = setInterval(() => {
+      const now = Date.now()
+      const open = openId.current
+      if (open) viewed.current[open] = now
+      const s = latestState.current
+      const ids = idleSessions(s, open, viewed.current, now)
+      if (!ids.length) return
+      if (!mode) import('./lib/cache').then((c) => { for (const id of ids) c.saveCached(id, s.events[id]) }).catch(() => { /* no storage */ })
+      setState((x) => evictEvents(x, ids))
+    }, 30_000)
+    return () => clearInterval(t)
+  }, [mode])
+
   // The session the owner is looking at (open and the page visible) reads as seen everywhere, so a
   // turn that ends in front of them never flickers "unread" before useMarkSeen's mark lands.
   const visible = usePageVisible()
@@ -230,7 +260,7 @@ function Main() {
     let off = false
     Promise.all([import('./dev/fixtures'), import('./dev/DataToggle')]).then(([f, t]) => {
       if (off) return
-      setDevApi({ listConversations: f.fixtureConversations(mode), listEvents: async () => [], listCommands: f.fixtureCommands(mode) })
+      setDevApi({ listConversations: f.fixtureConversations(mode), listEvents: f.fixtureEvents(mode), history: f.fixtureHistory(mode), listCommands: f.fixtureCommands(mode) })
       setState(f.fixtureState(mode))
       setConnected(true)
       setDev({ Toggle: t.default })
@@ -292,7 +322,7 @@ function Main() {
       base={state.sessions[viewer.sessionId]?.root || state.sessions[viewer.sessionId]?.cwd || ''} onBack={back} />
   )
   const startingView = starting && <Starting pending={pending} terminal={!!(pending && state.machines[pending.machine]?.caps?.terminal)} onBack={back} onViewTerminal={onViewTerminal} />
-  const sessionView = current && vanished.current !== current ? <LazyBoundary><Session key={viewKey} state={shown} id={current} onBack={wide ? undefined : back} onEvents={onEvents} onSeen={onSeen} onCommands={onCommands} reconnects={reconnects} onGuard={guardLaunch} busy={launchBusy} onViewTerminal={onViewTerminal} onOpenFile={(machine, path, o) => current && go({ viewer: { machine, sessionId: current, path, ...(o && 'images' in o ? { images: true } : o && 'read' in o ? { read: true } : {}) } })} /></LazyBoundary> : null
+  const sessionView = current && vanished.current !== current ? <LazyBoundary><Session key={viewKey} state={shown} id={current} onBack={wide ? undefined : back} onEvents={onEvents} onTrim={onTrim} onSeen={onSeen} onCommands={onCommands} reconnects={reconnects} onGuard={guardLaunch} busy={launchBusy} onViewTerminal={onViewTerminal} onOpenFile={(machine, path, o) => current && go({ viewer: { machine, sessionId: current, path, ...(o && 'images' in o ? { images: true } : o && 'read' in o ? { read: true } : {}) } })} /></LazyBoundary> : null
   const sessionsList = <Sessions state={shown} onOpen={openSession} selected={current} />
   const projectsView = <Projects state={shown} wide={wide} selected={project} onOpen={(id) => go({ project: id, projectTickets: null, checkouts: false, ticket: null })} onOpenSession={openSession} onConfig={() => openConfig('')} />
   const configView = config !== null && <Config key={config} state={shown} editProject={config || null} onBack={back} />

@@ -1,4 +1,4 @@
-import type { AccountUsage, Checkout, Conversation, Event, ModelOption, Project, Proposal, SessionCommand, SessionCommands, SessionInfo, SessionState, Workspace } from '../proto.gen'
+import type { AccountUsage, BackgroundItem, Checkout, Conversation, Event, ModelOption, Project, Proposal, SessionCommand, SessionCommands, SessionInfo, SessionState, TranscriptPage, Workspace } from '../proto.gen'
 import { addEvents, initialState, setConversations, setProjectsData, setUsage, type AppState } from '../lib/store'
 import type { Machine } from '../lib/api'
 
@@ -90,6 +90,41 @@ function worstEvents(id: string, root: string): Event[] {
     ev(id, 'user', { text: 'And the follow-up? See [Image #1] [Image #2] [Image #3] [Image #4] [Image #5] [Image #6]', images: [1, 2, 3, 4, 5, 6].map((n) => ({ n, path: `/tmp/claude-1000/-dev/${id}/images/${n}.png` })) }),
     ev(id, 'assistant', { text: 'Nothing else to add.' }),
     ev(id, 'turn_end', { reason: 'end', outputTokens: 12, tokens: { in: 12_345_678, out: 999, cache: 1_200_000 }, model: 'claude-opus-4' }),
+  ]
+}
+
+// --- background work (Plan 10) ---
+
+const LONG_LABEL = 'while true; do curl -fsS https://example.invalid/healthz/' + 'segment/'.repeat(12) + ' || exit 1; sleep 5; done ' + 'x'.repeat(120)
+/** Items of every kind, with long and unbreakable labels, a loop and a cron with a next wake. */
+const bgItems = (): BackgroundItem[] => [
+  { id: 'c1', kind: 'command', label: 'npm test -- --watch', startedAt: NOW - 4 * MIN },
+  { id: 'c2', kind: 'command', label: LONG_LABEL, startedAt: NOW - 3 * 3_600_000 },
+  { id: 'm1', kind: 'monitor', label: 'Watch the deploy log for "error" lines', startedAt: NOW - 30_000 },
+  { id: 'a1', kind: 'subagent', label: padTo('Audit every caller of the event reducer for ordering assumptions and report back ', 260), startedAt: NOW - 12 * MIN },
+  { id: 'l1', kind: 'loop', label: 'Check the CI run and fix what fails', startedAt: NOW - 25 * MIN, nextWake: NOW + 20 * MIN },
+  { id: 'k1', kind: 'cron', label: 'Summarise open pull requests', startedAt: NOW - 2 * 86_400_000, nextWake: NOW + 6 * 3_600_000 },
+]
+/** A background start still running, and task ends of every status (one without an exit code, one with a long tail). */
+function backgroundEvents(id: string): Event[] {
+  const start = (tid: string, name: string, input: any, taskId: string): Event[] => [
+    ev(id, 'tool_start', { id: tid, name, summary: '', agent: '', input }),
+    ev(id, 'tool_end', { id: tid, ok: true, ms: 80, output: 'Command running in background with ID: ' + taskId, background: { taskId } }),
+  ]
+  const end = (taskId: string, kind: string, status: string, summary: string, o: { exitCode?: number; outputTail?: string } = {}) => ev(id, 'task_end', { taskId, kind, summary, status, ...o })
+  const tail = Array.from({ length: 24 }, (_, i) => `test ${String(i + 1).padStart(2, '0')} ... ok ${'.'.repeat(30)}`).join('\n')
+  return [
+    ev(id, 'user', { text: 'Run the tests and the type check in the background' }),
+    ...start('bg-run', 'Bash', { command: 'npm run dev', run_in_background: true }, 'bg-run'),
+    ...start('bg-ok', 'Bash', { command: 'npm test', run_in_background: true }, 'bg-ok'),
+    end('bg-ok', 'command', 'completed', 'npm test', { exitCode: 0, outputTail: tail }),
+    ...start('bg-fail', 'Bash', { command: 'npm run typecheck', run_in_background: true }, 'bg-fail'),
+    end('bg-fail', 'command', 'failed', 'npm run typecheck', { exitCode: 2, outputTail: 'src/a.ts(3,5): error TS2322: Type string is not assignable to type number.' }),
+    ...start('bg-kill', 'Bash', { command: 'sleep 600', run_in_background: true }, 'bg-kill'),
+    end('bg-kill', 'command', 'killed', 'sleep 600'),
+    ...start('bg-stop', 'Monitor', { description: 'Watch the deploy log' }, 'bg-stop'),
+    end('bg-stop', 'monitor', 'stopped', 'Watch the deploy log'),
+    end('bg-agent', 'subagent', 'completed', padTo('Audit every caller of the event reducer ', 240)),
   ]
 }
 
@@ -190,7 +225,7 @@ function worst(): AppState {
     recap: i === 0 ? longTitle(200, 'Recap') : i === 1 ? 'x' : i === 2 ? 'Überprüfung 日本語' : '', name: i === 3 ? longTitle(200, 'Name') : '', contextPct: [0, 55, 99, 100, 7, 42, 88][i], account: i % 2 ? 'personal-test' : 'work', accountKey: i % 2 ? 'b'.repeat(16) : 'a'.repeat(16), contextEstimate: i % 2 === 1, tokens: { in: 12_000 * (i + 1), out: 3_000 * (i + 1), cache: 40_000 }, branch: i === 0 ? 'feature/' + 'very-long-branch-name-'.repeat(8) : 'main',
   }))
   // background with tasks (s3), background with a wake-up only (s6), done unread (s7)
-  sessions[2].background = { tasks: 3, wakeAt: NOW + 30 * MIN }
+  sessions[2].background = { tasks: 6, wakeAt: NOW + 20 * MIN, items: bgItems() }
   sessions[5].background = { tasks: 0, wakeAt: NOW + 90 * MIN }
   sessions[6].unread = true
   sessions.forEach((x, i) => {
@@ -204,6 +239,7 @@ function worst(): AppState {
   sessions.push(session('s6-unassigned', { state: 'working', projectId: '', root: '/work/scratch', cwd: '/work/scratch', name: 'scratch' }))
   const events: Record<string, Event[]> = {}
   for (const x of sessions.slice(0, 2)) events[x.id] = [...worstEvents(x.id, x.root), ...commandEvents(x.id)]
+  events[sessions[2]!.id] = backgroundEvents(sessions[2]!.id)
   // a pending permission with a long script: the card clamps it and keeps Allow / Deny in reach
   const first = sessions[0]!
   events[first.id] = [...events[first.id]!, ev(first.id, 'ask', {
@@ -223,12 +259,42 @@ function empty(): AppState {
 }
 
 function one(): AppState {
-  const x = session('s1-onlyone', { state: 'idle', unread: true, projectId: 'p1', recap: 'Only session', plugins: ['after', 'time-machine'] })
+  const x = session('s1-onlyone', { state: 'background', background: { tasks: 2, wakeAt: 0, items: bgItems().slice(0, 2) }, projectId: 'p1', recap: 'Only session', plugins: ['after', 'time-machine'] })
   return finish({
     machines: [machine('vps-1')], workspaces: [workspace('w1', 'Platform', '#2563eb')], projects: [project('p1', 'w1', 'Only project', { progress: { done: 1, total: 2 } })],
     checkouts: [checkout('k1', 'p1', 'vps-1', '/work/app')], sessions: [x], proposals: [proposal('pr1', 't1')], convs: () => conversations(1), usage: [usage('a'.repeat(16), 'work', 58, 22)],
-    events: { [x.id]: [ev(x.id, 'user', { text: 'Hi' }), ev(x.id, 'assistant', { text: 'Hello.' })] },
+    events: { [x.id]: [ev(x.id, 'user', { text: 'Hi' }), ev(x.id, 'assistant', { text: 'Hello.' }), ...backgroundEvents(x.id).slice(1)] },
   })
+}
+
+// --- a long session (Plan 10): 1,500 events and 3 compacts, the oldest 500 only on its machine ---
+
+/** The huge mode's first session carries the long history. */
+export const LONG_SESSION = 'h000-live'
+const LONG_TURNS = 300
+const HISTORY_EVENTS = 500
+/** Events of a turn: user, tool_start, tool_end, assistant, turn_end (a compact in place of three turn_ends). */
+const COMPACT_TURNS = new Set([40, 180, 290])
+
+/** Hub events (seq 1..1000, in memory and served by fixtureEvents) and machine history (no seq, keyed). */
+function longHistory(): { hub: Event[]; machine: Event[] } {
+  const all: Omit<Event, 'seq'>[] = []
+  const t0 = NOW - LONG_TURNS * 5 * MIN
+  for (let turn = 0; turn < LONG_TURNS; turn++) {
+    const ts = t0 + turn * 5 * MIN
+    const at = (k: number) => ts + k * 1000
+    const session = LONG_SESSION
+    all.push({ session, ts: at(0), kind: 'user', data: { text: turn % 7 === 0 ? padTo(`Turn ${turn + 1}: a longer request that wraps over a few lines on a phone screen `, 240) : `Turn ${turn + 1}: next step` } })
+    all.push({ session, ts: at(1), kind: 'tool_start', data: { id: `lt${turn}`, name: turn % 3 ? 'Read' : 'Bash', summary: '', agent: '', input: turn % 3 ? { file_path: `/work/app/src/file-${turn % 40}.ts` } : { command: `npm test -- step-${turn}` } } })
+    all.push({ session, ts: at(2), kind: 'tool_end', data: { id: `lt${turn}`, ok: turn % 11 !== 5, ms: 300 + turn, output: `output of step ${turn}` } })
+    all.push({ session, ts: at(3), kind: 'assistant', data: { text: turn % 5 === 0 ? `Step ${turn + 1} done.\n\n${codeBlock(6 + (turn % 9))}` : `Step ${turn + 1} done.` } })
+    all.push(COMPACT_TURNS.has(turn)
+      ? { session, ts: at(4), kind: 'compact', data: turn === 40 ? { trigger: 'manual' } : { at: at(4), trigger: 'auto', preTokens: 150_000 + turn } }
+      : { session, ts: at(4), kind: 'turn_end', data: { reason: 'end', tokens: { in: 1000 + turn, out: 200, cache: 40_000 }, model: 'claude-sonnet-5-5' } })
+  }
+  const machine = all.slice(0, HISTORY_EVENTS).map((e, i) => ({ ...e, seq: 0, key: `line-${i}/0` }))
+  const hub = all.slice(HISTORY_EVENTS).map((e, i) => ({ ...e, seq: i + 1 }))
+  return { hub, machine }
 }
 
 function huge(): AppState {
@@ -239,9 +305,11 @@ function huge(): AppState {
     machine: names[i % 5], projectId: 'p1', state: (['working', 'needs_you', 'background', 'idle'] as SessionState[])[i % 4], unread: i % 8 === 3, background: i % 4 === 2 ? { tasks: (i % 3) + 1, wakeAt: i % 8 === 2 ? NOW + 20 * MIN : 0 } : { tasks: 0, wakeAt: 0 }, recap: `Live session ${i + 1}`, updatedAt: NOW - i * MIN,
   }))
   for (const x of sessions) Object.assign(x, { model: 'claude-sonnet-5-5', modelOptions: MODELS, effortOptions: EFFORTS, effort: 'medium' })
+  sessions[0].recap = 'Long session: 1,500 events, 3 compacts'
   return withCommands(finish({
     machines, workspaces: [workspace('w1', 'Platform', '#2563eb')], projects: [project('p1', 'w1', 'Busy project')], checkouts, sessions,
     convs: (m) => (m === 'vps-1' ? conversations(1000, false, 'big') : []),
+    events: { [LONG_SESSION]: longHistory().hub },
   }), sessions.map((x) => x.id), hugeCommands)
 }
 
@@ -254,6 +322,27 @@ export function fixtureState(mode: FixtureMode): AppState {
 export function fixtureConversations(mode: FixtureMode): (machine: string, root: string) => Promise<Conversation[]> {
   const s = fixtureState(mode)
   return async (m, root) => s.conversations[m + '\u0000' + root] ?? []
+}
+
+/** Replacement for listEvents: the long session's hub events, newest first, before a seq (0 = newest). */
+export function fixtureEvents(mode: FixtureMode): (id: string, before: number, limit: number) => Promise<Event[]> {
+  const hub = mode === 'huge' ? longHistory().hub : []
+  return async (id, before, limit) => (id !== LONG_SESSION ? [] : hub.filter((e) => !before || e.seq < before).reverse().slice(0, limit))
+}
+
+/**
+ * Replacement for history: the long session's machine pages of 100, oldest first. The first page is
+ * empty and not done, as when the hub filters out what it already holds.
+ */
+export function fixtureHistory(mode: FixtureMode): (id: string, cursor: string) => Promise<TranscriptPage> {
+  const machine = mode === 'huge' ? longHistory().machine : []
+  return async (id, cursor) => {
+    if (id !== LONG_SESSION || !machine.length) return { events: [], cursor: '', done: true }
+    if (!cursor) return { events: [], cursor: String(machine.length), done: false }
+    const end = Math.max(0, Math.min(machine.length, Number(cursor) || 0))
+    const start = Math.max(0, end - 100)
+    return { events: machine.slice(start, end), cursor: start ? String(start) : '', done: start === 0 }
+  }
 }
 
 /** Replacement for listCommands: the fixture's own list, or an empty one with no hash (an older mod). */

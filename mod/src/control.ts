@@ -1,4 +1,7 @@
-import { type BackgroundInfo, nextCron, stateOf, taskEnds } from './background'
+import {
+  type BackgroundInfo, type BackgroundItem, backgroundStart, guessKind, isTaskNotification, kindOfType, label, nextCron,
+  parseTaskNotifications, startLabel, stateOf,
+} from './background'
 import { summarize } from './events'
 import type { Link } from './link'
 import { permissionRace } from './permission'
@@ -144,7 +147,13 @@ export type ControlDeps = {
 }
 
 /** A scheduled wake-up: when it fires and, for a recurring cron, its expression. */
-type Wake = { at: number; cron?: string; recurring: boolean }
+type Wake = { at: number; cron?: string; recurring: boolean; label?: string; startedAt?: number }
+/** A live background task or subagent: what it is and when the mod saw it start. */
+type Task = { kind: string; label: string; startedAt: number; bg: boolean }
+/** How many ended tasks are remembered (a notification may come after the end: a subagent's turn.complete). */
+const ENDED_MAX = 50
+/** How many announced task ends (task_end emitted) are remembered to dedupe them. */
+const ANNOUNCED_MAX = 200
 /** `ScheduleWakeup` has no id: the dynamic loop has at most one pending wake-up. */
 const LOOP_WAKE = 'schedule-wakeup'
 const WAKE_MIN_S = 60
@@ -158,8 +167,8 @@ const MAX_SLEEP_MS = 2 ** 31 - 1
 
 /** What the classic Stop hook reports (both fields absent on older builds). */
 export type StopReport = {
-  background_tasks?: ReadonlyArray<{ id?: unknown }>
-  session_crons?: ReadonlyArray<{ id?: unknown; schedule?: unknown; recurring?: unknown }>
+  background_tasks?: ReadonlyArray<{ id?: unknown; type?: unknown; description?: unknown; command?: unknown }>
+  session_crons?: ReadonlyArray<{ id?: unknown; schedule?: unknown; recurring?: unknown; prompt?: unknown }>
 }
 
 /** What the tool.check hook lends to the permission race. */
@@ -217,7 +226,22 @@ export function makeControl(deps: ControlDeps) {
   // device commands whose turn may start with Claude Code's command markup (takeCommand); `settledAt` once it settled
   const ranCommands: Array<{ key: string; settledAt?: number }> = []
   const commandKey = (name: string, args: string) => `${name}\n${String(args ?? '').trim()}`
-  const tasks = new Set<string>() // known live background tasks and subagents
+  const tasks = new Map<string, Task>() // known live background tasks and subagents
+  // tasks that ended lately (their kind for a notification that comes after the end), oldest first
+  const ended = new Map<string, Task>()
+  // task ids whose task_end was emitted (a notification seen twice, or after a synthetic end),
+  // oldest first; the value is true for a synthetic end (a real one may still replace it)
+  const announced = new Map<string, boolean>()
+  // tasks that ended without a notification (TaskStop, the Stop report): a synthetic task_end
+  // follows unless their own notification comes first
+  const unannounced = new Map<string, Task>()
+  // notification-looking prompts the engine stamped with another origin (the owner typed them):
+  // their turn is the owner's, not a notification's
+  const literals: string[] = []
+  // the running main turn was started by a task notification
+  let notificationTurn = false
+  // the background last reported with update (items are re-sent only when they change)
+  let reported = '[0,[]]' // itemsKey of nothing pending (what the register starts with)
   const wakes = new Map<string, Wake>() // scheduled wake-ups (ScheduleWakeup, CronCreate)
   const now = () => { try { return deps.now?.() ?? Date.now() } catch { return Date.now() } }
   // the state last published after a turn ended (to re-send only real changes)
@@ -363,7 +387,10 @@ export function makeControl(deps: ControlDeps) {
   async function close(): Promise<void> {
     info('Closing the session from Quorum')
     asks.withdrawKind('permission')
-    const ids = [...tasks]
+    const ids = [...tasks.keys()]
+    for (const [id, t] of tasks) if (t.bg) endWithout(id, t)
+    for (const [id, t] of unannounced) endWithout(id, t)
+    unannounced.clear()
     tasks.clear()
     wakes.clear()
     // /exit with live background work opens a dialog nobody on the device
@@ -378,24 +405,33 @@ export function makeControl(deps: ControlDeps) {
     const res = r.result as Record<string, unknown> | undefined
     if (e.tool === 'TaskStop') {
       const id = e.task_id ?? e.shell_id
-      if (typeof id === 'string' && tasks.delete(id)) recheck()
+      const t = typeof id === 'string' ? tasks.get(id) : undefined
+      if (typeof id === 'string' && drop(id)) {
+        if (t?.bg) endLater(id, t)
+        recheck()
+      }
       return
     }
     if (r.deny !== undefined || r.isError || !res || typeof res !== 'object') return
-    if (typeof res.backgroundTaskId === 'string') tasks.add(res.backgroundTaskId)
-    if (e.tool === 'Monitor' && typeof res.taskId === 'string') tasks.add(res.taskId)
+    const bgStart = backgroundStart(e.tool, r)
+    if (bgStart) {
+      const known = tasks.get(bgStart.taskId)
+      const l = startLabel(e.tool, e)
+      tasks.set(bgStart.taskId, { kind: bgStart.kind, label: l || known?.label || '', startedAt: known?.startedAt ?? now(), bg: true })
+      return
+    }
     if (e.tool === 'ScheduleWakeup') {
       if (e.stop === true || res.stopped === true) { wakes.delete(LOOP_WAKE); return }
       const delay = typeof e.delaySeconds === 'number' ? Math.min(WAKE_MAX_S, Math.max(WAKE_MIN_S, e.delaySeconds)) : undefined
       const at = typeof res.scheduledFor === 'number' ? res.scheduledFor : delay !== undefined ? now() + delay * 1000 : undefined
-      if (at !== undefined) wakes.set(LOOP_WAKE, { at, recurring: false })
+      if (at !== undefined) wakes.set(LOOP_WAKE, { at, recurring: false, label: label(e.prompt), startedAt: now() })
       return
     }
     if (e.tool === 'CronCreate' && typeof res.id === 'string') {
       const cron = typeof e.cron === 'string' ? e.cron : undefined
       const recurring = typeof res.recurring === 'boolean' ? res.recurring : e.recurring !== false
       const at = typeof res.nextFireAt === 'number' ? res.nextFireAt : cron ? nextCron(cron, now()) : undefined
-      if (at !== undefined) wakes.set(res.id, { at, cron, recurring })
+      if (at !== undefined) wakes.set(res.id, { at, cron, recurring, label: label(e.prompt), startedAt: now() })
       return
     }
     if (e.tool === 'CronDelete') {
@@ -419,11 +455,99 @@ export function makeControl(deps: ControlDeps) {
    * Live tasks and the next wake-up. One just due (within WAKE_GRACE_MS) still counts: its
    * turn is about to start; one later than that never fired and is dropped.
    */
-  function background(): BackgroundInfo {
+  function background(final = false): BackgroundInfo {
     expire(now() - WAKE_GRACE_MS)
     let wakeAt = 0
     for (const w of wakes.values()) if (!wakeAt || w.at < wakeAt) wakeAt = w.at
-    return { tasks: tasks.size, wakeAt }
+    // a foreground subagent is part of the turn, not an item; one still alive when the main turn
+    // ends (`final`) runs on in the background
+    const items: BackgroundItem[] = [...tasks].filter(([, t]) => t.bg || final)
+      .map(([id, t]) => ({ id, kind: t.kind, label: t.label, startedAt: t.startedAt }))
+    for (const [id, w] of wakes) {
+      items.push({ id, kind: id === LOOP_WAKE ? 'loop' : 'cron', label: w.label ?? '', startedAt: w.startedAt ?? 0, nextWake: w.at })
+    }
+    items.sort((a, b) => a.startedAt - b.startedAt)
+    return { tasks: tasks.size, wakeAt, items }
+  }
+
+  const itemsKey = (bg: BackgroundInfo) => JSON.stringify([bg.wakeAt, bg.items])
+
+  /** Stops tracking a task (kept a while in `ended` for its kind); false if it was not live. */
+  function drop(id: string): boolean {
+    const t = tasks.get(id)
+    if (!t) return false
+    tasks.delete(id)
+    ended.delete(id)
+    ended.set(id, t)
+    if (ended.size > ENDED_MAX) ended.delete(ended.keys().next().value as string)
+    return true
+  }
+
+  /** Re-sends the background (its items) with update when it changed since last reported. */
+  function report(): void {
+    const bg = background()
+    // what the items show (a foreground subagent counts in tasks but is no item: not re-sent for it)
+    const key = itemsKey(bg)
+    if (key === reported) return
+    reported = key
+    try { link()?.update({ background: bg }) } catch { /* never toward Claude Code */ }
+  }
+
+  /**
+   * Emits task_end once per task id (a bounded memory of the announced ones), except that a real
+   * end (from the task's own notification) after a synthetic one is emitted too: it replaces it.
+   */
+  function announce(taskId: string, data: Record<string, unknown>, synthetic = false): void {
+    unannounced.delete(taskId)
+    const prev = announced.get(taskId)
+    if (prev !== undefined && (!prev || synthetic)) return
+    announced.delete(taskId)
+    announced.set(taskId, synthetic)
+    if (announced.size > ANNOUNCED_MAX) announced.delete(announced.keys().next().value as string)
+    if (controllable()) emit('task_end', { taskId, ...data, ...(synthetic ? { synthetic: true } : {}) })
+  }
+
+  /** A background task ended without a notification: a synthetic task_end, status `stopped`. */
+  function endWithout(id: string, t: Task): void {
+    announce(id, { kind: t.kind, summary: t.label, status: 'stopped' }, true)
+  }
+
+  /**
+   * As endWithout, after RECHECK_MS: its own notification (with the real status and summary) may
+   * still be on its way (a TaskStop's `killed`, a completion queued until the session is idle).
+   */
+  function endLater(id: string, t: Task): void {
+    unannounced.set(id, t)
+    void deps.sleep(RECHECK_MS).then(() => {
+      if (unannounced.get(id) !== t) return
+      unannounced.delete(id)
+      endWithout(id, t)
+    }, () => {})
+  }
+
+  /**
+   * Handles a notification prompt: each block whose status ends a task emits task_end (the kind
+   * is the tracked item's; once per task id) and the task is dropped; a monitor's event (no end)
+   * is an info line, unless `endsOnly`.
+   */
+  function notify(text: string, endsOnly = false): boolean {
+    let removed = false
+    for (const n of parseTaskNotifications(text)) {
+      if (!n.ended) {
+        const what = n.event || n.summary
+        if (!endsOnly && what && controllable()) info(`Background event: ${label(what)}`)
+        continue
+      }
+      const t = tasks.get(n.taskId) ?? ended.get(n.taskId)
+      removed = drop(n.taskId) || removed
+      announce(n.taskId, {
+        kind: t?.kind ?? guessKind(n.summary), summary: n.summary || t?.label || '', status: n.status ?? '',
+        ...(n.exitCode !== undefined ? { exitCode: n.exitCode } : {}),
+        ...(n.outputTail ? { outputTail: n.outputTail } : {}),
+      })
+    }
+    report()
+    return removed
   }
 
   /**
@@ -447,6 +571,7 @@ export function makeControl(deps: ControlDeps) {
     const key = `${state}:${bg.tasks}:${bg.wakeAt}`
     if (key === published) return
     published = key
+    reported = itemsKey(bg)
     emit('status', { state, background: bg })
     try { link()?.update({ state, background: bg }) } catch { /* never toward Claude Code */ }
   }
@@ -554,9 +679,17 @@ export function makeControl(deps: ControlDeps) {
       }
     },
 
-    /** turn.start: the current main-thread turn. */
-    turnStart(e: { turnId?: string; agentId?: string }): void {
+    /**
+     * turn.start: the current main-thread turn. A turn started by a notification prompt that
+     * prompt.submit did not see is handled here (task_end, tracking).
+     */
+    turnStart(e: { turnId?: string; agentId?: string; text?: string }): void {
       if (e.agentId !== undefined) return
+      const lit = isTaskNotification(e.text) ? literals.indexOf(String(e.text)) : -1
+      if (lit >= 0) literals.splice(lit, 1)
+      notificationTurn = lit < 0 && isTaskNotification(e.text)
+      // ends only: a monitor event's info line came with its prompt.submit; task_end is deduped
+      if (notificationTurn) notify(String(e.text), true)
       turnId = e.turnId
       turnSeq++
       published = ''
@@ -567,7 +700,7 @@ export function makeControl(deps: ControlDeps) {
     /** turn.complete: end of a subagent or the main turn (undelivered 'now' → submit). */
     turnEnd(e: { agentId?: string }): void {
       if (e.agentId !== undefined) {
-        if (tasks.delete(e.agentId)) recheck()
+        if (drop(e.agentId)) { recheck(); report() }
         // its pending permissions died with it
         asks.withdrawAgent(e.agentId)
         return
@@ -575,17 +708,27 @@ export function makeControl(deps: ControlDeps) {
       turnId = undefined
       // device commands waiting for this turn's end: their wait for an answer (re)starts
       for (const r of turnEnders.splice(0)) r()
-      // what turn.complete published (events.ts reads background() for it)
+      // a subagent still running when the main turn ends runs in the background
+      for (const t of tasks.values()) t.bg = true
+      // what turn.complete published (events.ts reads background(true) for it)
       const bg = background()
       published = `${stateOf(bg)}:${bg.tasks}:${bg.wakeAt}`
+      reported = itemsKey(bg)
       watchWake(bg.wakeAt)
       // a waiting permission died with the turn (Esc, abort, interrupt), subagents' too
       asks.withdrawKind('permission')
       for (const t of midTurn.splice(0)) void submitDevice(t)
     },
 
-    agentSpawned(id: string | undefined): void {
-      if (id) tasks.add(id)
+    /** agent.spawn answered: a subagent (foreground or background) runs until its turn.complete. */
+    agentSpawned(id: string | undefined, e?: { description?: unknown; prompt?: unknown; background?: unknown }): void {
+      if (!id) return
+      const known = tasks.get(id)
+      tasks.set(id, {
+        kind: 'subagent', label: label(e?.description) || label(e?.prompt) || known?.label || '',
+        startedAt: known?.startedAt ?? now(), bg: known?.bg === true || e?.background === true,
+      })
+      report()
     },
 
     /** Live background tasks and the next scheduled wake-up (ms, 0 = none). */
@@ -598,9 +741,22 @@ export function makeControl(deps: ControlDeps) {
      * a follow-up turn, the bounded re-check (RECHECK_MS) publishes the new state.
      */
     taskNotification(text: string): void {
-      let removed = false
-      for (const id of taskEnds(text)) removed = tasks.delete(id) || removed
-      if (removed) recheck()
+      if (notify(text)) recheck()
+    },
+
+    /**
+     * prompt.submit stamped with an origin other than task-notification: a prompt that merely
+     * looks like one (the owner typed the markup) starts an ordinary turn.
+     */
+    ownerPrompt(text: string): void {
+      if (!isTaskNotification(text)) return
+      literals.push(text)
+      if (literals.length > FROM_DEVICE_MAX) literals.shift()
+    },
+
+    /** The running main turn was started by a task notification (after turnStart). */
+    isNotificationTurn(): boolean {
+      return notificationTurn
     },
 
     /**
@@ -611,8 +767,22 @@ export function makeControl(deps: ControlDeps) {
      */
     stopHook(e: StopReport): void {
       if (Array.isArray(e.background_tasks)) {
+        const before = new Map(tasks)
         tasks.clear()
-        for (const t of e.background_tasks) if (typeof t?.id === 'string') tasks.add(t.id)
+        const t0 = now()
+        for (const t of e.background_tasks) {
+          if (typeof t?.id !== 'string') continue
+          const known = before.get(t.id)
+          tasks.set(t.id, known ? { ...known, bg: true } : { kind: kindOfType(t.type), label: label(t.command) || label(t.description), startedAt: t0, bg: true })
+        }
+        for (const [id, t] of before) {
+          if (tasks.has(id)) continue
+          ended.delete(id)
+          ended.set(id, t)
+          // gone without a notification so far: a background one gets its task_end (deduped)
+          if (t.bg) endLater(id, t)
+        }
+        while (ended.size > ENDED_MAX) ended.delete(ended.keys().next().value as string)
       }
       if (Array.isArray(e.session_crons)) {
         if (!e.session_crons.length) wakes.clear()
@@ -621,12 +791,15 @@ export function makeControl(deps: ControlDeps) {
         for (const id of [...wakes.keys()]) if (id !== LOOP_WAKE && !listed.has(id)) wakes.delete(id)
         const t = now()
         for (const c of e.session_crons) {
+          const w = typeof c?.id === 'string' ? wakes.get(c.id) : undefined
+          if (w && !w.label) w.label = label(c.prompt)
           if (typeof c?.id !== 'string' || typeof c.schedule !== 'string' || wakes.has(c.id)) continue
           const at = nextCron(c.schedule, t)
-          if (at !== undefined) wakes.set(c.id, { at, cron: c.schedule, recurring: c.recurring !== false })
+          if (at !== undefined) wakes.set(c.id, { at, cron: c.schedule, recurring: c.recurring !== false, label: label(c.prompt), startedAt: t })
         }
       }
       republish()
+      report()
     },
 
     /** Consumes the text if it came from the device (its `user` was already emitted). */
@@ -666,7 +839,7 @@ export function makeControl(deps: ControlDeps) {
       }
       const r = await run()
       const cr = (r ?? {}) as CallResult
-      try { track(e, cr) } catch { /* never toward Claude Code */ }
+      try { track(e, cr); report() } catch { /* never toward Claude Code */ }
       // only a real model call (with tool_use_id): in a plugin's $.tool.call the context is lost
       if (main && e.tool_use_id !== undefined && midTurn.length && cr.deny === undefined && controllable()) {
         const said = midTurn.splice(0)

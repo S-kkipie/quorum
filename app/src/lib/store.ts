@@ -50,14 +50,189 @@ export const initialState = (): AppState => ({
   workspaces: {}, projects: {}, tickets: {}, links: {}, proposals: {}, checkouts: {}, worked: {}, conversations: {}, usage: {}, commands: {}, commandsRev: {}, lastAttention: {},
 })
 
-/** Inserts ev into the seq-sorted list, discarding duplicates. */
+/** An event read from the machine's transcript (history page): no hub seq, identified by its key. */
+export const isHistory = (e: Event): boolean => !e.seq
+
+/** A live event and the same event read back from the transcript: at most this far apart (clocks differ). */
+const SEAM_NEAR_MS = 5000
+/** How many of the oldest hub events history is compared with at the seam. */
+const SEAM_HUB = 200
+const compactAt = (e: Event): number => (typeof e.data?.at === 'number' && e.data.at > 0 ? e.data.at : e.ts)
+const clipSig = (v: unknown): string => (typeof v === 'string' ? [...v.trim()].slice(0, 200).join('') : '')
+
+/**
+ * What identifies an event's content on both sides of the seam: kind, text, tool name and summary,
+ * task id ('' when it has none of them: never a duplicate). As the hub's eventSig.
+ */
+function eventSig(e: Event): string {
+  const d = e.data ?? {}
+  const text = clipSig(d.text)
+  const name = typeof d.name === 'string' ? d.name : ''
+  const summary = clipSig(d.summary)
+  const task = typeof d.taskId === 'string' ? d.taskId : ''
+  if (!text && !name && !summary && !task) return ''
+  return `${e.kind}\0${text}\0${name}\0${summary}\0${task}`
+}
+
+/** Index of the first hub event (the list is history first, then the hub's events). */
+function firstHub(list: readonly Event[]): number {
+  let i = 0
+  while (i < list.length && isHistory(list[i])) i++
+  return i
+}
+
+/**
+ * History (sorted by ts) without what the hub already holds: events at or after the oldest hub
+ * event's ts, a compact within 5 s of a hub compact, and an event within 5 s of one of the oldest
+ * hub events with the same kind and content. `hub` is the hub part of a list, from index `from`.
+ */
+function atSeam(hist: Event[], hub: readonly Event[], from = 0): Event[] {
+  if (!hist.length || from >= hub.length) return hist
+  const seam = hub[from].ts
+  let out = hist[hist.length - 1].ts >= seam ? hist.filter((e) => e.ts < seam) : hist
+  if (!out.length) return out
+  if (out.some((e) => e.kind === 'compact')) {
+    const hubCompacts: number[] = []
+    for (let i = from; i < hub.length; i++) if (hub[i].kind === 'compact') hubCompacts.push(compactAt(hub[i]))
+    if (hubCompacts.length) {
+      const kept = out.filter((e) => e.kind !== 'compact' || !hubCompacts.some((t) => Math.abs(t - compactAt(e)) <= SEAM_NEAR_MS))
+      if (kept.length !== out.length) out = kept
+    }
+  }
+  const near = new Map<string, number[]>()
+  let lo = Infinity
+  for (let i = from; i < hub.length && i < from + SEAM_HUB; i++) {
+    const h = hub[i]
+    if (h.kind === 'compact') continue
+    const sig = eventSig(h)
+    if (!sig) continue
+    const l = near.get(sig)
+    if (l) l.push(h.ts); else near.set(sig, [h.ts])
+    if (h.ts < lo) lo = h.ts
+  }
+  if (!near.size) return out
+  // only the newest history events can be that close to the hub's oldest ones
+  let i = out.length
+  while (i > 0 && out[i - 1].ts >= lo - SEAM_NEAR_MS) i--
+  if (i === out.length) return out
+  const tail = out.slice(i).filter((e) => {
+    if (e.kind === 'compact') return true
+    const ts = near.get(eventSig(e))
+    return !ts || !ts.some((t) => Math.abs(t - e.ts) <= SEAM_NEAR_MS)
+  })
+  return tail.length === out.length - i ? out : [...out.slice(0, i), ...tail]
+}
+
+/** Merges two ts-sorted runs; on equal ts the events of `a` go first. */
+function mergeByTs(a: Event[], b: Event[]): Event[] {
+  if (!b.length) return a
+  if (!a.length) return b
+  if (a[a.length - 1].ts <= b[0].ts) return [...a, ...b] // an older page: no merge needed
+  const out: Event[] = new Array(a.length + b.length)
+  let i = 0, j = 0, k = 0
+  while (i < a.length && j < b.length) out[k++] = b[j].ts < a[i].ts ? b[j++] : a[i++]
+  while (i < a.length) out[k++] = a[i++]
+  while (j < b.length) out[k++] = b[j++]
+  return out
+}
+
+/**
+ * Merges events into a session's list, discarding duplicates. The list is machine history first
+ * (events read from the transcript, deduped by key, oldest first by ts; a page keeps its own order
+ * for equal ts; none at or after the oldest hub event's ts, which the hub already holds), then the
+ * hub's events sorted by seq (backfill negative, live positive). A history event within 5 s of a
+ * hub event with the same kind and content (a compact: of a hub compact) is the same event and is
+ * dropped. Prepending a page of history only sorts the page; the rest is merged in linear time.
+ */
 export function mergeEvents(list: Event[] | undefined, incoming: Event[]): Event[] {
   const last = list?.[list.length - 1]
-  if (list && incoming.length === 1 && last && incoming[0].seq > last.seq) return [...list, incoming[0]]
-  const bySeq = new Map<number, Event>()
-  for (const e of list ?? []) bySeq.set(e.seq, e)
-  for (const e of incoming) bySeq.set(e.seq, e)
-  return [...bySeq.values()].sort((a, b) => a.seq - b.seq)
+  if (list && incoming.length === 1 && last && last.seq && !isHistory(incoming[0]) && incoming[0].seq > last.seq) return [...list, incoming[0]]
+  const cur = list ?? []
+  const split = firstHub(cur)
+  const newHist: Event[] = []
+  const newHub: Event[] = []
+  for (const e of incoming) if (isHistory(e)) newHist.push(e); else newHub.push(e)
+  let hubList: Event[]
+  if (newHub.length) {
+    const bySeq = new Map<number, Event>()
+    for (let i = split; i < cur.length; i++) bySeq.set(cur[i].seq, cur[i])
+    for (const e of newHub) bySeq.set(e.seq, e)
+    hubList = [...bySeq.values()].sort((a, b) => a.seq - b.seq)
+  } else hubList = split ? cur.slice(split) : cur
+  let hist = split ? cur.slice(0, split) : []
+  if (newHist.length) {
+    const keys = new Set<string>()
+    for (const e of hist) if (e.key) keys.add(e.key)
+    const add = newHist.filter((e) => !e.key || (!keys.has(e.key) && (keys.add(e.key), true)))
+    // stable: equal ts keep the incoming page before what was already there (pages go older)
+    if (add.length) hist = mergeByTs(add.sort((a, b) => a.ts - b.ts), hist)
+  }
+  hist = atSeam(hist, hubList)
+  return hist.length ? [...hist, ...hubList] : hubList
+}
+
+/**
+ * The events of a machine history page that merging it into list would actually add: not already
+ * there by key (`keys`: the history keys in memory), and not what the hub already holds (the same
+ * seam as mergeEvents). Pages that bring nothing but those are not "new".
+ */
+export function freshHistory(list: readonly Event[], page: readonly Event[], keys: ReadonlySet<string>): Event[] {
+  const add = page.filter((e) => !e.key || !keys.has(e.key)).sort((a, b) => a.ts - b.ts)
+  return atSeam(add, list, firstHub(list))
+}
+
+/** Oldest hub seq in the list (history events have none), the `before` of the next hub page. */
+export function oldestHubSeq(list: Event[]): number | undefined {
+  for (const e of list) if (!isHistory(e)) return e.seq
+  return undefined
+}
+
+/** Newest live seq (0 when there is none): the `after` of a delta sync. */
+export function maxSeq(list: Event[]): number {
+  const e = list[list.length - 1]
+  return e && e.seq > 0 ? e.seq : 0
+}
+
+/** The newest hole in the live seqs (the hub numbers each session 1, 2, 3…): after < missing < next. */
+export function newestGap(list: Event[]): { after: number; next: number } | null {
+  for (let i = list.length - 1; i > 0; i--) {
+    const a = list[i - 1]
+    const b = list[i]
+    if (a.seq <= 0) return null
+    if (b.seq - a.seq > 1) return { after: a.seq, next: b.seq }
+  }
+  return null
+}
+
+/**
+ * Drops events of a session from memory (they can be read again from the cache, hub or machine):
+ * `below` keeps only events with seq >= below (history and older hub events go), `max` keeps the
+ * newest max events, `keepOldest` the oldest ones (the reader is far up: the newest go).
+ */
+export function trimEvents(s: AppState, id: string, o: { max?: number; below?: number; keepOldest?: number }): AppState {
+  const cur = s.events[id]
+  if (!cur) return s
+  let l = cur
+  if (o.below !== undefined) { const b = o.below; l = l.filter((e) => !isHistory(e) && e.seq >= b) }
+  if (o.max !== undefined && l.length > o.max) l = l.slice(l.length - o.max)
+  if (o.keepOldest !== undefined && l.length > o.keepOldest) l = l.slice(0, o.keepOldest)
+  return l.length === cur.length ? s : { ...s, events: { ...s.events, [id]: l } }
+}
+
+/** A session not open for this long keeps only its newest page in memory. */
+export const IDLE_EVICT_MS = 2 * 60_000
+export const KEEP_IDLE = 50
+
+/** Sessions other than the open one, not viewed for IDLE_EVICT_MS (or never), holding more than a page. */
+export function idleSessions(s: AppState, openId: string | null, lastViewed: Record<string, number>, now: number, idleMs = IDLE_EVICT_MS, keep = KEEP_IDLE): string[] {
+  return Object.keys(s.events).filter((id) => id !== openId && s.events[id].length > keep && (lastViewed[id] ?? 0) <= now - idleMs)
+}
+
+/** Keeps only the newest page of each given session. */
+export function evictEvents(s: AppState, ids: string[], keep = KEEP_IDLE): AppState {
+  let out = s
+  for (const id of ids) out = trimEvents(out, id, { max: keep })
+  return out
 }
 
 function omit<T>(o: Record<string, T>, k: string): Record<string, T> {

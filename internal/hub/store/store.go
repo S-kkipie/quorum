@@ -563,6 +563,105 @@ func (s *Store) Events(session string, beforeSeq int64, limit int) ([]proto.Even
 	return out, rows.Err()
 }
 
+// OldestEventTS returns the timestamp of the oldest event stored for the session (lowest seq);
+// ok is false when the session has no events.
+func (s *Store) OldestEventTS(session string) (ts int64, ok bool, err error) {
+	err = s.db.QueryRow(`SELECT ts FROM events WHERE session=? ORDER BY seq ASC LIMIT 1`, session).Scan(&ts)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	return ts, err == nil, err
+}
+
+// EventsAfter returns up to limit events with Seq > afterSeq, oldest first (delta sync).
+func (s *Store) EventsAfter(session string, afterSeq int64, limit int) ([]proto.Event, error) {
+	rows, err := s.db.Query(`SELECT seq,session,ts,kind,data FROM events WHERE session=? AND seq>? ORDER BY seq ASC LIMIT ?`,
+		session, afterSeq, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []proto.Event
+	for rows.Next() {
+		var e proto.Event
+		var kind, data string
+		if err := rows.Scan(&e.Seq, &e.Session, &e.TS, &kind, &data); err != nil {
+			return nil, err
+		}
+		e.Kind, e.Data = proto.EventKind(kind), json.RawMessage(data)
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// pruneBatch is how many events one retention DELETE removes (a variable for tests).
+var pruneBatch = 5000
+
+// PruneClosedEvents deletes the events of sessions closed before cutoff (the session rows, seen
+// marks and ticket links stay) and returns how many events were removed. It deletes in batches of
+// pruneBatch rows, yielding between them, and returns the freed pages to the OS with
+// incremental_vacuum.
+func (s *Store) PruneClosedEvents(cutoff time.Time) (int64, error) {
+	var total int64
+	for {
+		res, err := s.db.Exec(`DELETE FROM events WHERE rowid IN (SELECT e.rowid FROM events e
+			JOIN sessions x ON x.id=e.session
+			WHERE x.state=? AND x.closed_at>0 AND x.closed_at<?
+			LIMIT ?)`, string(proto.StateClosed), cutoff.UnixMilli(), pruneBatch)
+		if err != nil {
+			return total, err
+		}
+		n, _ := res.RowsAffected()
+		total += n
+		if n < int64(pruneBatch) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond) // let writers in between batches
+	}
+	if _, err := s.db.Exec(`PRAGMA incremental_vacuum`); err != nil {
+		return total, err
+	}
+	return total, nil
+}
+
+// SetHistoryOK records that the session's machine served a page of its history (kept for later
+// use; retention does not depend on it).
+func (s *Store) SetHistoryOK(session string) error {
+	_, err := s.db.Exec(`UPDATE sessions SET history_ok=1 WHERE id=? AND history_ok=0`, session)
+	return err
+}
+
+// HistoryOK reports whether the session's machine has served a page of its history.
+func (s *Store) HistoryOK(session string) (bool, error) {
+	var ok int
+	err := s.db.QueryRow(`SELECT history_ok FROM sessions WHERE id=?`, session).Scan(&ok)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, ErrNotFound
+	}
+	return ok == 1, err
+}
+
+// OldestEvents returns the session's first limit events by seq, oldest first (the hub side of
+// the seam with machine history).
+func (s *Store) OldestEvents(session string, limit int) ([]proto.Event, error) {
+	rows, err := s.db.Query(`SELECT seq,session,ts,kind,data FROM events WHERE session=? ORDER BY seq ASC LIMIT ?`, session, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []proto.Event
+	for rows.Next() {
+		var e proto.Event
+		var kind, data string
+		if err := rows.Scan(&e.Seq, &e.Session, &e.TS, &kind, &data); err != nil {
+			return nil, err
+		}
+		e.Kind, e.Data = proto.EventKind(kind), json.RawMessage(data)
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 // CreateCode generates a single-use 6-digit code, valid for 10 minutes.
 func (s *Store) CreateCode(kind string) (string, error) {
 	now := s.now()

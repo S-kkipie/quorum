@@ -38,6 +38,11 @@ import { makeHandlers } from '../src/events'
 import type { Link } from '../src/link'
 import type { Command } from '../src/proto.gen'
 
+/** The counts of a BackgroundInfo (its items are checked by the Plan 10 tests). */
+const counts = (bg: any) => (bg ? { tasks: bg.tasks, wakeAt: bg.wakeAt } : bg)
+/** An update with its background reduced to the counts. */
+const plainUpdate = (u: any) => (u && u.background ? { ...u, background: counts(u.background) } : u)
+
 const cmd = (c: Partial<Command>): Command =>
   ({ type: '', text: '', mode: '', askId: '', decision: '', reason: '', answers: null as never, command: '', args: '', ...c })
 
@@ -63,7 +68,7 @@ function session(start = 1_000_000) {
   const turnStart = (turnId = 't') => { control.turnStart({ turnId }); h.turnStart({ text: 'go' }) }
   const turnEnd = () => { h.turnComplete({ answer: 'ok', reason: 'answer' }); control.turnEnd({}) }
   const states = () => evs.filter(e => e.kind === 'status').map(e => e.data.state)
-  const last = () => updates[updates.length - 1]
+  const last = () => plainUpdate(updates[updates.length - 1])
   const tool = (tool: string, input: Record<string, unknown>, result: unknown, agentId?: string) =>
     control.toolCall({ tool, tool_use_id: `u-${tool}`, agentId, ...input }, async () => ({ result, text: '' }))
   const fire = async () => { for (const z of sleeps.splice(0)) z.fire(); for (let i = 0; i < 10; i++) await Promise.resolve() }
@@ -81,10 +86,10 @@ test('(a) a turn ending with a background Bash → background with tasks=1; comp
   expect(s.states()).toEqual(['working', 'background'])
   expect(s.last()).toEqual({ state: 'background', background: { tasks: 1, wakeAt: 0 } })
   const end = s.evs.find(e => e.kind === 'turn_end')!
-  expect(end.data.background).toEqual({ tasks: 1, wakeAt: 0 })
+  expect(counts(end.data.background)).toEqual({ tasks: 1, wakeAt: 0 })
   // the completion arrives as a task-notification prompt, which starts the follow-up turn
   s.control.taskNotification(notification('b1', 'completed'))
-  expect(s.control.background()).toEqual({ tasks: 0, wakeAt: 0 })
+  expect(counts(s.control.background())).toEqual({ tasks: 0, wakeAt: 0 })
   s.turnStart('t2')
   expect(s.states()[s.states().length - 1]).toBe('working')
   s.turnEnd()
@@ -256,7 +261,7 @@ test('(e) closing the session clears the background', async () => {
   s.turnEnd()
   await s.control.handle(cmd({ type: 'close' }))
   expect(s.calls).toEqual(['stop:b1', 'exit'])
-  expect(s.control.background()).toEqual({ tasks: 0, wakeAt: 0 })
+  expect(counts(s.control.background())).toEqual({ tasks: 0, wakeAt: 0 })
 })
 
 test('classic Stop reconciles: unknown tasks added, missing ones dropped, crons without a known time scheduled', async () => {
@@ -272,7 +277,7 @@ test('classic Stop reconciles: unknown tasks added, missing ones dropped, crons 
   // nothing in flight and no crons: idle
   s.control.stopHook({ background_tasks: [], session_crons: [] })
   expect(s.states()[s.states().length - 1]).toBe('idle')
-  expect(s.control.background()).toEqual({ tasks: 0, wakeAt: 0 })
+  expect(counts(s.control.background())).toEqual({ tasks: 0, wakeAt: 0 })
   // same result again: nothing re-sent
   const n = s.states().length
   s.control.stopHook({ background_tasks: [], session_crons: [] })

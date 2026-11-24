@@ -6,7 +6,7 @@ vi.stubGlobal('localStorage', {
   setItem: (k: string, v: string) => { mem[k] = v },
   removeItem: (k: string) => { delete mem[k] },
 })
-import { apiFetch, setHub, getToken, seen, listCommands, runCommand, setModel } from './api'
+import { apiFetch, setHub, getToken, seen, history, eventsAfter, listCommands, runCommand, setModel } from './api'
 
 beforeEach(() => { for (const k in mem) delete mem[k]; setHub('http://h:1/', 'tok') })
 
@@ -149,5 +149,28 @@ describe('slash commands', () => {
     const [u, init] = f.mock.calls[0] as any
     expect(u).toBe('http://h:1/api/sessions/s1/model')
     expect(JSON.parse(init.body)).toEqual({ value: 'opus' })
+  })
+})
+
+describe('history and delta', () => {
+  it('history passes the cursor (none for the newest page)', async () => {
+    const f = vi.fn(async () => new Response('{"events":[],"cursor":"s12","done":false}', { status: 200 }))
+    vi.stubGlobal('fetch', f)
+    expect(await history('s 1')).toEqual({ events: [], cursor: 's12', done: false })
+    await history('s1', 's12')
+    expect((f.mock.calls[0] as any)[0]).toBe('http://h:1/api/sessions/s%201/history')
+    expect((f.mock.calls[1] as any)[0]).toBe('http://h:1/api/sessions/s1/history?cursor=s12')
+  })
+  it('history surfaces the offline message', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{"error":"Older history is on pc, which is offline."}', { status: 409 })))
+    await expect(history('s1', '5')).rejects.toThrow('Older history is on pc, which is offline.')
+  })
+  it('eventsAfter asks for seq > after with a limit', async () => {
+    const f = vi.fn(async () => new Response('[]', { status: 200 }))
+    vi.stubGlobal('fetch', f)
+    await eventsAfter('s1', 42)
+    await eventsAfter('s1', 7, 100)
+    expect((f.mock.calls[0] as any)[0]).toBe('http://h:1/api/sessions/s1/events?after=42&limit=500')
+    expect((f.mock.calls[1] as any)[0]).toBe('http://h:1/api/sessions/s1/events?after=7&limit=100')
   })
 })

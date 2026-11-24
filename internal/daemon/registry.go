@@ -28,6 +28,10 @@ type Registry struct {
 	onGone   func(id string) // under mu; see SetOnGone
 	// commands holds each live session's last command list (re-sent after every hello)
 	commands map[string]proto.SessionCommands
+	// index remembers every session's transcript, also after it ends (see transcriptindex.go)
+	index *transcriptIndex
+	// misses: session ids last searched for on disk without a hit (see transcriptOf)
+	misses map[string]time.Time
 }
 
 type sub struct{ ch chan proto.Command }
@@ -39,7 +43,103 @@ func NewRegistry(machine string) *Registry {
 		sessions: map[string]proto.SessionInfo{},
 		subs:     map[string]*sub{},
 		commands: map[string]proto.SessionCommands{},
+		index:    loadTranscriptIndex("", maxIndexedTranscripts),
+		misses:   map[string]time.Time{},
 	}
+}
+
+// SetTranscriptIndex replaces the (memory-only) transcript index; call it before use.
+func (r *Registry) SetTranscriptIndex(x *transcriptIndex) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.index = x
+}
+
+// FlushTranscriptIndex writes the transcript index now if a change is pending (shutdown).
+func (r *Registry) FlushTranscriptIndex() {
+	r.mu.Lock()
+	idx := r.index
+	r.mu.Unlock()
+	idx.flush()
+}
+
+// transcriptOf returns the transcript path and config dir of session id: the live session's,
+// or the one remembered for an ended or renamed session.
+// A session neither live nor indexed (it ended before the index existed) is looked for as
+// <configDir>/projects/*/<id>.jsonl under the live sessions' config dirs and ~/.claude; a hit is
+// remembered in the index, a miss for missTTL (no search on every page request).
+func (r *Registry) transcriptOf(id string) (path, configDir string, ok bool) {
+	r.mu.Lock()
+	si, live := r.sessions[id]
+	idx := r.index
+	var dirs []string
+	if !live {
+		seen := map[string]bool{}
+		for _, s := range r.sessions {
+			if s.ConfigDir != "" && !seen[s.ConfigDir] {
+				seen[s.ConfigDir] = true
+				dirs = append(dirs, s.ConfigDir)
+			}
+		}
+	}
+	r.mu.Unlock()
+	if live {
+		return si.TranscriptPath, si.ConfigDir, true
+	}
+	if e, found := idx.lookup(id); found {
+		return e.Path, e.ConfigDir, true
+	}
+	if r.missed(id) {
+		return "", "", false
+	}
+	if p, cd, found := findTranscript(id, dirs); found {
+		idx.record(id, p, cd)
+		return p, cd, true
+	}
+	r.miss(id)
+	return "", "", false
+}
+
+// missTTL is how long a session id not found on disk is not searched for again.
+const missTTL = 10 * time.Minute
+
+// maxMisses bounds the remembered misses (past it, the expired ones go, then all).
+const maxMisses = 1000
+
+// missNow is the clock of the miss cache (tests).
+var missNow = time.Now
+
+func (r *Registry) missed(id string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	at, ok := r.misses[id]
+	if ok && missNow().Sub(at) < missTTL {
+		return true
+	}
+	if ok {
+		delete(r.misses, id)
+	}
+	return false
+}
+
+func (r *Registry) miss(id string) {
+	if !sessionIDRe.MatchString(id) {
+		return // never searched: nothing to remember
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := missNow()
+	if len(r.misses) >= maxMisses {
+		for k, at := range r.misses {
+			if now.Sub(at) >= missTTL {
+				delete(r.misses, k)
+			}
+		}
+		if len(r.misses) >= maxMisses {
+			r.misses = map[string]time.Time{}
+		}
+	}
+	r.misses[id] = now
 }
 
 // Out delivers what has to be sent to the hub. It is a buffered channel (1024).
@@ -81,6 +181,7 @@ func (r *Registry) Upsert(si proto.SessionInfo) {
 	// If both ids were already alive here, previousId is stale (resume of the
 	// previous id) and is ignored, as the hub does.
 	renamed := ""
+	var prevInfo proto.SessionInfo
 	if prev := si.PreviousID; prev != "" && prev != si.ID {
 		_, prevLive := r.sessions[prev]
 		_, idLive := r.sessions[si.ID]
@@ -89,6 +190,7 @@ func (r *Registry) Upsert(si proto.SessionInfo) {
 			si.PreviousID = ""
 		case prevLive:
 			renamed = prev
+			prevInfo = r.sessions[prev]
 			delete(r.sessions, prev)
 			delete(r.commands, prev)
 			if s, ok := r.subs[prev]; ok {
@@ -106,7 +208,12 @@ func (r *Registry) Upsert(si proto.SessionInfo) {
 		}
 	}
 	r.sessions[si.ID] = si
+	idx := r.index
 	r.mu.Unlock()
+	if renamed != "" {
+		idx.record(renamed, prevInfo.TranscriptPath, prevInfo.ConfigDir)
+	}
+	idx.record(si.ID, si.TranscriptPath, si.ConfigDir)
 	p, _ := json.Marshal(si)
 	dl := time.Now().Add(outBlockMax)
 	r.emit(proto.Envelope{Type: "session_upsert", Machine: r.machine, Session: si.ID, Payload: p}, false, dl)

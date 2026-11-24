@@ -1,4 +1,4 @@
-import type { AccountUsage, Checkout, Conversation, ConnectorConfig, Event, Project, Proposal, SessionCommands, SessionInfo, Ticket, Workspace } from '../proto.gen'
+import type { AccountUsage, Checkout, Conversation, ConnectorConfig, Event, Project, Proposal, SessionCommands, SessionInfo, Ticket, TranscriptPage, Workspace } from '../proto.gen'
 
 export interface Machine {
   name: string
@@ -114,12 +114,24 @@ export interface DevApi {
   listConversations: (machine: string, root: string) => Promise<Conversation[]>
   listEvents: (id: string, before: number, limit: number) => Promise<Event[]>
   listCommands?: (id: string) => Promise<SessionCommands>
+  eventsAfter?: (id: string, afterSeq: number, limit: number) => Promise<Event[]>
+  history?: (id: string, cursor: string) => Promise<TranscriptPage>
 }
 let devApi: DevApi | null = null
 export const setDevApi = (d: DevApi | null) => { devApi = d }
+/** True in the dev fixture mode: nothing is read from or written to the local cache. */
+export const usingDevApi = () => devApi !== null
 
 export const listEvents = (id: string, before = 0, limit = 50): Promise<Event[]> =>
   devApi ? devApi.listEvents(id, before, limit) : apiFetch<Event[]>(`/api/sessions/${encodeURIComponent(id)}/events?before=${before}&limit=${limit}`)
+/** Events with seq > afterSeq, ascending (delta sync); the hub caps limit at 500. */
+export const eventsAfter = (id: string, afterSeq: number, limit = 500): Promise<Event[]> =>
+  devApi ? (devApi.eventsAfter?.(id, afterSeq, limit) ?? Promise.resolve([])) : apiFetch<Event[]>(`/api/sessions/${encodeURIComponent(id)}/events?after=${afterSeq}&limit=${limit}`)
+/** One page of older history read from the session's machine, oldest first; the hub already drops
+ * events it stores itself. cursor "" = newest. An empty page with done=false means keep paging. */
+export type HistoryPage = TranscriptPage
+export const history = (id: string, cursor = ''): Promise<HistoryPage> =>
+  devApi ? (devApi.history?.(id, cursor) ?? Promise.resolve({ events: [], cursor: '', done: true })) : apiFetch<HistoryPage>(`/api/sessions/${encodeURIComponent(id)}/history${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`)
 export const sendPrompt = (id: string, text: string, mode: PromptMode) =>
   apiFetch(`/api/sessions/${encodeURIComponent(id)}/prompt`, { method: 'POST', body: JSON.stringify({ text, mode }) })
 /** Marks the session seen up to seq on every device (the hub caps it at the latest event, never backwards). */

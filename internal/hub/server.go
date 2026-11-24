@@ -84,6 +84,7 @@ func (s *Server) Hub() *Hub { return s.hub }
 func (s *Server) StartSync(ctx context.Context) {
 	s.sync.Start(ctx)
 	s.sum.Start(ctx)
+	s.startRetention(ctx)
 }
 
 func (s *Server) Handler() http.Handler { return s.viewHandler(s.mux) }

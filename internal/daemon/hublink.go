@@ -6,14 +6,11 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
 
 	"github.com/S-kkipie/quorum/internal/daemon/launch"
-	"github.com/S-kkipie/quorum/internal/daemon/transcript"
 	"github.com/S-kkipie/quorum/internal/proto"
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
@@ -221,19 +218,18 @@ func readLoop(ctx context.Context, ws *websocket.Conn, reg *Registry, host *Host
 }
 
 const (
-	backfillLimit    = 500
-	maxTranscriptLen = 200 << 20
-	backfillBudget   = 4 << 20 // serialized bytes; the hub reads up to 8 MiB per message
+	backfillLimit  = 500
+	backfillBudget = 4 << 20 // serialized bytes; the hub reads up to 8 MiB per message
 )
 
-// backfill rebuilds the session's recent history from its transcript and
-// answers it to the hub. On any problem it answers an empty list.
+// backfill rebuilds the session's recent history from the tail of its transcript (one page read
+// backwards, never the whole file) and answers it to the hub. On any problem it answers an empty list.
 func backfill(reg *Registry, session string) {
 	evs := []proto.Event{}
-	for _, si := range reg.Snapshot() {
-		if si.ID == session {
-			evs = readTranscript(si.TranscriptPath)
-			break
+	if pg, err := readPage(reg, session, "", backfillLimit, backfillBudget, 0); err == nil {
+		evs = pg.Events
+		if len(evs) > backfillLimit {
+			evs = evs[len(evs)-backfillLimit:]
 		}
 	}
 	p := marshalWithin(evs, backfillBudget)
@@ -254,25 +250,6 @@ func marshalWithin(evs []proto.Event, budget int) json.RawMessage {
 		}
 		evs = evs[drop:]
 	}
-}
-
-func readTranscript(path string) []proto.Event {
-	if path == "" || !filepath.IsAbs(path) || !strings.HasSuffix(path, ".jsonl") {
-		return []proto.Event{}
-	}
-	f, err := os.Open(path)
-	if err != nil {
-		return []proto.Event{}
-	}
-	defer f.Close()
-	if st, err := f.Stat(); err != nil || !st.Mode().IsRegular() || st.Size() > maxTranscriptLen {
-		return []proto.Event{}
-	}
-	evs, err := transcript.Parse(f, backfillLimit)
-	if err != nil || evs == nil {
-		return []proto.Event{}
-	}
-	return evs
 }
 
 // LinkMachine redeems the link code at hubURL and saves Hub and MachineToken.

@@ -312,3 +312,98 @@ describe('Transcript: command cards', () => {
     expect(screen.queryByRole('button', { name: 'Show more' })).toBeNull()
   })
 })
+
+describe('Transcript: compacts and earlier conversation', () => {
+  const at = new Date(2026, 10, 24, 14, 32).getTime()
+  const convo = [ev(1, 'user', { text: 'first question' }), ev(2, 'assistant', { text: 'first answer' }), ev(3, 'compact', { at, trigger: 'auto' }), ev(4, 'user', { text: 'after the compact' })]
+  it('a compact is a divider with its time and trigger; no time without `at`', () => {
+    const { unmount } = render(<Transcript events={[ev(1, 'compact', { at, trigger: 'manual' })]} />)
+    const a = screen.getByRole('separator')
+    expect(a.getAttribute('aria-label')).toBe('Conversation compacted · 14:32')
+    expect(a.textContent).toContain('manual')
+    unmount()
+    render(<Transcript events={[ev(1, 'compact', { trigger: 'auto' })]} />)
+    expect(screen.getByRole('separator').getAttribute('aria-label')).toBe('Conversation compacted')
+  })
+  it('everything before the newest compact folds into one row that expands on tap', () => {
+    const onLoadMore = vi.fn()
+    render(<Transcript events={convo} onLoadMore={onLoadMore} />)
+    expect(screen.queryByText('first question')).toBeNull()
+    expect(screen.getByText('after the compact')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Earlier conversation (2 messages)' }))
+    expect(screen.getByText('first question')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Earlier conversation/ })).toBeNull()
+    // what was folded is in memory: nothing is fetched
+    expect(onLoadMore).not.toHaveBeenCalled()
+  })
+  it('a newer compact folds the conversation again', () => {
+    const { rerender } = render(<Transcript events={convo} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Earlier conversation (2 messages)' }))
+    rerender(<Transcript events={[...convo, ev(5, 'compact', { at, trigger: 'auto' }), ev(6, 'user', { text: 'after the second compact' })]} />)
+    expect(screen.getByRole('button', { name: 'Earlier conversation (3 messages)' })).toBeTruthy()
+    expect(screen.queryByText('after the compact')).toBeNull()
+  })
+  it('loading older history while folded shows the loading row', () => {
+    render(<Transcript events={convo.slice(2)} hasMore loading />)
+    expect(screen.getByText('Loading earlier…')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Earlier conversation' })).toBeTruthy()
+  })
+  it('with nothing loaded before the compact, the row loads older history; scrolling up does not while folded', () => {
+    const onLoadMore = vi.fn()
+    render(<Transcript events={convo.slice(2)} hasMore onLoadMore={onLoadMore} />)
+    const scroller = screen.getByRole('log').firstElementChild as HTMLElement
+    scroller.scrollTop = 0
+    fireEvent.scroll(scroller)
+    expect(onLoadMore).not.toHaveBeenCalled()
+    expect(screen.queryByRole('button', { name: 'Load earlier' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Earlier conversation' }))
+    expect(onLoadMore).toHaveBeenCalledTimes(1)
+    // now unfolded: the usual loader is back
+    expect(screen.getByRole('button', { name: 'Load earlier' })).toBeTruthy()
+  })
+  it('more history to read: the count says so', () => {
+    render(<Transcript events={convo} hasMore />)
+    expect(screen.getByRole('button', { name: 'Earlier conversation (2+ messages)' })).toBeTruthy()
+  })
+  it('an offline machine shows its message with Try again, and scrolling up does not retry', () => {
+    const onLoadMore = vi.fn()
+    render(<Transcript events={evs} hasMore notice="Older history is on laptop, which is offline." onLoadMore={onLoadMore} />)
+    expect(screen.getByText('Older history is on laptop, which is offline.')).toBeTruthy()
+    expect(screen.queryByRole('alert')).toBeNull()
+    const scroller = screen.getByRole('log').firstElementChild as HTMLElement
+    scroller.scrollTop = 0
+    fireEvent.scroll(scroller)
+    expect(onLoadMore).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
+    expect(onLoadMore).toHaveBeenCalledTimes(1)
+  })
+  it('a page being read shows a loading row instead of the button', () => {
+    render(<Transcript events={evs} hasMore loading />)
+    expect(screen.getByText('Loading earlier…')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Load earlier' })).toBeNull()
+  })
+  it('machine history rows (no seq) render next to hub rows', () => {
+    const h = (key: string, text: string): Event => ({ seq: 0, session: 's', ts: 1, kind: 'user', data: { text }, key })
+    render(<Transcript events={[h('a/0', 'from the machine'), h('b/0', 'also from the machine'), ev(1, 'user', { text: 'from the hub' })]} />)
+    expect(screen.getAllByRole('article', { name: 'You' }).map((x) => x.textContent)).toEqual(['from the machine', 'also from the machine', 'from the hub'])
+  })
+})
+
+describe('Transcript: virtualized', () => {
+  it('renders only the rows near the viewport of a long session', () => {
+    const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({ width: 390, height: 600, top: 0, left: 0, right: 390, bottom: 600, x: 0, y: 0, toJSON: () => ({}) } as DOMRect)
+    const off = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(60)
+    try {
+      const many = Array.from({ length: 1000 }, (_, i) => ev(i + 1, 'user', { text: `message ${i + 1}` }))
+      render(<Transcript events={many} />)
+      const shown = screen.getAllByRole('article', { name: 'You' }).length
+      expect(shown).toBeGreaterThan(5)
+      expect(shown).toBeLessThan(60)
+    } finally { rect.mockRestore(); off.mockRestore() }
+  })
+  it('reports whether the reader is at the bottom', () => {
+    const onAtBottom = vi.fn()
+    render(<Transcript events={evs} onAtBottom={onAtBottom} />)
+    expect(onAtBottom).toHaveBeenCalledWith(true)
+  })
+})

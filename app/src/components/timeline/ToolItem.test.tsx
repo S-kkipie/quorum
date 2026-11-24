@@ -96,6 +96,57 @@ describe('ArtifactCard', () => {
   })
 })
 
+describe('ToolItem: background', () => {
+  it('shows Running in background with a state-background spinner until the task ends', () => {
+    const { container } = render(<ToolItem item={tool({ bg: { taskId: 'b1' } })} />)
+    expect(screen.getByText('Running in background').className).toContain('text-state-background')
+    expect(screen.getByLabelText('running in background').getAttribute('class')).toContain('animate-spin')
+    expect(container.querySelector('.text-success')).toBeNull()
+  })
+  it('turns done, failed or stopped by the task status', () => {
+    const { rerender } = render(<ToolItem item={tool({ bg: { taskId: 'b1', status: 'completed' } })} />)
+    expect(screen.queryByText('Running in background')).toBeNull()
+    expect(screen.getByLabelText('done')).toBeTruthy()
+    rerender(<ToolItem item={tool({ bg: { taskId: 'b1', status: 'killed' } })} />)
+    expect(screen.getByLabelText('failed').getAttribute('class')).toContain('text-danger')
+    rerender(<ToolItem item={tool({ bg: { taskId: 'b1', status: 'stopped' } })} />)
+    expect(screen.getByText('Stopped').className).toContain('text-muted-foreground')
+    expect(screen.getByLabelText('stopped')).toBeTruthy()
+  })
+})
+
+describe('ToolItem: background rows without a task_end', () => {
+  const listed = new Set(['b1'])
+  const rule = (items: Set<string> | undefined, state: string) => (id: string) => state === 'closed' || (items !== undefined && state !== 'working' && !items.has(id))
+  it('idle session, task no longer listed: settled as Ended, not spinning', () => {
+    const { container } = render(<ToolItem item={tool({ bg: { taskId: 'b1' } })} bgEnded={rule(new Set(), 'idle')} />)
+    expect(screen.getByText('Ended').className).toContain('text-muted-foreground')
+    expect(screen.queryByText('Running in background')).toBeNull()
+    expect(container.querySelector('.animate-spin')).toBeNull()
+  })
+  it('still listed: running; working session: running; older mod (no items): running', () => {
+    const { rerender } = render(<ToolItem item={tool({ bg: { taskId: 'b1' } })} bgEnded={rule(listed, 'background')} />)
+    expect(screen.getByText('Running in background')).toBeTruthy()
+    rerender(<ToolItem item={tool({ bg: { taskId: 'b1' } })} bgEnded={rule(new Set(), 'working')} />)
+    expect(screen.getByText('Running in background')).toBeTruthy()
+    rerender(<ToolItem item={tool({ bg: { taskId: 'b1' } })} bgEnded={rule(undefined, 'idle')} />)
+    expect(screen.getByText('Running in background')).toBeTruthy()
+  })
+  it('closed session: settled even when listed', () => {
+    render(<ToolItem item={tool({ bg: { taskId: 'b1' } })} bgEnded={rule(listed, 'closed')} />)
+    expect(screen.getByText('Ended')).toBeTruthy()
+  })
+  it('background subagent row: running in background, then Ended', () => {
+    const a: AgentItem = { t: 'agent', seq: 1, id: 'ag', type: 'general-purpose', description: 'Audit', status: 'running', bg: { taskId: 'ag' } }
+    const { rerender } = render(<ToolItem item={a} bgEnded={() => false} />)
+    expect(screen.getByText('Running in background')).toBeTruthy()
+    rerender(<ToolItem item={a} bgEnded={() => true} />)
+    expect(screen.getByText('Ended')).toBeTruthy()
+    rerender(<ToolItem item={{ ...a, bg: { taskId: 'ag', status: 'completed' }, status: 'running' }} bgEnded={() => false} />)
+    expect(screen.queryByText('Running in background')).toBeNull()
+  })
+})
+
 describe('StatePill', () => {
   it('labels each state', () => {
     const label = (state: string, o = {}) => { const { container } = render(<StatePill session={{ state, unread: false, background: { tasks: 0, wakeAt: 0 }, ...o }} />); const t = container.textContent; cleanup(); return t }

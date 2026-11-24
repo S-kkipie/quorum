@@ -8,12 +8,20 @@ export type ToolItem = {
   t: 'tool'; seq: number; id: string; name: string; kind: ToolKind; title: string; detail?: string
   input?: any; output?: string; state: ToolState; ms?: number; agent?: string
   file?: string; diff?: { add: number; del: number }
+  /** this call started background work: it runs until the task_end with this id (then `status` is that end's status) */
+  bg?: { taskId: string; status?: string }
 }
 export type ReadsItem = { t: 'reads'; seq: number; files: string[]; title: string; state: ToolState; agent?: string; tools: ToolItem[] }
-export type AgentItem = { t: 'agent'; seq: number; id: string; type: string; description: string; status: string; answer?: string }
+export type AgentItem = { t: 'agent'; seq: number; id: string; type: string; description: string; status: string; answer?: string
+  /** a background subagent: its Agent call's task id (= this id) and, once ended, the task_end status */
+  bg?: { taskId: string; status?: string } }
 export type ArtifactItem = { t: 'artifact'; seq: number; path: string; name: string; inBase: boolean }
 /** A slash command a device ran: one item per command id, with its latest status. */
 export type CommandItem = { t: 'command'; seq: number; id: string; name: string; args: string; origin: string; status: 'queued' | 'done' | 'failed'; text?: string; error?: string }
+/** A compact boundary: "Conversation compacted · HH:MM" (no time when `at` is unknown). */
+export type CompactItem = { t: 'compact'; seq: number; at?: number; trigger: string }
+/** A background task finished (Claude Code's task notification, parsed by the mod). */
+export type TaskEndItem = { t: 'task_end'; seq: number; taskId: string; kind: string; summary: string; status: string; exitCode?: number; outputTail?: string }
 export type TurnItem = { t: 'turn'; seq: number; tokens?: { in: number; out: number; cache: number }; model: string }
 /** How the Viewer asks for a file's link: an image pasted in the terminal, or an image Claude read. */
 export type OpenOpts = { images: true } | { read: true }
@@ -42,6 +50,15 @@ export type Item =
   | AgentItem
   | ArtifactItem
   | CommandItem
+  | CompactItem
+  | TaskEndItem
+
+/**
+ * Row seq of events read from the machine's transcript (they have no hub seq): below every hub seq
+ * (backfill is -n..-1), counted from the newest history event so rows already shown keep their seq
+ * when older pages are prepended. Negative, so their tools show as finished like backfill.
+ */
+const HIST_SEQ = -1_000_000_000
 
 /** How many timeline items away a device command's card may be to stand in for its user event. */
 const CARD_NEAR = 200
@@ -258,32 +275,38 @@ function hideDeviceCommands(flat: Item[], device: Set<Item>): void {
 export function buildTimeline(events: Event[], base: string): Item[] {
   const flat: Item[] = []
   const tools = new Map<string, ToolItem>()
+  // background tasks: tool rows by task id, and the status of tasks that already ended (a task_end can come first)
+  const bgTools = new Map<string, ToolItem[]>()
+  const taskEnds = new Map<string, { status: string; synthetic: boolean; item: TaskEndItem }>()
   const agents = new Map<string, AgentItem>()
   const commands = new Map<string, CommandItem>()
   // user events of commands a device ran: the command card shows them (see hideDeviceCommands)
   const deviceCommands = new Set<Item>()
   const settle = (t: ToolItem) => { const a = artifactFor(t, base); if (a) flat.push(a) }
 
+  let histLeft = 0
+  for (const e of events) if (!e.seq) histLeft++
   for (const e of events) {
     const d = e.data ?? {}
+    const seq = e.seq || HIST_SEQ - --histLeft
     switch (e.kind) {
       case 'user': case 'assistant': case 'info':
       {
         const images = e.kind === 'user' ? pastedImagesOf(d.images) : undefined
         const command = e.kind === 'user' ? commandRefOf(d.command) : undefined
-        flat.push({ t: e.kind, seq: e.seq, text: d.text ?? '', agent: d.agent || undefined, ...(images ? { images } : {}), ...(command ? { command } : {}) })
+        flat.push({ t: e.kind, seq, text: d.text ?? '', agent: d.agent || undefined, ...(images ? { images } : {}), ...(command ? { command } : {}) })
         if (command && d.device === true) deviceCommands.add(flat[flat.length - 1])
       }
         break
       case 'turn_end':
         // a footer only when the mod reported tokens (older events carry none)
-        if (d.tokens && typeof d.tokens === 'object') flat.push({ t: 'turn', seq: e.seq, tokens: d.tokens, model: typeof d.model === 'string' ? d.model : '' })
+        if (d.tokens && typeof d.tokens === 'object') flat.push({ t: 'turn', seq, tokens: d.tokens, model: typeof d.model === 'string' ? d.model : '' })
         break
       case 'tool_start': {
         const name: string = d.name ?? ''
         const kind = toolKind(name)
         // backfilled history (negative seq) has no tool_end: it is shown as finished
-        const t: ToolItem = { t: 'tool', seq: e.seq, id: d.id, name, kind, ...describe(name, kind, d.input, d.summary ?? ''), input: d.input, state: e.seq < 0 ? 'ok' : 'running', agent: d.agent || undefined }
+        const t: ToolItem = { t: 'tool', seq, id: d.id, name, kind, ...describe(name, kind, d.input, d.summary ?? ''), input: d.input, state: seq < 0 ? 'ok' : 'running', agent: d.agent || undefined }
         tools.set(d.id, t)
         flat.push(t)
         if (t.state === 'ok') settle(t)
@@ -297,14 +320,19 @@ export function buildTimeline(events: Event[], base: string): Item[] {
         if (t) {
           const was = t.state
           Object.assign(t, { state, ms: d.ms, output })
+          const taskId = ok ? str(d.background?.taskId) : undefined
+          if (taskId) {
+            t.bg = { taskId, ...(taskEnds.has(taskId) ? { status: taskEnds.get(taskId)!.status } : {}) }
+            bgTools.set(taskId, [...(bgTools.get(taskId) ?? []), t])
+          }
           if (was === 'running') settle(t)
         } else {
-          flat.push({ t: 'tool', seq: e.seq, id: d.id, name: 'tool', kind: 'other', title: 'tool', state, ms: d.ms, output, agent: d.agent || undefined })
+          flat.push({ t: 'tool', seq, id: d.id, name: 'tool', kind: 'other', title: 'tool', state, ms: d.ms, output, agent: d.agent || undefined })
         }
         break
       }
       case 'agent_start': {
-        const a: AgentItem = { t: 'agent', seq: e.seq, id: d.id, type: d.type ?? '', description: d.description ?? '', status: 'running' }
+        const a: AgentItem = { t: 'agent', seq, id: d.id, type: d.type ?? '', description: d.description ?? '', status: 'running' }
         agents.set(d.id, a)
         flat.push(a)
         break
@@ -315,9 +343,34 @@ export function buildTimeline(events: Event[], base: string): Item[] {
         const patch = { status, text: str(d.text), error: str(d.error) }
         const cur = commands.get(d.id)
         if (cur) { Object.assign(cur, patch); break }
-        const c: CommandItem = { t: 'command', seq: e.seq, id: d.id, name: d.name, args: typeof d.args === 'string' ? d.args : '', origin: str(d.origin) ?? 'device', ...patch }
+        const c: CommandItem = { t: 'command', seq, id: d.id, name: d.name, args: typeof d.args === 'string' ? d.args : '', origin: str(d.origin) ?? 'device', ...patch }
         commands.set(d.id, c)
         flat.push(c)
+        break
+      }
+      case 'compact':
+        flat.push({ t: 'compact', seq, at: typeof d.at === 'number' && d.at > 0 ? d.at : undefined, trigger: typeof d.trigger === 'string' ? d.trigger : '' })
+        break
+      case 'task_end': {
+        // one card per task: the mod, a machine history page and a reconnect can all deliver the same
+        // end; a real end (the task's own notification) replaces a synthetic "stopped" one in place
+        const taskId = str(d.taskId) ?? ''
+        const synthetic = d.synthetic === true
+        const item: TaskEndItem = { t: 'task_end', seq, taskId, kind: str(d.kind) ?? '', summary: str(d.summary) ?? '', status: str(d.status) ?? '', ...(typeof d.exitCode === 'number' ? { exitCode: d.exitCode } : {}), ...(str(d.outputTail) ? { outputTail: d.outputTail } : {}) }
+        if (taskId) {
+          const prev = taskEnds.get(taskId)
+          if (prev && (!prev.synthetic || synthetic)) break
+          for (const t of bgTools.get(taskId) ?? []) t.bg = { taskId, status: item.status }
+          if (prev) {
+            const { seq: _, ...rest } = item
+            for (const k of ['exitCode', 'outputTail'] as const) delete prev.item[k]
+            Object.assign(prev.item, rest)
+            taskEnds.set(taskId, { status: item.status, synthetic, item: prev.item })
+            break
+          }
+          taskEnds.set(taskId, { status: item.status, synthetic, item })
+        }
+        flat.push(item)
         break
       }
       case 'agent_end': {
@@ -327,6 +380,9 @@ export function buildTimeline(events: Event[], base: string): Item[] {
       }
     }
   }
+
+  // a background subagent's own row follows its launching Agent call (task id = agent id)
+  for (const [id, a] of agents) { const t = bgTools.get(id)?.[0]; if (t?.bg) a.bg = { ...t.bg } }
 
   hideDeviceCommands(flat, deviceCommands)
 

@@ -169,6 +169,26 @@ export interface CommandEvent {
 export interface BackgroundInfo {
   tasks: number /* int */;
   wakeAt: number /* int64 */;
+  /**
+   * Items details each pending item (mod 0.2.2+; absent from older mods). Tasks and WakeAt stay
+   * for older apps.
+   */
+  items?: BackgroundItem[];
+}
+/**
+ * BackgroundItem is one pending background item: Kind is "command" (a background Bash),
+ * "monitor", "subagent", "loop" (ScheduleWakeup) or "cron" (CronCreate); Label says what it is
+ * (the command line, the monitor's description, the subagent's description, the loop or cron
+ * prompt; one line of at most 200 characters); StartedAt is when the mod first saw it (Unix ms;
+ * a task first seen in a Stop report gets that time, not its real start); NextWake
+ * is the next fire time of a loop or cron (Unix ms).
+ */
+export interface BackgroundItem {
+  id: string;
+  kind: string;
+  label: string;
+  startedAt: number /* int64 */;
+  nextWake?: number /* int64 */;
 }
 /**
  * TokenCount sums token usage: In is uncached input, Out is output, Cache is cache read plus creation.
@@ -246,12 +266,59 @@ export const KindTicket: EventKind = "ticket";
  * KindCommand data: CommandEvent; one per status change of a slash command run from a device.
  */
 export const KindCommand: EventKind = "command";
+/**
+ * KindCompact data: CompactInfo; one per compact boundary (from the transcript, or live from the mod).
+ */
+export const KindCompact: EventKind = "compact";
+/**
+ * KindTaskEnd data: TaskEnd; a background task (command, monitor, subagent) finished.
+ */
+export const KindTaskEnd: EventKind = "task_end";
 export interface Event {
   seq: number /* int64 */;
   session: string;
   ts: number /* int64 */;
   kind: EventKind;
   data: any /* json.RawMessage */;
+  /**
+   * Key is a stable identity for events rebuilt from the transcript (transcript_page, backfill):
+   * "<line uuid>/<n>", or "@<line byte offset>/<n>" when the line has no uuid, where n is the
+   * event's index among the events of that line. Use it to dedupe pages against each other and
+   * against what the hub already has. Empty on live events.
+   */
+  key?: string;
+}
+/**
+ * CompactInfo is the data of a compact event: the conversation was compacted at At (Unix ms;
+ * left out when the transcript row has no timestamp).
+ */
+export interface CompactInfo {
+  at?: number /* int64 */;
+  /**
+   * Trigger is "auto" or "manual".
+   */
+  trigger: string;
+  /**
+   * PreTokens is the context size before compacting, when known.
+   */
+  preTokens?: number /* int64 */;
+}
+/**
+ * TaskEnd is the data of a task_end event. Kind is "command", "monitor", "subagent", ...;
+ * Status as Claude Code reports it ("completed", "failed", "killed", ...).
+ */
+export interface TaskEnd {
+  taskId: string;
+  kind: string;
+  summary: string;
+  status: string;
+  exitCode?: number /* int */;
+  outputTail?: string;
+  /**
+   * Synthetic marks an end the mod made up (the task left without its own notification, status
+   * "stopped"; mod 0.2.3+); a later real end of the same task replaces it.
+   */
+  synthetic?: boolean;
 }
 export interface ToolStart {
   id: string;
@@ -268,6 +335,17 @@ export interface ToolEnd {
   ok: boolean;
   ms: number /* int64 */;
   output: string;
+  /**
+   * Background is set when the call started background work (a run_in_background Bash, a
+   * Monitor, a background Agent): it is still running; its task_end has the same TaskID.
+   */
+  background?: ToolBackground;
+}
+/**
+ * ToolBackground names the background task a tool call started.
+ */
+export interface ToolBackground {
+  taskId: string;
 }
 export interface Ask {
   askId: string;
@@ -420,6 +498,31 @@ export interface RPC {
   reqId: string;
   method: string;
   params: any /* json.RawMessage */;
+}
+/**
+ * TranscriptPageParams are the params of the transcript_page RPC. Cursor is the opaque cursor of
+ * the previous page ("" = start from the newest end); Limit is the wanted number of events
+ * (0 = default, capped by the daemon). BeforeTS (Unix ms, 0 = none) makes the daemon skip events
+ * with ts >= BeforeTS without counting them toward Limit (the hub already holds them); older
+ * daemons ignore it, so the hub filters as well.
+ */
+export interface TranscriptPageParams {
+  session: string;
+  cursor: string;
+  limit: number /* int */;
+  beforeTs?: number /* int64 */;
+}
+/**
+ * TranscriptPage is one page of a session's history, oldest first. Cursor fetches the page
+ * before this one; Done means there is nothing older (Cursor is then ""). A page may hold
+ * fewer events than asked (even none) without being Done: the daemon bounds the bytes it scans.
+ * A single transcript line whose events do not fit in one page's byte budget keeps only its
+ * newest events that fit: its older events are lost.
+ */
+export interface TranscriptPage {
+  events: Event[];
+  cursor: string;
+  done: boolean;
 }
 export interface RPCResult {
   reqId: string;

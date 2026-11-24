@@ -166,17 +166,23 @@ async function metered($: never, on: never, usage: () => unknown, startAt = 0) {
   o('process.run', async () => ({ value: { exitCode: 0, stdout: JSON.stringify({ ok: true, port: 1, token: 't', machine: 'vps-1' }), stderr: '' } }))
   const registers: Array<Record<string, any>> = []
   const turnEnds: Array<Record<string, any>> = []
+  const events: Array<{ kind: string; data: any }> = []
   o('http.fetch', async (_$: unknown, e: { url?: string; init?: { body?: string } }) => {
     const url = String(e.url)
     if (url.endsWith('/v1/sessions/register')) registers.push(JSON.parse(String(e.init?.body)))
-    else if (url.endsWith('/events')) for (const ev of JSON.parse(String(e.init?.body))) if (ev.kind === 'turn_end') turnEnds.push(ev.data)
+    else if (url.endsWith('/events')) {
+      for (const ev of JSON.parse(String(e.init?.body))) {
+        events.push(ev)
+        if (ev.kind === 'turn_end') turnEnds.push(ev.data)
+      }
+    }
     return { value: { status: 204 } }
   })
   if (startAt) await clock.advance(startAt)
   await ($ as { session: { start(x: unknown): Promise<unknown> } }).session.start({ cwd: '/x', surface: null })
   const until = async (f: () => boolean) => { for (let i = 0; i < 100 && !f(); i++) await new Promise(r => setTimeout(r, 5)) }
   await until(() => registers.length > 0)
-  return { clock, registers, turnEnds, until, usageCalls: () => usageCalls }
+  return { clock, registers, turnEnds, events, until, usageCalls: () => usageCalls }
 }
 
 const doneInput = (extra: Record<string, unknown>) => ({
@@ -379,13 +385,13 @@ test('classic.Stop with work in flight → register background; a task-notificat
   await e.classic.Stop({ stop_hook_active: false, background_tasks: [{ id: 'b1', type: 'shell', status: 'running', description: 'x' }], session_crons: [] })
   await m.clock.advance(1000)
   await m.until(() => m.registers.some(r => r.state === 'background'))
-  expect(m.registers.find(r => r.state === 'background')!.background).toEqual({ tasks: 1, wakeAt: 0 })
+  expect(m.registers.find(r => r.state === 'background')!.background).toMatchObject({ tasks: 1, wakeAt: 0 })
   await e.prompt.submit({ text: '<task-notification><task-id>b1</task-id><status>completed</status></task-notification>', wait: false, origin: { kind: 'task-notification' } })
   // the follow-up turn ends with nothing left (no Stop report: the mod's own tracking)
   await e.turn.complete(doneInput({ turnId: 't2' }))
   await m.clock.advance(1000)
   await m.until(() => m.registers[m.registers.length - 1]?.state === 'idle')
-  expect(m.registers[m.registers.length - 1]!.background).toEqual({ tasks: 0, wakeAt: 0 })
+  expect(m.registers[m.registers.length - 1]!.background).toMatchObject({ tasks: 0, wakeAt: 0, items: [] })
 })
 
 // Plan 8 Task 1: the command list and model/effort options are reported at session start.
@@ -425,4 +431,84 @@ test('session start reports the command list (with skills) and the model/effort 
   const r = regs().find(x => x.modelOptions?.length)!
   expect(r.modelOptions.map((m: any) => m.value)).toEqual(['opus', 'haiku'])
   expect(r.effortOptions).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
+})
+
+// Plan 10 Task 2: live compaction and task notifications at hook level.
+test('session.compact: a manual /compact that stands emits compact; a precompute or a skip emits none', async ($, on) => {
+  const o = on as unknown as (...a: unknown[]) => void
+  const msgs = [{ role: 'user', text: 'summary', toolUses: [] }]
+  let answer: unknown = { messages: msgs, tokensBefore: 150_000, tokensAfter: 9000 }
+  o('session.compact', async () => answer)
+  const m = await metered($ as never, on as never, () => ({ context: { window: 1000, percent: 10 }, rateLimits: [] }))
+  const e = $ as unknown as { session: { compact(x: unknown): Promise<unknown> } }
+  await e.session.compact({ trigger: 'precompute', messages: msgs })
+  await e.session.compact({ trigger: 'manual', messages: msgs })
+  answer = { skip: 'blocked' }
+  await e.session.compact({ trigger: 'auto', messages: msgs })
+  await m.clock.advance(1000)
+  await m.until(() => m.events.some(ev => ev.kind === 'compact'))
+  const compacts = m.events.filter(ev => ev.kind === 'compact')
+  expect(compacts.length).toBe(1)
+  expect(compacts[0]!.data).toMatchObject({ trigger: 'manual', preTokens: 150_000 })
+  expect(typeof compacts[0]!.data.at).toBe('number')
+})
+
+test('a task-notification prompt and its follow-up turn: one task_end, a turn_start, no user event', async ($, on) => {
+  const o = on as unknown as (...a: unknown[]) => void
+  o('classic.Stop', async () => ({}))
+  o('prompt.submit', async (_$: unknown, e: { text: string }) => ({ text: e.text }))
+  o('turn.start', async (_$: unknown, e: { turnId: string }) => ({ turnId: e.turnId }))
+  const m = await metered($ as never, on as never, () => ({ context: { window: 1000, percent: 10 }, rateLimits: [] }))
+  const e = $ as unknown as {
+    turn: { start(x: unknown): Promise<unknown>; complete(x: unknown): Promise<unknown> }
+    classic: { Stop(x: unknown): Promise<unknown> }
+    prompt: { submit(x: unknown): Promise<unknown> }
+  }
+  await e.turn.complete(doneInput({}))
+  await e.classic.Stop({ stop_hook_active: false, background_tasks: [{ id: 'b1', type: 'shell', status: 'running', description: 'Run tests', command: 'npm test' }], session_crons: [] })
+  const text = [
+    '<task-notification>', '<task-id>b1</task-id>', '<tool-use-id>toolu_01</tool-use-id>',
+    '<output-file>/tmp/claude-1000/x/tasks/b1.output</output-file>', '<status>completed</status>',
+    '<summary>Background command "npm test" completed (exit code 0)</summary>', '</task-notification>',
+    'Read the output file to retrieve the result: /tmp/claude-1000/x/tasks/b1.output',
+  ].join('\n')
+  await e.prompt.submit({ text, wait: false, origin: { kind: 'task-notification' } })
+  await e.turn.start({ text, turnId: 't2' })
+  await m.clock.advance(1000)
+  await m.until(() => m.events.some(ev => ev.kind === 'turn_start'))
+  const ends = m.events.filter(ev => ev.kind === 'task_end')
+  expect(ends.length).toBe(1)
+  expect(ends[0]!.data).toEqual({ taskId: 'b1', kind: 'command', summary: 'Background command "npm test" completed (exit code 0)', status: 'completed', exitCode: 0 })
+  expect(m.events.some(ev => ev.kind === 'user')).toBe(false)
+})
+
+test('a task-notification turn sets neither the recap\'s first prompt nor its last prompt', async ($, on) => {
+  const o = on as unknown as (...a: unknown[]) => void
+  const prompts: string[] = []
+  o('model.complete', async (_$: unknown, e: { prompt: string }) => { prompts.push(e.prompt); return { value: { isAnswered: true, text: 'Fix the login bug' } } })
+  o('session.messages', async () => ({ value: [] }))
+  o('classic.Stop', async () => ({}))
+  o('prompt.submit', async (_$: unknown, e: { text: string }) => ({ text: e.text }))
+  o('turn.start', async (_$: unknown, e: { turnId: string }) => ({ turnId: e.turnId }))
+  const m = await metered($ as never, on as never, () => ({ context: { window: 1000, percent: 10 }, rateLimits: [] }))
+  const e = $ as unknown as {
+    turn: { start(x: unknown): Promise<unknown>; complete(x: unknown): Promise<unknown> }
+    classic: { Stop(x: unknown): Promise<unknown> }
+    prompt: { submit(x: unknown): Promise<unknown> }
+  }
+  await e.classic.Stop({ stop_hook_active: false, background_tasks: [{ id: 'b1', type: 'shell', status: 'running', description: 'Run tests', command: 'npm test' }], session_crons: [] })
+  const text = '<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n<summary>Background command "npm test" completed (exit code 0)</summary>\n</task-notification>'
+  await e.prompt.submit({ text, wait: false, origin: { kind: 'task-notification' } })
+  await e.turn.start({ text, turnId: 't1' })
+  await e.turn.complete(doneInput({ turnId: 't1', answer: 'Tests passed.' }))
+  await m.clock.advance(1000)
+  await new Promise(r => setTimeout(r, 20))
+  expect(prompts).toEqual([]) // no recap from a notification turn
+  // the owner's first prompt is still the first one the recap sees
+  await e.prompt.submit({ text: 'fix the login bug', wait: false })
+  await e.turn.start({ text: 'fix the login bug', turnId: 't2' })
+  await m.until(() => prompts.length > 0)
+  expect(prompts.length).toBe(1)
+  expect(prompts[0]).toContain('fix the login bug')
+  expect(prompts[0]).not.toContain('task-notification')
 })

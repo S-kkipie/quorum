@@ -1,4 +1,4 @@
-import { type BackgroundInfo, stateOf } from './background'
+import { backgroundStart, type BackgroundInfo, isTaskNotification, stateOf } from './background'
 import type { Link } from './link'
 import { sumTokens } from './meters'
 import { trimInput } from './trim'
@@ -75,6 +75,8 @@ export function makeHandlers(
     fromDevice?: (text: string) => boolean
     fromCommand?: (name: string, args: string) => boolean
     background?: () => BackgroundInfo | undefined
+    /** Whether the turn starting with this text is a task notification's (default: its markup). */
+    isNotification?: (text: string) => boolean
   } = {},
 ) {
   const safe = (fn: (l: Link) => void): void => {
@@ -101,7 +103,10 @@ export function makeHandlers(
         if (full(l)) {
           l.emit({ kind: 'turn_start', data: {} })
           const c = commandOf(e.text)
-          if (c) {
+          if (opts.isNotification ? opts.isNotification(e.text) : isTaskNotification(e.text)) {
+            // Claude Code's own notification prompt: the control emitted task_end for it; never a
+            // user bubble, and never the owner typing (no seen mark)
+          } else if (c) {
             const text = c.args ? `/${c.name} ${c.args}` : `/${c.name}`
             const device = opts.fromCommand?.(c.name, c.args) === true
             l.emit({ kind: 'user', data: device ? { text, command: c, device: true } : { text, command: c } })
@@ -153,10 +158,30 @@ export function makeHandlers(
         if (r?.deny !== undefined) output = String(r.deny)
         else if (typeof r?.text === 'string') output = r.text
         else if (r?.result !== undefined) output = typeof r.result === 'string' ? r.result : JSON.stringify(r.result) ?? ''
+        // a call that started background work: still running (its task_end comes later)
+        const bg = backgroundStart(e.tool, r)
         l.emit({
           kind: 'tool_end',
-          data: tag(e.agentId, { id: e.tool_use_id, ok: !(r?.isError || r?.deny !== undefined), ms, output: output.slice(0, TOOL_OUTPUT_MAX) }),
+          data: tag(e.agentId, {
+            id: e.tool_use_id, ok: !(r?.isError || r?.deny !== undefined), ms, output: output.slice(0, TOOL_OUTPUT_MAX),
+            ...(bg ? { background: { taskId: bg.taskId } } : {}),
+          }),
         })
+      })
+    },
+
+    /**
+     * session.compact settled (`r` is what `next(e)` resolved to): a compaction of the main
+     * conversation that stands emits `compact` ("manual" for /compact, "auto" for the threshold
+     * or a plugin's). A precompute, a skip and a subagent's own compaction emit nothing.
+     */
+    compact(e: { trigger?: string; agentId?: string }, r: { skip?: unknown; messages?: unknown; tokensBefore?: unknown } | undefined, at: number): void {
+      if (e.agentId !== undefined || e.trigger === 'precompute') return
+      if (!r || r.skip !== undefined || !Array.isArray(r.messages)) return
+      safe(l => {
+        if (!full(l)) return
+        const pre = typeof r.tokensBefore === 'number' && r.tokensBefore > 0 ? { preTokens: Math.round(r.tokensBefore) } : {}
+        l.emit({ kind: 'compact', data: { at, trigger: e.trigger === 'manual' ? 'manual' : 'auto', ...pre } })
       })
     },
 

@@ -394,3 +394,28 @@ describe('Session: seen', () => {
     }
   })
 })
+
+describe('Session: background pill', () => {
+  const bgState = (o: any) => ({ ...st(), sessions: { a: sess('a', o) } })
+  it('tapping a background session pill opens the Background sheet', async () => {
+    const items = [{ id: '1', kind: 'command', label: 'npm run dev', startedAt: Date.now() - 4 * 60_000 }]
+    render(<Session state={bgState({ state: 'background', background: { tasks: 1, wakeAt: 0, items } })} id="a" onEvents={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: /show background work/ }))
+    expect(await screen.findByText('npm run dev')).toBeTruthy()
+  })
+  it('a plain idle pill is not a button', () => {
+    render(<Session state={bgState({ state: 'idle' })} id="a" onEvents={vi.fn()} />)
+    expect(screen.queryByRole('button', { name: /show background work/ })).toBeNull()
+  })
+  it('an idle session whose background task left the items shows its row as Ended', async () => {
+    const events = [
+      { seq: 1, session: 'a', ts: 1, kind: 'tool_start', data: { id: 't', name: 'Bash', summary: 'npm run dev', input: { command: 'npm run dev', run_in_background: true } } },
+      { seq: 2, session: 'a', ts: 2, kind: 'tool_end', data: { id: 't', ok: true, output: 'ok', background: { taskId: 'b1' } } },
+    ]
+    const run = (o: any) => ({ ...bgState(o), events: { a: events } })
+    const { rerender } = render(<Session state={run({ state: 'background', background: { tasks: 1, wakeAt: 0, items: [{ id: 'b1', kind: 'command', label: 'npm run dev', startedAt: 1 }] } })} id="a" onEvents={vi.fn()} />)
+    expect(await screen.findByText('Running in background')).toBeTruthy()
+    rerender(<Session state={run({ state: 'idle', background: { tasks: 0, wakeAt: 0, items: [] } })} id="a" onEvents={vi.fn()} />)
+    expect(await screen.findByText('Ended')).toBeTruthy()
+  })
+})
