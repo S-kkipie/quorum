@@ -12,8 +12,23 @@ export type ToolItem = {
 export type ReadsItem = { t: 'reads'; seq: number; files: string[]; title: string; state: ToolState; agent?: string; tools: ToolItem[] }
 export type AgentItem = { t: 'agent'; seq: number; id: string; type: string; description: string; status: string; answer?: string }
 export type ArtifactItem = { t: 'artifact'; seq: number; path: string; name: string; inBase: boolean }
+export type TurnItem = { t: 'turn'; seq: number; tokens?: { in: number; out: number; cache: number }; model: string }
+/** An image the owner pasted in the terminal (`[Image #n]`), stored at `path` on the session's machine. */
+export type PastedImage = { n: number; path: string }
+
+/** The images a user event carries, from the mod; anything malformed is dropped (at most 20). */
+export function pastedImagesOf(v: unknown): PastedImage[] | undefined {
+  if (!Array.isArray(v)) return undefined
+  const out = v
+    .filter((x): x is PastedImage => !!x && typeof x === 'object' && Number.isInteger(x.n) && typeof x.path === 'string' && x.path !== '')
+    .slice(0, 20)
+    .map(({ n, path }) => ({ n, path }))
+  return out.length ? out : undefined
+}
+
 export type Item =
-  | { t: 'user' | 'assistant' | 'info'; seq: number; text: string; agent?: string }
+  | TurnItem
+  | { t: 'user' | 'assistant' | 'info'; seq: number; text: string; agent?: string; images?: PastedImage[] }
   | ToolItem
   | ReadsItem
   | AgentItem
@@ -210,7 +225,14 @@ export function buildTimeline(events: Event[], base: string): Item[] {
     const d = e.data ?? {}
     switch (e.kind) {
       case 'user': case 'assistant': case 'info':
-        flat.push({ t: e.kind, seq: e.seq, text: d.text ?? '', agent: d.agent || undefined })
+      {
+        const images = e.kind === 'user' ? pastedImagesOf(d.images) : undefined
+        flat.push({ t: e.kind, seq: e.seq, text: d.text ?? '', agent: d.agent || undefined, ...(images ? { images } : {}) })
+      }
+        break
+      case 'turn_end':
+        // a footer only when the mod reported tokens (older events carry none)
+        if (d.tokens && typeof d.tokens === 'object') flat.push({ t: 'turn', seq: e.seq, tokens: d.tokens, model: typeof d.model === 'string' ? d.model : '' })
         break
       case 'tool_start': {
         const name: string = d.name ?? ''

@@ -1,3 +1,4 @@
+import UsageStrip from '../components/UsageStrip'
 import ProjectCard from '../components/ProjectCard'
 import { pendingByProject, projectAttention, projectSessions, workspaceProjects } from '../lib/projects'
 import { lastActivity } from '../lib/sessions'
@@ -42,9 +43,12 @@ export default function Projects({ state, wide, selected, onOpen, onOpenSession,
     )
   }
   return (
-    <div className={wide ? 'flex h-full gap-1 overflow-x-auto py-4' : 'pb-8'}>
-      {workspaces.map((w) => column(w.id, w.name, w.color, workspaceProjects(state, w.id)))}
-      {orphans.length > 0 && column('_', 'No workspace', '', orphans)}
+    <div className={wide ? 'flex h-full flex-col' : ''}>
+      <UsageStrip usage={state.usage} />
+      <div className={wide ? 'flex min-h-0 flex-1 gap-1 overflow-x-auto py-4' : 'pb-8'}>
+        {workspaces.map((w) => column(w.id, w.name, w.color, workspaceProjects(state, w.id)))}
+        {orphans.length > 0 && column('_', 'No workspace', '', orphans)}
+      </div>
     </div>
   )
 }

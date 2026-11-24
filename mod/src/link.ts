@@ -93,10 +93,13 @@ export class Link {
   update(patch: Partial<SessionInfo>): void {
     if (!this.info) return
     this.info = { ...this.info, ...patch, updatedAt: this.now() }
+    this.infoRev++
     if (!this.conn || this.state !== 'connected') return // the next connect registers the current info
     void this.pushRegister()
   }
 
+  // bumped on every update(): a change made while the register is in flight is re-sent once connected
+  private infoRev = 0
   private regBusy = false
   private regDirty = false
   /** A single register in flight; if more changes arrive, only the latest is sent afterwards. */
@@ -182,6 +185,7 @@ export class Link {
     this.conn = conn
     this.machine = conn.machine
     const sent = { ...this.info, machine: conn.machine }
+    const rev = this.infoRev
     const status = await this.post('/v1/sessions/register', sent)
     if (epoch !== this.epoch) return false
     if (status !== 204) {
@@ -194,6 +198,7 @@ export class Link {
     this.error = ''
     this.lastLog = ''
     this.state = 'connected'
+    if (this.infoRev !== rev) void this.pushRegister()
     this.daemonVersion = conn.version
     this.versionWarning = this.daemonVersion && this.daemonVersion !== Version
       ? `quorumd ${this.daemonVersion} does not match the mod version (${Version}): restart quorumd or update`

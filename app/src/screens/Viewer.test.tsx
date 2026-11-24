@@ -4,6 +4,8 @@ import { cleanup, render, screen, fireEvent, waitFor } from '@testing-library/re
 
 const createView = vi.fn()
 vi.mock('../lib/api', () => ({ createView: (...a: any[]) => createView(...a), hubUrl: () => 'http://h:1' }))
+// shiki's wasm engine does not run in jsdom: raw (unhighlighted) tokens are shown instead
+vi.mock('shiki', () => ({ createHighlighter: () => new Promise(() => {}) }))
 import Viewer from './Viewer'
 
 const props = { machine: 'vps-1', sessionId: 's1', onBack: () => {} }
@@ -28,6 +30,12 @@ describe('Viewer', () => {
     render(<Viewer {...props} path="/p/n.md" />)
     expect(await screen.findByRole('heading', { name: 'Hello title' })).toBeTruthy()
     expect((f.mock.calls[0] as any)[0]).toBe('http://h:1/v/tok/n.md')
+  })
+  it('a pasted image asks for an images link', async () => {
+    createView.mockResolvedValue({ url: '/v/tok/1.png' })
+    render(<Viewer {...props} path="/tmp/claude-1000/-p/s1/images/1.png" images />)
+    expect(await screen.findByRole('img', { name: '1.png' })).toBeTruthy()
+    expect(createView).toHaveBeenCalledWith('vps-1', 's1', '/tmp/claude-1000/-p/s1/images/1.png', true)
   })
   it('image viewer zoom buttons', async () => {
     createView.mockResolvedValue({ url: '/v/tok/a.png' })
@@ -63,5 +71,40 @@ describe('Viewer', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Open in new tab' }))
     expect(open).toHaveBeenCalledWith('http://h:1/v/tok/p.html', '_blank', 'noopener')
     await waitFor(() => expect(createView).toHaveBeenCalledTimes(1))
+  })
+  it('text files render as code, capped at 2,000 lines', async () => {
+    createView.mockResolvedValue({ url: '/v/tok/a.ts' })
+    const body = Array.from({ length: 2500 }, (_, i) => `const v${i} = ${i}`).join('\n')
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(body)))
+    render(<Viewer {...props} path="/p/src/a.ts" />)
+    expect(await screen.findByText('Showing the first 2,000 lines.')).toBeTruthy()
+    await waitFor(() => expect(document.body.textContent).toContain('const v1999 = 1999'))
+    expect(document.body.textContent).not.toContain('const v2000 = 2000')
+  })
+  it('a huge text file is read only up to ~1 MB, with a note', async () => {
+    createView.mockResolvedValue({ url: '/v/tok/big.log' })
+    const line = 'x'.repeat(999) + '\n' // 1,000 bytes a line: the byte cap comes before the line cap
+    const chunk = new TextEncoder().encode(line.repeat(64)) // 64 kB
+    let pulls = 0
+    const body = new ReadableStream<Uint8Array>({
+      pull(c) { pulls++; if (pulls > 400) c.close(); else c.enqueue(chunk) }, // up to 25 MB if read to the end
+    })
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(body)))
+    render(<Viewer {...props} path="/p/big.log" />)
+    expect(await screen.findByText('Showing the first 1 MB.')).toBeTruthy()
+    expect(pulls).toBeLessThanOrEqual(20)
+  })
+  it('short text files show no cap note', async () => {
+    createView.mockResolvedValue({ url: '/v/tok/a.json' })
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{"a": 1}')))
+    render(<Viewer {...props} path="/p/a.json" />)
+    await waitFor(() => expect(document.body.textContent).toContain('"a"'))
+    expect(screen.queryByText('Showing the first 2,000 lines.')).toBeNull()
+  })
+  it('binary files cannot be previewed', async () => {
+    createView.mockResolvedValue({ url: '/v/tok/a.bin' })
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('ab\u0000cd')))
+    render(<Viewer {...props} path="/p/a.bin" />)
+    expect(await screen.findByText('This file cannot be previewed.')).toBeTruthy()
   })
 })

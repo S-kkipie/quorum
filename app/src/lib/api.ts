@@ -1,4 +1,4 @@
-import type { Checkout, Conversation, ConnectorConfig, Event, Project, Proposal, SessionInfo, Ticket, Workspace } from '../proto.gen'
+import type { AccountUsage, Checkout, Conversation, ConnectorConfig, Event, Project, Proposal, SessionInfo, Ticket, Workspace } from '../proto.gen'
 
 export interface Machine {
   name: string
@@ -98,6 +98,7 @@ export async function pair(hub: string, code: string, deviceName: string): Promi
 }
 
 export const listSessions = () => apiFetch<SessionInfo[]>('/api/sessions?closed=1')
+export const listUsage = () => apiFetch<AccountUsage[]>('/api/usage')
 export const listMachines = () => apiFetch<Machine[]>('/api/machines')
 
 /** Short device name, e.g. "Chrome · Android". */
@@ -112,6 +113,7 @@ export type PromptMode = 'now' | 'queue' | 'interrupt'
 export interface DevApi {
   listConversations: (machine: string, root: string) => Promise<Conversation[]>
   listEvents: (id: string, before: number, limit: number) => Promise<Event[]>
+  pluginState?: (id: string, plugin: PluginName) => Promise<unknown>
 }
 let devApi: DevApi | null = null
 export const setDevApi = (d: DevApi | null) => { devApi = d }
@@ -191,6 +193,19 @@ export const rejectProposal = (id: string) => apiFetch<Proposal>(`/api/proposals
 export const confirmTicketLink = (sessionId: string, ticketId: string) => apiFetch(`/api/sessions/${enc(sessionId)}/ticket`, json('POST', { ticketId }))
 export const unlinkTicket = (sessionId: string, ticketId: string) => apiFetch(`/api/sessions/${enc(sessionId)}/ticket?ticketId=${enc(ticketId)}`, json('DELETE'))
 
-/** Asks the hub for a short-lived link to a file of the session; `url` is relative to the hub. */
-export const createView = (machine: string, sessionId: string, path: string) =>
-  apiFetch<{ url: string }>(`/api/machines/${enc(machine)}/views`, json('POST', { sessionId, path }))
+/**
+ * Asks the hub for a short-lived link to a file of the session; `url` is relative to the hub.
+ * `images`: the file is an image pasted in the terminal (served from the session's images folder).
+ */
+export const createView = (machine: string, sessionId: string, path: string, images?: boolean) =>
+  apiFetch<{ url: string }>(`/api/machines/${enc(machine)}/views`, json('POST', images ? { sessionId, path, images: true } : { sessionId, path }))
+
+// --- better-claude plugins (read from the session's store files, commands via the mod) ---
+
+export type PluginName = 'after' | 'time-machine'
+export type PluginCommandName = 'after' | 'before' | 'timeline'
+/** The plugin's raw state for the session, or null when there is none. */
+export const pluginState = (id: string, plugin: PluginName): Promise<unknown> =>
+  devApi?.pluginState ? devApi.pluginState(id, plugin) : apiFetch<unknown>(`/api/sessions/${encodeURIComponent(id)}/plugins/${encodeURIComponent(plugin)}`)
+export const pluginCommand = (id: string, command: PluginCommandName, args: string) =>
+  apiFetch(`/api/sessions/${encodeURIComponent(id)}/plugin`, { method: 'POST', body: JSON.stringify({ command, args }) })

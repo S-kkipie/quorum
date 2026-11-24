@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import { reduce, replaceSessions, seed, initialState, setConversations, type AppState } from './store'
-import type { Envelope, SessionInfo, Event } from '../proto.gen'
+import { reduce, replaceSessions, setUsage, seed, initialState, setConversations, type AppState } from './store'
+import type { AccountUsage, Envelope, SessionInfo, Event } from '../proto.gen'
 
 const sess = (id: string, o: Partial<SessionInfo> = {}): SessionInfo => ({
   id, recap: '', previousId: '', machine: 'm1', name: id, cwd: '/x', root: '/x', model: '', role: 'work',
-  state: 'idle', contextPct: 0, startedAt: 1, updatedAt: 1, transcriptPath: '', repoUrl: '', branch: '', projectId: '', launchReq: '', herdrPane: '', herdrWorkspace: '', ...o,
+  state: 'idle', contextPct: 0, startedAt: 1, updatedAt: 1, transcriptPath: '', repoUrl: '', branch: '', projectId: '', launchReq: '', herdrPane: '', herdrWorkspace: '', account: '', accountKey: '', configDir: '', plugins: [], contextEstimate: false, tokens: { in: 0, out: 0, cache: 0 }, rateLimits: [], usageAt: 0, imagesDir: '', ...o,
 })
 const up = (s: SessionInfo): Envelope => ({ type: 'session_upsert', machine: s.machine, session: s.id, payload: s })
 const ev = (session: string, seq: number, kind: string, data: any = {}): Envelope => {
@@ -215,5 +215,31 @@ describe('setConversations', () => {
     s = setConversations(s, 'vps-1', '/w/app', [])
     expect(s.conversations['vps-1\u0000/w/app']).toEqual([])
     expect(s.conversations['laptop\u0000/w/app']).toHaveLength(1)
+  })
+})
+
+describe('usage', () => {
+  const u = (key: string, pct: number, at: number): AccountUsage => ({ key, alias: 'work', fiveHour: { pct, resetsAt: '' }, sevenDay: { pct: 0, resetsAt: '' }, at })
+  const env = (p: AccountUsage): Envelope => ({ type: 'usage_upsert', machine: 'vps-1', session: '', payload: p })
+  it('usage_upsert stores per key and keeps the newest', () => {
+    let s = run([env(u('a', 10, 100)), env(u('b', 5, 100))])
+    expect(Object.keys(s.usage).sort()).toEqual(['a', 'b'])
+    s = run([env(u('a', 20, 200))], s)
+    expect(s.usage.a.fiveHour.pct).toBe(20)
+    s = run([env(u('a', 1, 150))], s)
+    expect(s.usage.a.fiveHour.pct).toBe(20)
+  })
+  it('usage_gone removes the key', () => {
+    let s = run([env(u('vps-1/work', 10, 100)), env(u('abcd', 10, 100))])
+    s = run([{ type: 'usage_gone', machine: 'vps-1', session: '', payload: { key: 'vps-1/work' } }], s)
+    expect(Object.keys(s.usage)).toEqual(['abcd'])
+  })
+  it('the REST load seeds without overwriting newer live data and replace drops absent keys', () => {
+    let s = run([env(u('a', 20, 200))])
+    s = setUsage(s, [u('a', 10, 100), u('b', 5, 100)])
+    expect(s.usage.a.fiveHour.pct).toBe(20)
+    expect(s.usage.b).toBeDefined()
+    s = setUsage(s, [u('b', 6, 300)], true)
+    expect(Object.keys(s.usage)).toEqual(['b'])
   })
 })

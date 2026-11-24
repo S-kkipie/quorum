@@ -1,4 +1,4 @@
-import type { Ask, Checkout, Conversation, Envelope, Event, Project, Proposal, SessionInfo, SessionTicket, Ticket, Workspace } from '../proto.gen'
+import type { AccountUsage, Ask, Checkout, Conversation, Envelope, Event, Project, Proposal, SessionInfo, SessionTicket, Ticket, Workspace } from '../proto.gen'
 import type { Machine, TicketView } from './api'
 
 export interface AppState {
@@ -30,6 +30,8 @@ export interface AppState {
   worked: Record<string, true>
   /** Conversations on disk per checkout, keyed machine + NUL + root. */
   conversations: Record<string, Conversation[]>
+  /** Subscription usage per account key (accountKey, or machine/alias). */
+  usage: Record<string, AccountUsage>
 }
 
 /** Ask with the session it belongs to. */
@@ -37,7 +39,7 @@ export type AskEntry = Ask & { session: string }
 
 export const initialState = (): AppState => ({
   machines: {}, sessions: {}, order: [], events: {}, live: {}, liveAgent: {}, asks: {}, replaced: {}, replacedBy: {},
-  workspaces: {}, projects: {}, tickets: {}, links: {}, proposals: {}, checkouts: {}, worked: {}, conversations: {},
+  workspaces: {}, projects: {}, tickets: {}, links: {}, proposals: {}, checkouts: {}, worked: {}, conversations: {}, usage: {},
 })
 
 /** Inserts ev into the seq-sorted list, discarding duplicates. */
@@ -87,8 +89,27 @@ function onEvent(s: AppState, ev: Event): AppState {
   }
 }
 
+/** Merges usage reports, keeping the newest `at` per key; `replace` also drops keys absent from the list. */
+export function setUsage(s: AppState, list: AccountUsage[], replace = false): AppState {
+  const usage = replace ? {} as Record<string, AccountUsage> : { ...s.usage }
+  for (const u of list) {
+    const cur = usage[u.key] ?? s.usage[u.key]
+    if (!cur || u.at >= cur.at) usage[u.key] = u
+    else usage[u.key] = cur
+  }
+  return { ...s, usage }
+}
+
 export function reduce(s: AppState, env: Envelope): AppState {
   switch (env.type) {
+    case 'usage_gone': {
+      const key = (env.payload as { key?: string } | null)?.key
+      return key && key in s.usage ? { ...s, usage: omit(s.usage, key) } : s
+    }
+    case 'usage_upsert': {
+      const u = env.payload as AccountUsage
+      return u?.key ? setUsage(s, [u]) : s
+    }
     case 'machine_status': {
       const m = env.payload as Machine
       return m?.name ? { ...s, machines: { ...s.machines, [m.name]: m } } : s

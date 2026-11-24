@@ -1,28 +1,62 @@
-import { useCallback, useEffect, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
 import { ExternalLink, Minus, Plus, RotateCw, X } from 'lucide-react'
 import Markdown from '../components/Markdown'
 import { folderOf } from '../components/timeline/ArtifactCard'
 import { createView, hubUrl } from '../lib/api'
 import { Button } from '@/components/ui/button'
 
+const ViewerCode = lazy(() => import('./ViewerCode'))
+
 const SANDBOX = 'allow-scripts allow-popups allow-forms allow-modals'
 const ZOOMS = [25, 50, 75, 100, 150, 200, 300, 400]
 
-type Kind = 'frame' | 'md' | 'image' | 'pdf'
+type Kind = 'frame' | 'md' | 'image' | 'pdf' | 'code'
 function kindOf(name: string): Kind {
   if (/\.(html?|svg)$/i.test(name)) return 'frame'
   if (/\.md$/i.test(name)) return 'md'
   if (/\.pdf$/i.test(name)) return 'pdf'
-  return 'image'
+  if (/\.(png|jpe?g|gif|webp|bmp|ico|avif)$/i.test(name)) return 'image'
+  return 'code'
 }
 
 const btn = 'size-11 shrink-0 text-zinc-400 hover:text-zinc-200'
 
+/** The code view reads at most this much of a file (it shows at most 2,000 lines anyway). */
+const CODE_MAX_BYTES = 1 << 20
+
+/** Reads a response body up to max bytes, then stops the download; cut: there was more. */
+async function readCapped(r: Response, max: number): Promise<{ text: string; cut: boolean }> {
+  if (!r.body) {
+    const t = await r.text()
+    return t.length > max ? { text: t.slice(0, max), cut: true } : { text: t, cut: false }
+  }
+  const reader = r.body.getReader()
+  const dec = new TextDecoder()
+  let text = ''
+  let n = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) return { text: text + dec.decode(), cut: false }
+    const room = max - n
+    if (value.byteLength >= room) {
+      text += dec.decode(value.subarray(0, room))
+      void reader.cancel().catch(() => {})
+      // drop the partial last line
+      const nl = text.lastIndexOf('\n')
+      return { text: nl > 0 ? text.slice(0, nl) : text, cut: true }
+    }
+    n += value.byteLength
+    text += dec.decode(value, { stream: true })
+  }
+}
+
 /** Full-screen viewer of a file of a session, served by the hub through a short-lived /v/ link. */
-export default function Viewer({ machine, sessionId, path, base = '', onBack }: {
+export default function Viewer({ machine, sessionId, path, base = '', images = false, onBack }: {
   machine: string
   sessionId: string
   path: string
+  /** an image pasted in the terminal: the link comes from the session's images folder */
+  images?: boolean
   /** session base, only used to show the folder relative to it */
   base?: string
   onBack: () => void
@@ -32,21 +66,27 @@ export default function Viewer({ machine, sessionId, path, base = '', onBack }: 
   const [src, setSrc] = useState('')
   const [error, setError] = useState('')
   const [text, setText] = useState('')
+  const [cut, setCut] = useState(false)
   const [zoom, setZoom] = useState(100)
   const [nonce, setNonce] = useState(0)
 
   useEffect(() => {
     let live = true
-    setSrc(''); setError(''); setText('')
+    setSrc(''); setError(''); setText(''); setCut(false)
     ;(async () => {
       try {
-        const { url } = await createView(machine, sessionId, path)
+        const { url } = await (images ? createView(machine, sessionId, path, true) : createView(machine, sessionId, path))
         const full = hubUrl() + url
-        if (kind === 'md') {
+        if (kind === 'md' || kind === 'code') {
           const r = await fetch(full)
           if (!r.ok) throw new Error((await r.text()).trim() || `error ${r.status}`)
-          const t = await r.text()
-          if (live) setText(t)
+          if (kind === 'code') {
+            const c = await readCapped(r, CODE_MAX_BYTES)
+            if (live) { setText(c.text); setCut(c.cut) }
+          } else {
+            const t = await r.text()
+            if (live) setText(t)
+          }
         }
         if (live) setSrc(full)
       } catch (e) {
@@ -54,7 +94,7 @@ export default function Viewer({ machine, sessionId, path, base = '', onBack }: 
       }
     })()
     return () => { live = false }
-  }, [machine, sessionId, path, kind, nonce])
+  }, [machine, sessionId, path, kind, nonce, images])
 
   const openTab = useCallback(() => { if (src) window.open(src, '_blank', 'noopener') }, [src])
   const where = [machine, folderOf(path, base || path.replace(/[\\/]+[^\\/]*$/, ''))].filter(Boolean).join(' · ')
@@ -96,6 +136,10 @@ export default function Viewer({ machine, sessionId, path, base = '', onBack }: 
           <iframe key={nonce} title={name} src={src} className="h-full w-full border-0" />
         ) : kind === 'md' ? (
           <div className="mx-auto max-w-3xl p-4"><Markdown text={text} /></div>
+        ) : kind === 'code' ? (
+          text.includes('\u0000')
+            ? <p className="p-4 text-sm text-zinc-400">This file cannot be previewed.</p>
+            : <Suspense fallback={<p className="p-4 text-sm text-zinc-500">Loading…</p>}><ViewerCode text={text} name={name} cutBytes={cut} /></Suspense>
         ) : (
           <img key={nonce} src={src} alt={name} style={{ width: `${zoom}%` }} className="block max-w-none" />
         )}

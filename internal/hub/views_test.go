@@ -21,12 +21,13 @@ type viewFx struct {
 	*appFx
 	mu    sync.Mutex
 	files map[string][]byte
+	fail  map[string]string // path -> daemon error (e.g. a symlink the daemon refuses)
 	reads []map[string]any
 }
 
 func newViewFx(t *testing.T) *viewFx {
 	t.Helper()
-	vf := &viewFx{appFx: newAppFx(t), files: map[string][]byte{}}
+	vf := &viewFx{appFx: newAppFx(t), files: map[string][]byte{}, fail: map[string]string{}}
 	fakeMachine(t, vf.appFx, vf.machTok, "m1", func(r proto.RPC) *proto.RPCResult {
 		if r.Method != "file_read" {
 			return okResult(map[string]string{})
@@ -43,6 +44,9 @@ func newViewFx(t *testing.T) *viewFx {
 		var raw map[string]any
 		_ = json.Unmarshal(r.Params, &raw)
 		vf.reads = append(vf.reads, raw)
+		if e, ok := vf.fail[p.Path]; ok {
+			return &proto.RPCResult{Error: e}
+		}
 		data, ok := vf.files[p.Path]
 		if !ok {
 			return &proto.RPCResult{Error: "does not exist"}

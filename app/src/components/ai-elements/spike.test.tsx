@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { afterEach, describe, expect, it } from 'vitest'
+import { cleanup, render, screen, fireEvent } from '@testing-library/react'
 import { MessageResponse } from './message'
 import { Tool, ToolContent, ToolHeader } from './tool'
+
+afterEach(() => { cleanup() })
 
 describe('ai-elements spike', () => {
   it('markdown response renders remote images as links', () => {

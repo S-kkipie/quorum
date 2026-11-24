@@ -410,6 +410,37 @@ func (h *Hub) onHello(name string, hello proto.MachineHello) bool {
 	return true
 }
 
+// saveUsage records the rate limits a session reported under its account and publishes usage_upsert
+// when they changed. It stores only the alias and the accountKey, never the account identity.
+func (h *Hub) saveUsage(machine string, si proto.SessionInfo) {
+	if len(si.RateLimits) == 0 || si.Account == "" || si.UsageAt <= 0 {
+		return // no report, the account is still unresolved, or never measured
+	}
+	// Every session update re-sends the last rate limits: they are saved at the time they were
+	// measured (never later than now), so a re-sent or older reading is ignored by the store.
+	at := min(si.UsageAt, h.now().UnixMilli())
+	key := store.UsageKey(machine, si)
+	u, changed, err := h.st.SaveUsage(key, si.Account, si.RateLimits, at)
+	if err != nil {
+		log.Printf("hub: usage %s: %v", key, err)
+		return
+	}
+	if changed {
+		p, _ := json.Marshal(u)
+		h.publish(proto.Envelope{Type: "usage_upsert", Machine: machine, Payload: p})
+	}
+	if si.AccountKey != "" {
+		// the identity resolved: drop the machine/alias fallback row it supersedes
+		fallback := machine + "/" + si.Account
+		if removed, err := h.st.DeleteUsage(fallback); err != nil {
+			log.Printf("hub: usage %s: %v", fallback, err)
+		} else if removed {
+			p, _ := json.Marshal(map[string]string{"key": fallback})
+			h.publish(proto.Envelope{Type: "usage_gone", Machine: machine, Payload: p})
+		}
+	}
+}
+
 // owns says whether session id may be touched by name: new or its own.
 func (h *Hub) owns(name, id string) bool {
 	owner, exists, err := h.st.SessionOwner(id)
@@ -460,6 +491,7 @@ func (h *Hub) onMessage(c *machineConn, env proto.Envelope) {
 		}
 		si.PreviousID = applied
 		si.RepoURL, si.Branch = repo, branch
+		defer h.saveUsage(name, si) // after the session_upsert is published
 		h.attachCheckout(name, &si)
 		env.Session = si.ID
 		env.Payload, _ = json.Marshal(si)

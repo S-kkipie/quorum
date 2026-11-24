@@ -8,12 +8,14 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/S-kkipie/quorum/internal/hub/store"
+	"github.com/S-kkipie/quorum/internal/proto"
 )
 
 const (
@@ -22,16 +24,19 @@ const (
 	viewMaxSize   = 50 << 20
 	viewGoneText  = "Open it again from Quorum"
 	viewOutside   = "outside the project folder"
+	viewNoImage   = "This image is not available."
 	viewDenied    = "this file is not served"
 	viewCSPHeader = "sandbox allow-scripts allow-popups allow-forms allow-modals; frame-ancestors 'self'; " +
 		"default-src 'self' 'unsafe-inline' data: blob:; connect-src 'self'; form-action 'none'; base-uri 'none'"
 	viewWriteWait = 30 * time.Second
 )
 
-// viewLink is what a /v/ token grants: reading files under base on machine.
+// viewLink is what a /v/ token grants: reading files under base on machine. A link
+// with only set (a pasted image) serves that one file below base and nothing else.
 type viewLink struct {
 	machine string
 	base    string
+	only    string
 	expires time.Time
 }
 
@@ -53,7 +58,7 @@ func (v *viewLinks) setNow(f func() time.Time) {
 }
 
 // create stores a new link and drops the expired ones.
-func (v *viewLinks) create(machine, base string) (string, error) {
+func (v *viewLinks) create(machine, base, only string) (string, error) {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		return "", err
@@ -67,7 +72,7 @@ func (v *viewLinks) create(machine, base string) (string, error) {
 			delete(v.links, k)
 		}
 	}
-	v.links[tok] = viewLink{machine: machine, base: base, expires: now.Add(viewTTL)}
+	v.links[tok] = viewLink{machine: machine, base: base, only: only, expires: now.Add(viewTTL)}
 	return tok, nil
 }
 
@@ -129,10 +134,49 @@ func sessionBase(root, cwd string) string {
 	return cwd
 }
 
+var (
+	// claudeTempDir is Claude Code's temp folder name, claude-<uid>.
+	claudeTempDir = regexp.MustCompile(`^claude-[0-9]{1,10}$`)
+	// pastedImage is the name Claude Code gives a pasted image: <N>.<ext>.
+	pastedImage = regexp.MustCompile(`^[0-9]{1,4}\.(png|jpg|jpeg|gif|webp)$`)
+	nonAlnum    = regexp.MustCompile(`[^a-zA-Z0-9]`)
+)
+
+// imagesDirOf returns the session's pasted-images folder as the mod reported it, only when its
+// shape is the one Claude Code uses for this very session:
+// <abs tmp>/claude-<uid>/<root or cwd, every non-alphanumeric a dash>/<session id>/images.
+// Anything else (empty, relative, "." or ".." segments, another session's id, a folder
+// not named after the session's project) gives "", so a wrong report never widens a link.
+func imagesDirOf(si proto.SessionInfo, fold bool) string {
+	dir := si.ImagesDir
+	if dir == "" || si.ID == "" || !isAbsAnyOS(dir) || strings.ContainsRune(dir, 0) {
+		return ""
+	}
+	for _, seg := range strings.FieldsFunc(dir, func(r rune) bool { return r == '/' || r == '\\' }) {
+		if seg == "." || seg == ".." {
+			return ""
+		}
+	}
+	segs := pathSegs(dir)
+	n := len(segs)
+	if n < 4 || segs[n-1] != "images" || segs[n-2] != si.ID || !claudeTempDir.MatchString(segs[n-4]) {
+		return ""
+	}
+	for _, p := range []string{si.Root, si.Cwd} {
+		if p != "" && normRoot(segs[n-3], fold) == normRoot(nonAlnum.ReplaceAllString(p, "-"), fold) {
+			return dir
+		}
+	}
+	return ""
+}
+
 func (s *Server) handleCreateView(w http.ResponseWriter, r *http.Request) {
 	var b struct {
 		SessionID string `json:"sessionId"`
 		Path      string `json:"path"`
+		// Images: the path is an image the owner pasted in the terminal; the base is the
+		// session's images folder and the link serves that one file.
+		Images bool `json:"images"`
 	}
 	if !decode(w, r, &b) {
 		return
@@ -147,13 +191,28 @@ func (s *Server) handleCreateView(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 500, "internal error")
 		return
 	}
-	base := sessionBase(si.Root, si.Cwd)
-	rel, ok := relInside(base, b.Path, s.hub.caseInsensitiveOS(m))
+	fold := s.hub.caseInsensitiveOS(m)
+	base, only := sessionBase(si.Root, si.Cwd), ""
+	if b.Images {
+		base = imagesDirOf(si, fold)
+	}
+	rel, ok := relInside(base, b.Path, fold)
+	if b.Images && ok {
+		// exactly one pasted image right in the folder
+		ok = len(rel) == 1 && pastedImage.MatchString(rel[0])
+		if ok {
+			only = rel[0]
+		}
+	}
 	if base == "" || !ok {
-		apiErr(w, 403, viewOutside)
+		if b.Images {
+			apiErr(w, 403, viewNoImage)
+		} else {
+			apiErr(w, 403, viewOutside)
+		}
 		return
 	}
-	tok, err := s.views.create(m, base)
+	tok, err := s.views.create(m, base, only)
 	if err != nil {
 		apiErr(w, 500, "internal error")
 		return
@@ -214,8 +273,8 @@ func viewFail(w http.ResponseWriter, code int, msg string) {
 	_, _ = w.Write([]byte(msg + "\n"))
 }
 
-// viewRPCFail maps a file_read error to the /v/ response.
-func viewRPCFail(w http.ResponseWriter, err error) {
+// viewRPCFail maps a file_read error to the /v/ response; outside is the refusal text.
+func viewRPCFail(w http.ResponseWriter, err error, outside string) {
 	var de daemonError
 	switch {
 	case errors.Is(err, errOffline):
@@ -226,7 +285,7 @@ func viewRPCFail(w http.ResponseWriter, err error) {
 		msg := string(de)
 		switch {
 		case strings.HasPrefix(msg, "outside"):
-			viewFail(w, 403, viewOutside)
+			viewFail(w, 403, outside)
 		case msg == "does not exist" || msg == "not a file":
 			viewFail(w, 404, msg)
 		case msg == "file too large":
@@ -273,13 +332,18 @@ func (s *Server) handleView(w http.ResponseWriter, r *http.Request) {
 		viewFail(w, 410, viewGoneText)
 		return
 	}
+	// a pasted-image link does not mention the project folder: the image is simply not available
+	outside := viewOutside
+	if link.only != "" {
+		outside = viewNoImage
+	}
 	if strings.ContainsAny(rest, "\x00\\") {
-		viewFail(w, 403, viewOutside)
+		viewFail(w, 403, outside)
 		return
 	}
 	rel := path.Clean(rest)
-	if rel == ".." || strings.HasPrefix(rel, "../") || path.IsAbs(rel) {
-		viewFail(w, 403, viewOutside)
+	if rel == ".." || strings.HasPrefix(rel, "../") || path.IsAbs(rel) || (link.only != "" && rel != link.only) {
+		viewFail(w, 403, outside)
 		return
 	}
 	if viewSensitive(rel) {
@@ -310,7 +374,7 @@ func (s *Server) handleView(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if err != nil {
-				viewRPCFail(w, err)
+				viewRPCFail(w, err, outside)
 				return
 			}
 			h.Set("Content-Type", viewContentType(rel))

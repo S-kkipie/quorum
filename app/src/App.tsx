@@ -1,9 +1,9 @@
 import { lazy, useCallback, useEffect, useRef, useState } from 'react'
 import { Plus, Settings } from 'lucide-react'
-import { UNAUTH_EVENT, getToken, listMachines, openTerminal, listProjects, loadProposals, listSessions, listTickets, listWorkspaces, setDevApi, type TicketView } from './lib/api'
+import { UNAUTH_EVENT, getToken, listMachines, listUsage, openTerminal, listProjects, loadProposals, listSessions, listTickets, listWorkspaces, setDevApi, type TicketView } from './lib/api'
 import { connectLive, type Live } from './lib/live'
 import { EarlyLaunches, pendingReducer, type Pending } from './lib/launch'
-import { addEvents, initialState, reduce, replaceSessions, seed, setCheckouts, setConversations, setProjectsData, setTicketDetail, setTickets } from './lib/store'
+import { addEvents, initialState, reduce, replaceSessions, seed, setCheckouts, setConversations, setProjectsData, setTicketDetail, setTickets, setUsage } from './lib/store'
 import LaunchDialog from './components/LaunchDialog'
 import TicketDetail from './components/TicketDetail'
 import type { Checkout, Conversation, Envelope, Event, TermFrame } from './proto.gen'
@@ -39,7 +39,7 @@ type Tab = 'projects' | 'sessions'
 /** Open terminal; root/label (if they come from "Terminal") let the screen offer "Open another". */
 export interface TermNav { machine: string; pane: string; root?: string; label?: string }
 /** Open local artifact of a session. */
-export interface ViewNav { machine: string; sessionId: string; path: string }
+export interface ViewNav { machine: string; sessionId: string; path: string; images?: boolean }
 interface Nav { tab?: Tab; project?: string | null; projectTickets?: string | null; checkouts?: boolean; ticket?: string | null; config?: string | null; session?: string | null; starting?: boolean; terminal?: TermNav | null; viewer?: ViewNav | null; depth?: number }
 const navNow = (): Nav => history.state ?? {}
 
@@ -201,6 +201,10 @@ function Main() {
       setState((s) => (replace ? replaceSessions(s, ms, ss) : seed(s, ms, ss)))
     } catch { /* 401 is handled by api.ts */ }
     try {
+      const usage = await listUsage()
+      setState((s) => setUsage(s, usage ?? [], replace))
+    } catch { /* usage is optional */ }
+    try {
       const [workspaces, projects, proposals] = await Promise.all([listWorkspaces(), listProjects(), loadProposals()])
       setState((s) => setProjectsData(s, { workspaces: workspaces ?? [], projects: projects ?? [], proposals: proposals ?? [] }, replace))
       // tickets of each project: the board counts proposals and shows combined states
@@ -213,7 +217,7 @@ function Main() {
     let off = false
     Promise.all([import('./dev/fixtures'), import('./dev/DataToggle')]).then(([f, t]) => {
       if (off) return
-      setDevApi({ listConversations: f.fixtureConversations(mode), listEvents: async () => [] })
+      setDevApi({ listConversations: f.fixtureConversations(mode), listEvents: async () => [], pluginState: async (id, plugin) => f.fixturePluginState(mode, id, plugin) })
       setState(f.fixtureState(mode))
       setConnected(true)
       setDev({ Toggle: t.default })
@@ -275,7 +279,7 @@ function Main() {
       base={state.sessions[viewer.sessionId]?.root || state.sessions[viewer.sessionId]?.cwd || ''} onBack={back} />
   )
   const startingView = starting && <Starting pending={pending} terminal={!!(pending && state.machines[pending.machine]?.caps?.terminal)} onBack={back} onViewTerminal={onViewTerminal} />
-  const sessionView = current && vanished.current !== current ? <LazyBoundary><Session key={viewKey} state={state} id={current} onBack={wide ? undefined : back} onEvents={onEvents} onGuard={guardLaunch} busy={launchBusy} onViewTerminal={onViewTerminal} onOpenFile={(machine, path) => current && go({ viewer: { machine, sessionId: current, path } })} /></LazyBoundary> : null
+  const sessionView = current && vanished.current !== current ? <LazyBoundary><Session key={viewKey} state={state} id={current} onBack={wide ? undefined : back} onEvents={onEvents} onGuard={guardLaunch} busy={launchBusy} onViewTerminal={onViewTerminal} onOpenFile={(machine, path, o) => current && go({ viewer: { machine, sessionId: current, path, ...(o?.images ? { images: true } : {}) } })} /></LazyBoundary> : null
   const sessionsList = <Sessions state={state} onOpen={openSession} selected={current} />
   const projectsView = <Projects state={state} wide={wide} selected={project} onOpen={(id) => go({ project: id, projectTickets: null, checkouts: false, ticket: null })} onOpenSession={openSession} onConfig={() => openConfig('')} />
   const configView = config !== null && <Config key={config} state={state} editProject={config || null} onBack={back} />

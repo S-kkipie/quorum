@@ -116,3 +116,54 @@ describe('Session: narrow header', () => {
     vi.stubGlobal('localStorage', { getItem: () => 'tok', setItem() {}, removeItem() {} })
   })
 })
+
+describe('Session: meters', () => {
+  it('shows account chip, estimated context with tone and session tokens', () => {
+    const s = { ...st(), sessions: { a: sess('a', { account: 'work', contextPct: 58, contextEstimate: true, tokens: { in: 12_000, out: 3_000, cache: 0 } }) } }
+    render(<Session state={s} id="a" onEvents={vi.fn()} />)
+    expect(screen.getByText('work')).toBeTruthy()
+    const ctx = screen.getByText('ctx ~58%')
+    expect(ctx.getAttribute('data-tone')).toBe('warn')
+    expect(screen.getByText('↑12k ↓3k')).toBeTruthy()
+  })
+  it('the meters row wraps instead of overflowing a 320 px header', () => {
+    const s = { ...st(), sessions: { a: sess('a', { account: 'personal-test', contextPct: 58, tokens: { in: 1_200_000, out: 300_000, cache: 0 } }) } }
+    render(<Session state={s} id="a" onEvents={vi.fn()} />)
+    const row = screen.getByText('ctx 58%').parentElement!
+    expect(row.className).toMatch(/\bflex-wrap\b/)
+    expect(row.className).toMatch(/\bgap-y-/)
+  })
+  it('measured context has no tilde; nothing shown without data', () => {
+    const s = { ...st(), sessions: { a: sess('a', { contextPct: 80 }) } }
+    render(<Session state={s} id="a" onEvents={vi.fn()} />)
+    expect(screen.getByText('ctx 80%').getAttribute('data-tone')).toBe('danger')
+    expect(screen.queryByText(/↑/)).toBeNull()
+  })
+})
+
+describe('Session: plugin bar', () => {
+  it('Timeline and Queue share one row; the queue panel opens below it', async () => {
+    const f = vi.fn(async (u: string) => {
+      if (String(u).includes('/plugins/after')) return new Response(JSON.stringify({ items: [{ id: 1, text: 'task one' }, { id: 2, text: 'task two' }] }))
+      if (String(u).includes('/plugins/time-machine')) return new Response(JSON.stringify({ cursor: 1, states: [{ id: 1, label: 'start', at: 1, files: [] }] }))
+      return new Response('[]')
+    })
+    vi.stubGlobal('fetch', f)
+    try {
+      const s = { ...st(), sessions: { a: sess('a', { plugins: ['after', 'time-machine'] }) } }
+      render(<Session state={s} id="a" onEvents={vi.fn()} />)
+      const tl = await screen.findByRole('button', { name: 'Timeline (1)' })
+      const q = await screen.findByRole('button', { name: 'Queue (2)' })
+      expect(tl.textContent).toBe('Timeline1')
+      expect(q.textContent).toBe('Queue2')
+      const row = screen.getByTestId('plugin-bar')
+      expect(row.contains(tl) && row.contains(q)).toBe(true)
+      expect(tl.className).toMatch(/\bmin-h-11\b/)
+      expect(q.className).toMatch(/\bmin-h-11\b/)
+      fireEvent.click(q)
+      expect(await screen.findByText('task one')).toBeTruthy()
+    } finally {
+      vi.stubGlobal('fetch', vi.fn(async () => new Response('[]')))
+    }
+  })
+})

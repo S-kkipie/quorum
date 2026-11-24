@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import Composer from './Composer'
+import Composer, { applyPrefixes } from './Composer'
+import { onPluginStateChanged } from '../lib/pluginBus'
 import type { SessionInfo } from '../proto.gen'
 
 const fetchMock = vi.fn(async (_u: string, _i?: RequestInit) => new Response('{}', { status: 202 }))
@@ -9,7 +10,7 @@ vi.stubGlobal('fetch', fetchMock)
 
 const sess = (o: Partial<SessionInfo>): SessionInfo => ({
   id: 's1', recap: '', previousId: '', machine: 'm', name: 'n', cwd: '/x', root: '/x', model: '', role: 'work' as any,
-  state: 'idle' as any, contextPct: 0, startedAt: 0, updatedAt: 0, transcriptPath: '', repoUrl: '', branch: '', projectId: '', launchReq: '', herdrPane: '', herdrWorkspace: '', ...o,
+  state: 'idle' as any, contextPct: 0, startedAt: 0, updatedAt: 0, transcriptPath: '', repoUrl: '', branch: '', projectId: '', launchReq: '', herdrPane: '', herdrWorkspace: '', account: '', accountKey: '', configDir: '', plugins: [], contextEstimate: false, tokens: { in: 0, out: 0, cache: 0 }, rateLimits: [], usageAt: 0, imagesDir: '', ...o,
 })
 
 function openMenu() {
@@ -133,5 +134,117 @@ describe('Composer', () => {
     localStorage.setItem('quorum.draft.new', 'mine')
     render(<Composer session={sess({ id: 'new', previousId: 'old' })} />)
     expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('mine')
+  })
+  describe('plugin chips', () => {
+    const chip = (n: string) => screen.getByRole('button', { name: n })
+    const both = ['use-haiku', 'think-hard']
+    const sendWith = async (s: SessionInfo, chips: string[], via = 'Send') => {
+      render(<Composer session={s} />)
+      fireEvent.change(screen.getByRole('textbox'), { target: { value: 'hello' } })
+      chips.forEach((c) => fireEvent.click(chip(c)))
+      if (via === 'Send') fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+      else { openMenu(); fireEvent.click(await screen.findByRole('menuitem', { name: via })) }
+      await waitFor(() => expect(fetchMock).toHaveBeenCalled())
+      return JSON.parse(String(fetchMock.mock.calls[0][1]?.body))
+    }
+    it('render only for enabled plugins', () => {
+      render(<Composer session={sess({})} />)
+      expect(screen.queryByRole('button', { name: 'Haiku' })).toBeNull()
+      expect(screen.queryByRole('button', { name: 'Think hard' })).toBeNull()
+      cleanup()
+      render(<Composer session={sess({ plugins: ['think-hard'] })} />)
+      expect(screen.queryByRole('button', { name: 'Haiku' })).toBeNull()
+      expect(chip('Think hard').getAttribute('aria-pressed')).toBe('false')
+    })
+    it('toggle aria-pressed and are mutually exclusive', () => {
+      render(<Composer session={sess({ plugins: both })} />)
+      fireEvent.click(chip('Haiku'))
+      expect(chip('Haiku').getAttribute('aria-pressed')).toBe('true')
+      fireEvent.click(chip('Think hard'))
+      expect(chip('Think hard').getAttribute('aria-pressed')).toBe('true')
+      expect(chip('Haiku').getAttribute('aria-pressed')).toBe('false')
+      fireEvent.click(chip('Think hard'))
+      expect(chip('Think hard').getAttribute('aria-pressed')).toBe('false')
+    })
+    it('Haiku sends _text and Think hard sends +text', async () => {
+      expect((await sendWith(sess({ plugins: both }), ['Haiku'])).text).toBe('_hello')
+      cleanup(); fetchMock.mockClear(); localStorage.clear()
+      expect((await sendWith(sess({ plugins: both }), ['Think hard'])).text).toBe('+hello')
+    })
+    it.each(['Queue', 'Interrupt and send'])('prefix applies through %s', async (via) => {
+      expect((await sendWith(sess({ plugins: both, state: 'idle' as any }), ['Haiku'], via)).text).toBe('_hello')
+    })
+    it('chips reset after a successful send, not after a failure', async () => {
+      render(<Composer session={sess({ plugins: both })} />)
+      fireEvent.change(screen.getByRole('textbox'), { target: { value: 'hello' } })
+      fireEvent.click(chip('Think hard'))
+      fetchMock.mockImplementationOnce(async () => new Response('{"error":"boom"}', { status: 500 }))
+      fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+      await screen.findByRole('alert')
+      expect(chip('Think hard').getAttribute('aria-pressed')).toBe('true')
+      fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+      await waitFor(() => expect(chip('Think hard').getAttribute('aria-pressed')).toBe('false'))
+    })
+    it('Haiku is disabled while working', () => {
+      render(<Composer session={sess({ plugins: both, state: 'working' as any })} />)
+      const h = chip('Haiku') as HTMLButtonElement
+      expect(h.disabled).toBe(true)
+      expect(h.title).toBe('Haiku applies when Claude is idle')
+      expect((chip('Think hard') as HTMLButtonElement).disabled).toBe(false)
+    })
+    it('Haiku un-presses when the session starts working', () => {
+      const r = render(<Composer session={sess({ plugins: both, state: 'idle' as any })} />)
+      fireEvent.click(chip('Haiku'))
+      expect(chip('Haiku').getAttribute('aria-pressed')).toBe('true')
+      r.rerender(<Composer session={sess({ plugins: both, state: 'working' as any })} />)
+      expect(chip('Haiku').getAttribute('aria-pressed')).toBe('false')
+      r.rerender(<Composer session={sess({ plugins: both, state: 'idle' as any })} />)
+      expect(chip('Haiku').getAttribute('aria-pressed')).toBe('false')
+    })
+    it('applyPrefixes does not double-prefix', () => {
+      expect(applyPrefixes('hi', { haiku: true, think: false })).toBe('_hi')
+      expect(applyPrefixes('hi', { haiku: false, think: true })).toBe('+hi')
+      expect(applyPrefixes('hi', { haiku: false, think: false })).toBe('hi')
+      expect(applyPrefixes('_hi', { haiku: true, think: false })).toBe('_hi')
+      expect(applyPrefixes('+hi', { haiku: false, think: true })).toBe('+hi')
+    })
+  })
+  it('Queue uses /after literally when the after plugin is present', async () => {
+    const r = await send(sess({ state: 'working' as any, plugins: ['after'] }), 'Queue')
+    expect(r.url).toContain('/api/sessions/s1/plugin')
+    expect(r.body).toEqual({ command: 'after', args: '-- hello' })
+    expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('')
+  })
+  it('a Queue sent with /after tells the queue section to re-read', async () => {
+    const seen: string[] = []
+    const off = onPluginStateChanged((id, p) => seen.push(`${id}:${p}`))
+    try {
+      await send(sess({ state: 'working' as any, plugins: ['after'] }), 'Queue')
+      await waitFor(() => expect(seen).toEqual(['s1:after']))
+    } finally { off() }
+  })
+  it('idle with after: Send still sends the prompt (with the chip prefix); only the Queue item uses /after', async () => {
+    const plugins = ['after', 'use-haiku', 'think-hard']
+    render(<Composer session={sess({ state: 'idle' as any, plugins })} />)
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'hello' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Haiku' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled())
+    expect(fetchMock.mock.calls[0][0]).toContain('/api/sessions/s1/prompt')
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({ text: '_hello', mode: 'queue' })
+    cleanup(); fetchMock.mockClear(); localStorage.clear()
+    const r = await send(sess({ state: 'idle' as any, plugins }), 'Queue')
+    expect(r.url).toContain('/api/sessions/s1/plugin')
+    expect(r.body).toEqual({ command: 'after', args: '-- hello' })
+  })
+  it('Queue with after refuses multi-line text and a leading slash', async () => {
+    for (const v of ['a\nb', '/clear']) {
+      cleanup(); fetchMock.mockClear()
+      render(<Composer session={sess({ plugins: ['after'] })} />)
+      fireEvent.change(screen.getByRole('textbox'), { target: { value: v } })
+      openMenu(); fireEvent.click(await screen.findByRole('menuitem', { name: 'Queue' }))
+      expect((await screen.findByRole('alert')).textContent).toBe('Use one line that does not start with /')
+      expect(fetchMock).not.toHaveBeenCalled()
+    }
   })
 })

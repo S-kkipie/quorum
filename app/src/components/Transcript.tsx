@@ -1,11 +1,14 @@
-import { useEffect, useLayoutEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { useStickToBottomContext } from 'use-stick-to-bottom'
 import { Conversation, ConversationContent, ConversationScrollButton } from '@/components/ai-elements/conversation'
 import { Message, MessageContent, MessageResponse } from '@/components/ai-elements/message'
+import { PathLinksProvider } from '@/components/ai-elements/pathLinks'
 import { Shimmer } from '@/components/ai-elements/shimmer'
 import type { Event } from '../proto.gen'
+import { formatTokens } from '../lib/meters'
 import { buildTimeline } from '../lib/timeline'
 import ArtifactCard from './timeline/ArtifactCard'
+import PastedImages from './timeline/PastedImages'
 import ToolItem from './timeline/ToolItem'
 
 /**
@@ -42,27 +45,37 @@ function HistoryLoader({ firstSeq, hasMore, autoLoad, onLoadMore }: {
   return null
 }
 
-export default function Transcript({ events, base = '', machine = '', live, liveAgent, working, hasMore, autoLoad = true, onLoadMore, onOpenFile }: {
+export default function Transcript({ events, base = '', machine = '', sessionId = '', live, liveAgent, working, hasMore, autoLoad = true, onLoadMore, onOpenFile }: {
   autoLoad?: boolean
   events: Event[]
   /** session root, else cwd: decides which artifact cards can be opened */
   base?: string
   machine?: string
+  /** the session's id: pasted-image thumbnails ask the hub for links with it */
+  sessionId?: string
   live?: string
   liveAgent?: Record<string, string>
   /** the session is working: shows an indicator while no text streams */
   working?: boolean
   hasMore?: boolean
   onLoadMore?: () => void
-  /** opens a file of the session in the viewer */
-  onOpenFile?: (path: string) => void
+  /** opens a file of the session in the viewer (`images`: a pasted image) */
+  onOpenFile?: (path: string, o?: { images: true }) => void
 }) {
   const rows = useMemo(() => buildTimeline(events, base), [events, base])
   const last = events[events.length - 1]
   const thinking = last?.kind === 'thinking'
   const indicator = live ? '' : thinking ? 'Thinking…' : working ? 'Working…' : ''
 
+  // stable callback so answers do not re-render when the parent passes a fresh closure
+  const open = useRef(onOpenFile)
+  open.current = onOpenFile
+  const openPath = useCallback((p: string) => open.current?.(p), [])
+  const openImage = useCallback((p: string, o: { images: true }) => open.current?.(p, o), [])
+  const linkBase = onOpenFile ? base : ''
+
   return (
+    <PathLinksProvider base={linkBase} onOpen={openPath}>
     <Conversation className="min-h-0" initial="instant">
       <ConversationContent className="gap-0 px-3 py-2 sm:px-4">
         {hasMore && <button type="button" onClick={onLoadMore} className="mx-auto mb-2 block min-h-11 text-xs text-zinc-500 hover:text-zinc-300">Load earlier</button>}
@@ -70,13 +83,22 @@ export default function Transcript({ events, base = '', machine = '', live, live
           switch (r.t) {
             case 'user': return (
               <Message key={`u${r.seq}`} from="user" role="article" aria-label="You" className="my-3 max-w-[85%]">
-                <MessageContent className="whitespace-pre-wrap break-words text-zinc-100 group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:bg-blue-600/25 group-[.is-user]:px-3.5 group-[.is-user]:py-2">{r.text}</MessageContent>
+                <MessageContent className="whitespace-pre-wrap break-words text-zinc-100 group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:bg-blue-600/25 group-[.is-user]:px-3.5 group-[.is-user]:py-2">
+                  {r.text}
+                  {r.images && <PastedImages machine={machine} sessionId={sessionId} images={r.images} onOpen={onOpenFile ? openImage : undefined} />}
+                </MessageContent>
               </Message>
             )
             case 'assistant': return (
               <Message key={`m${r.seq}`} from="assistant" role="article" aria-label={r.agent ? 'Subagent' : 'Claude'} className={`my-2 max-w-full ${r.agent ? 'ml-5 w-auto opacity-70' : ''}`}>
                 <MessageContent className="w-full break-words text-zinc-200"><MessageResponse>{r.text}</MessageResponse></MessageContent>
               </Message>
+            )
+            case 'turn': return (
+              <div key={`n${r.seq}`} className="mb-2 flex flex-wrap gap-x-3 text-[11px] text-zinc-600">
+                {r.tokens && <span>{`↑${formatTokens(r.tokens.in)} ↓${formatTokens(r.tokens.out)} · cache ${formatTokens(r.tokens.cache)}`}</span>}
+                {/haiku/i.test(r.model) && <span>Answered by Haiku</span>}
+              </div>
             )
             case 'info': return <Message key={`i${r.seq}`} from="system" role="note" className="my-2 max-w-full text-center text-xs text-zinc-600">{r.text}</Message>
             case 'tool': case 'reads': return <ToolItem key={`t${r.seq}`} item={r} base={base} onOpenFile={onOpenFile} />
@@ -97,5 +119,6 @@ export default function Transcript({ events, base = '', machine = '', live, live
       <ConversationScrollButton aria-label="Scroll to bottom" className="size-11" />
       <HistoryLoader firstSeq={events[0]?.seq} hasMore={hasMore} autoLoad={autoLoad} onLoadMore={onLoadMore} />
     </Conversation>
+    </PathLinksProvider>
   )
 }

@@ -8,7 +8,7 @@ import type { Command } from '../src/proto.gen'
 const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve() }
 
 const cmd = (c: Partial<Command>): Command =>
-  ({ type: '', text: '', mode: '', askId: '', decision: '', reason: '', answers: null as never, ...c })
+  ({ type: '', text: '', mode: '', askId: '', decision: '', reason: '', answers: null as never, command: '', args: '', ...c })
 
 /** Fake `$`: records calls in order; sleep resolves manually with `fire`. */
 function fake(role = 'work') {

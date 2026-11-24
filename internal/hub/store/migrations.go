@@ -66,6 +66,15 @@ CREATE TABLE IF NOT EXISTS terminal_audit (
 CREATE TABLE IF NOT EXISTS away (
 	session TEXT PRIMARY KEY
 );
+CREATE TABLE IF NOT EXISTS account_usage (
+	account_key TEXT PRIMARY KEY,
+	alias TEXT NOT NULL DEFAULT '',
+	five_hour_pct REAL NOT NULL DEFAULT 0,
+	five_hour_resets TEXT NOT NULL DEFAULT '',
+	seven_day_pct REAL NOT NULL DEFAULT 0,
+	seven_day_resets TEXT NOT NULL DEFAULT '',
+	at INTEGER NOT NULL DEFAULT 0
+);
 `
 
 func migrate(s *Store) error {
@@ -132,6 +141,20 @@ func migrate(s *Store) error {
 		if _, err := s.db.Exec(`UPDATE sessions SET prompted=1 WHERE EXISTS (SELECT 1 FROM events e WHERE e.session=sessions.id AND e.kind=?)
 			OR (SELECT COUNT(*) FROM events e WHERE e.session=sessions.id)>=?`, string(proto.KindUser), maxEventsPerSession); err != nil {
 			return err
+		}
+	}
+	// Plan 6: account, plugins and token totals reported by the mod.
+	for _, c := range [][2]string{{"account", "TEXT NOT NULL DEFAULT ''"}, {"account_key", "TEXT NOT NULL DEFAULT ''"},
+		{"config_dir", "TEXT NOT NULL DEFAULT ''"}, {"plugins", "TEXT NOT NULL DEFAULT '[]'"},
+		{"context_estimate", "INTEGER NOT NULL DEFAULT 0"}, {"tokens", "TEXT NOT NULL DEFAULT '{}'"},
+		{"images_dir", "TEXT NOT NULL DEFAULT ''"}} { // Task 10: the session's pasted-images folder
+		if err := s.db.QueryRow(`SELECT count(*) FROM pragma_table_info('sessions') WHERE name=?`, c[0]).Scan(&n); err != nil {
+			return err
+		}
+		if n == 0 {
+			if _, err := s.db.Exec(`ALTER TABLE sessions ADD COLUMN ` + c[0] + ` ` + c[1]); err != nil {
+				return err
+			}
 		}
 	}
 	return migrateEnglishStatuses(s)

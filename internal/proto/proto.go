@@ -50,6 +50,59 @@ type SessionInfo struct {
 	// HerdrPane and HerdrWorkspace identify the herdr pane it runs in (empty outside herdr).
 	HerdrPane      string `json:"herdrPane"`
 	HerdrWorkspace string `json:"herdrWorkspace"`
+	// Account is the whoas alias the session runs under (or "default"). AccountKey is the first
+	// 16 hex of sha256("quorum-account:" + email-or-org); the email and org id themselves are never sent
+	// (empty when the identity is unavailable: the hub then falls back to machine/alias).
+	Account    string `json:"account"`
+	AccountKey string `json:"accountKey"`
+	// ConfigDir is the Claude config dir the session uses.
+	ConfigDir string `json:"configDir"`
+	// Plugins lists the enabled better-claude plugins (subset of after, time-machine, use-haiku,
+	// think-hard, image-preview, quick-peek).
+	Plugins []string `json:"plugins"`
+	// ContextEstimate is true when ContextPct is estimated rather than reported by Claude Code.
+	ContextEstimate bool `json:"contextEstimate"`
+	// Tokens are the session totals, RateLimits the last reported windows (reported at most once per 30 s).
+	Tokens     TokenCount  `json:"tokens"`
+	RateLimits []RateLimit `json:"rateLimits"`
+	// UsageAt is when RateLimits were measured (Unix ms, 0 when never). Every update re-sends the last
+	// RateLimits, so the hub saves them only when UsageAt is newer than what it has.
+	UsageAt int64 `json:"usageAt"`
+	// ImagesDir is the folder Claude Code stores this session's pasted images in
+	// (`<tmp>/claude-<uid>/<project dashed>/<id>/images`; empty when unknown). The hub only
+	// serves single image files from it, and only when its shape matches this session.
+	ImagesDir string `json:"imagesDir"`
+}
+
+// TokenCount sums token usage: In is uncached input, Out is output, Cache is cache read plus creation.
+type TokenCount struct {
+	In    int `json:"in"`
+	Out   int `json:"out"`
+	Cache int `json:"cache"`
+}
+
+// RateLimit is one rate-limit window: Kind is "five_hour" or "seven_day"; ResetsAt is ISO 8601 (may be empty).
+type RateLimit struct {
+	Kind        string  `json:"kind"`
+	PercentUsed float64 `json:"percentUsed"`
+	ResetsAt    string  `json:"resetsAt"`
+}
+
+// UsageWindow is one subscription window of an account: Pct 0-100, ResetsAt ISO 8601 (may be empty).
+type UsageWindow struct {
+	Pct      float64 `json:"pct"`
+	ResetsAt string  `json:"resetsAt"`
+}
+
+// AccountUsage is the subscription usage of one Claude account (shared by every session and machine
+// on it). Key is the accountKey, or machine + "/" + alias when the account identity is unavailable.
+// At is the report time in Unix milliseconds.
+type AccountUsage struct {
+	Key      string      `json:"key"`
+	Alias    string      `json:"alias"`
+	FiveHour UsageWindow `json:"fiveHour"`
+	SevenDay UsageWindow `json:"sevenDay"`
+	At       int64       `json:"at"`
 }
 
 type EventKind string
@@ -64,11 +117,12 @@ const (
 	KindAsk            EventKind = "ask"
 	KindAskResolved    EventKind = "ask_resolved"
 	KindTurnStart      EventKind = "turn_start"
-	KindTurnEnd        EventKind = "turn_end"
-	KindStatus         EventKind = "status"
-	KindAgentStart     EventKind = "agent_start"
-	KindAgentEnd       EventKind = "agent_end"
-	KindInfo           EventKind = "info"
+	// KindTurnEnd data: {answer, reason, outputTokens, tokens: TokenCount, model: string}.
+	KindTurnEnd    EventKind = "turn_end"
+	KindStatus     EventKind = "status"
+	KindAgentStart EventKind = "agent_start"
+	KindAgentEnd   EventKind = "agent_end"
+	KindInfo       EventKind = "info"
 	// KindTicket is emitted by the mod with /quorum ticket <id>: data {ticket:"<externalId>"}; empty = unlink.
 	KindTicket EventKind = "ticket"
 )
@@ -131,17 +185,21 @@ type AgentEnd struct {
 
 // Command is an order addressed to a session.
 type Command struct {
-	Type     string            `json:"type"` // prompt|decide|abort|close
+	Type     string            `json:"type"` // prompt|decide|abort|close|plugin
 	Text     string            `json:"text"`
 	Mode     string            `json:"mode"` // now|queue|interrupt
 	AskID    string            `json:"askId"`
 	Decision string            `json:"decision"` // allow|deny
 	Reason   string            `json:"reason"`
 	Answers  map[string]string `json:"answers"`
+	Command  string            `json:"command"` // plugin: after|before|timeline
+	Args     string            `json:"args"`    // plugin: everything after the command name
 }
 
 // Envelope is the WS wrapper daemon<->hub and hub<->app.
-// Type: hello|session_upsert|session_gone|session_removed|event|events|command|launch|launch_result|machine_status|backfill|backfill_result|ack|project_upsert|tickets|session_ticket|proposal_upsert|workspace_upsert|workspace_gone|project_gone
+// Type: hello|session_upsert|session_gone|session_removed|event|events|command|launch|launch_result|machine_status|backfill|backfill_result|ack|project_upsert|tickets|session_ticket|proposal_upsert|workspace_upsert|workspace_gone|project_gone|usage_upsert|usage_gone
+// usage_upsert (hub->app): Payload AccountUsage, when an account's usage changes; GET /api/usage lists them.
+// usage_gone (hub->app): Payload {key}; a machine/alias fallback row was superseded by the account's real key.
 // session_gone (hub->app): the session was closed (state closed). session_removed (hub->app): the session closed without ever receiving a user prompt and was deleted; Envelope.Session is the id.
 // workspace_upsert|workspace_gone (hub->app): Payload Workspace (for gone only the id matters); the initial snapshot carries one workspace_upsert per workspace.
 // project_gone (hub->app): Payload {id}.

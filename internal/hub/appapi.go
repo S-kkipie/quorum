@@ -214,8 +214,11 @@ func (s *Server) routes() {
 	dev := func(pattern string, f http.HandlerFunc) { s.mux.Handle(pattern, s.requireDevice(f)) }
 	dev("GET /api/machines", s.handleMachines)
 	dev("GET /api/sessions", s.handleSessions)
+	dev("GET /api/usage", s.handleUsage)
 	dev("GET /api/sessions/{id}/events", s.handleEvents)
 	dev("POST /api/sessions/{id}/prompt", s.handlePrompt)
+	dev("GET /api/sessions/{id}/plugins/{plugin}", s.handlePluginState)
+	dev("POST /api/sessions/{id}/plugin", s.handlePluginCommand)
 	dev("POST /api/sessions/{id}/decide", s.handleDecide)
 	dev("POST /api/sessions/{id}/abort", s.handleSimple("abort"))
 	dev("POST /api/sessions/{id}/close", s.handleSimple("close"))
@@ -266,6 +269,15 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 	}
 	if list == nil {
 		list = []proto.SessionInfo{}
+	}
+	writeJSON(w, 200, list)
+}
+
+func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
+	list, err := s.st.ListUsage(s.hub.now().UnixMilli())
+	if err != nil {
+		apiErr(w, 500, "internal error")
+		return
 	}
 	writeJSON(w, 200, list)
 }

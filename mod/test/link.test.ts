@@ -388,3 +388,28 @@ test('same version (or not reported): no warning', async () => {
   expect(link.versionWarning).toBe('')
   link.stop()
 })
+
+test('update() during the first register in flight causes exactly one follow-up register', async () => {
+  const f = fake()
+  let release: () => void = () => {}
+  const gate = new Promise<void>(r => { release = r })
+  let n = 0
+  f.setFetch(async url => {
+    if (url.endsWith('/register') && n++ === 0) await gate
+    return { status: 204 }
+  })
+  const link = new Link(f.io)
+  const started = link.start(INFO)
+  await tick()
+  link.update({ account: 'work' } as never)
+  release()
+  await started
+  await f.advance(100)
+  const regs = f.posts.filter(p => p.url.endsWith('/register'))
+  expect(regs).toHaveLength(2)
+  expect(regs[0].body.account).toBeUndefined()
+  expect(regs[1].body.account).toBe('work')
+  await f.advance(5000)
+  expect(f.posts.filter(p => p.url.endsWith('/register'))).toHaveLength(2)
+  link.stop()
+})

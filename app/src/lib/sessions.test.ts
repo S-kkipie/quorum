@@ -5,7 +5,7 @@ import type { Conversation, SessionInfo, Envelope } from '../proto.gen'
 
 const sess = (id: string, o: Partial<SessionInfo> = {}): SessionInfo => ({
   id, recap: '', previousId: '', machine: 'vps-1', name: id, cwd: '/w/app', root: '/w/app', model: '', role: 'work',
-  state: 'idle', contextPct: 0, startedAt: 1, updatedAt: 1, transcriptPath: '', repoUrl: '', branch: '', projectId: '', launchReq: '', herdrPane: '', herdrWorkspace: '', ...o,
+  state: 'idle', contextPct: 0, startedAt: 1, updatedAt: 1, transcriptPath: '', repoUrl: '', branch: '', projectId: '', launchReq: '', herdrPane: '', herdrWorkspace: '', account: '', accountKey: '', configDir: '', plugins: [], contextEstimate: false, tokens: { in: 0, out: 0, cache: 0 }, rateLimits: [], usageAt: 0, imagesDir: '', ...o,
 })
 const conv = (id: string, o: Partial<Conversation> = {}): Conversation => ({ id, title: '', firstPrompt: '', messages: 1, updatedAt: 1, open: false, ...o })
 

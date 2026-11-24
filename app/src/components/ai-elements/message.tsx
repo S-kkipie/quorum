@@ -24,7 +24,8 @@ import {
   useMemo,
   useState,
 } from "react";
-import { Streamdown } from "streamdown";
+import { Streamdown, defaultRehypePlugins } from "streamdown";
+import { PathSpan, rehypePathLinks, usePathLinks } from "./pathLinks";
 
 export type MessageProps = HTMLAttributes<HTMLDivElement> & {
   from: UIMessage["role"];
@@ -344,6 +345,7 @@ const safeComponents: NonNullable<ComponentProps<typeof Streamdown>["components"
       <span className="text-muted-foreground">{label}</span>
     );
   },
+  span: PathSpan,
 };
 
 export const MessageResponse = memo(
@@ -357,6 +359,16 @@ export const MessageResponse = memo(
         live = false;
       };
     }, []);
+    // Tappable file paths: only when a PathLinksProvider is above (the Session screen).
+    const links = usePathLinks();
+    const base = links?.base;
+    const rehypePlugins = useMemo(
+      () =>
+        base
+          ? [...Object.values(defaultRehypePlugins), [rehypePathLinks, { base }] as const]
+          : undefined,
+      [base]
+    );
     return (
       <Streamdown
         className={cn(
@@ -364,6 +376,7 @@ export const MessageResponse = memo(
           className
         )}
         components={safeComponents}
+        rehypePlugins={rehypePlugins as MessageResponseProps["rehypePlugins"]}
         plugins={plugins}
         linkSafety={{ enabled: false }}
         skipHtml

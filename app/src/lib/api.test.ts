@@ -6,7 +6,7 @@ vi.stubGlobal('localStorage', {
   setItem: (k: string, v: string) => { mem[k] = v },
   removeItem: (k: string) => { delete mem[k] },
 })
-import { apiFetch, setHub, getToken } from './api'
+import { apiFetch, setHub, getToken, pluginState, pluginCommand } from './api'
 
 beforeEach(() => { for (const k in mem) delete mem[k]; setHub('http://h:1/', 'tok') })
 
@@ -104,5 +104,29 @@ describe('createView', () => {
     expect(u).toBe('http://h:1/api/machines/vps%201/views')
     expect(init.method).toBe('POST')
     expect(JSON.parse(init.body)).toEqual({ sessionId: 's1', path: '/p/x.html' })
+  })
+})
+
+describe('plugin helpers', () => {
+  it('pluginState GETs the plugin path and returns the raw value', async () => {
+    const f = vi.fn(async () => new Response('[{"text":"a"}]', { status: 200 }))
+    vi.stubGlobal('fetch', f)
+    await expect(pluginState('s 1', 'time-machine')).resolves.toEqual([{ text: 'a' }])
+    expect((f.mock.calls[0] as any)[0]).toBe('http://h:1/api/sessions/s%201/plugins/time-machine')
+  })
+  it('pluginState resolves null', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('null', { status: 200 })))
+    await expect(pluginState('s1', 'after')).resolves.toBe(null)
+  })
+  it('pluginCommand POSTs command and args; 204 resolves; errors carry the hub message', async () => {
+    const f = vi.fn(async () => new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', f)
+    await expect(pluginCommand('s1', 'after', 'fix it')).resolves.toBe(undefined)
+    const [u, init] = f.mock.calls[0] as any
+    expect(u).toBe('http://h:1/api/sessions/s1/plugin')
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(init.body)).toEqual({ command: 'after', args: 'fix it' })
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{"error":"/timeline takes undo, redo or a state number"}', { status: 400 })))
+    await expect(pluginCommand('s1', 'timeline', 'x')).rejects.toThrow('/timeline takes')
   })
 })

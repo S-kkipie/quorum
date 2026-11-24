@@ -1,6 +1,7 @@
 import { summarize } from './events'
 import type { Link } from './link'
 import { permissionRace } from './permission'
+import { validatePluginCommand } from './plugincmd'
 import type { Ask, Command } from './proto.gen'
 
 // the permission race lives in permission.ts; its caps are re-exported here
@@ -116,6 +117,8 @@ export type ControlDeps = {
   exit: () => Promise<unknown>
   /** `$.clock.sleep(ms)` */
   sleep: (ms: number) => Promise<void>
+  /** `runPluginCommand` (plugincmd.ts) over `$`: an allow-listed plugin slash command. */
+  runPlugin?: (command: string, args: string) => Promise<{ ok: boolean; error?: string }>
   newId?: () => string
 }
 
@@ -269,6 +272,16 @@ export function makeControl(deps: ControlDeps) {
         case 'decide':
           asks.resolve(c.askId, { decision: c.decision, reason: c.reason, answers: c.answers ?? null })
           return
+        case 'plugin': {
+          const command = c.command ?? ''
+          const args = c.args ?? ''
+          const bad = validatePluginCommand(command, args)
+          if (bad) { info(bad); return }
+          if (!deps.runPlugin) { info('Plugin commands are not available in this session'); return }
+          const r = await deps.runPlugin(command, args).catch(err => ({ ok: false, error: String((err as Error)?.message ?? err) }))
+          if (!r.ok) info(r.error ?? `Could not run /${command}`)
+          return
+        }
       }
     },
 

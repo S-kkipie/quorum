@@ -1,4 +1,5 @@
 import type { Link } from './link'
+import { sumTokens } from './meters'
 import { trimInput } from './trim'
 
 export const ERROR_ANSWER =
@@ -39,7 +40,7 @@ type Done = {
   reason?: string
   isAborted?: boolean
   agentId?: string
-  usage?: { output_tokens?: number }
+  usage?: { output_tokens?: number; input_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number; model?: string }
 }
 
 /**
@@ -67,12 +68,15 @@ export function makeHandlers(
   }
 
   return {
-    turnStart(e: { text: string; agentId?: string }): void {
+    /** `images`: the pasted images the prompt names that exist on disk (see images.ts). */
+    turnStart(e: { text: string; agentId?: string; images?: Array<{ n: number; path: string }> }): void {
       if (e.agentId !== undefined) return
       safe(l => {
         if (full(l)) {
           l.emit({ kind: 'turn_start', data: {} })
-          if (!opts.fromDevice?.(e.text)) l.emit({ kind: 'user', data: { text: e.text } })
+          if (!opts.fromDevice?.(e.text)) {
+            l.emit({ kind: 'user', data: e.images?.length ? { text: e.text, images: e.images } : { text: e.text } })
+          }
         }
         status(l, 'working')
       })
@@ -144,7 +148,10 @@ export function makeHandlers(
           const answer = e.reason === 'error' && !(e.answer ?? '').trim() ? ERROR_ANSWER : (e.answer ?? '')
           l.emit({
             kind: 'turn_end',
-            data: { answer: answer.slice(0, TURN_ANSWER_MAX), reason: e.reason ?? 'answer', outputTokens: e.usage?.output_tokens ?? 0 },
+            data: {
+              answer: answer.slice(0, TURN_ANSWER_MAX), reason: e.reason ?? 'answer', outputTokens: e.usage?.output_tokens ?? 0,
+              tokens: sumTokens(e.usage), model: e.usage?.model ?? '',
+            },
           })
         }
         status(l, 'idle')

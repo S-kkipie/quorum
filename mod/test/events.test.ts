@@ -57,7 +57,7 @@ test('simulated turn: exact event sequence', async () => {
   const ts = f.evs.find(e => e.kind === 'tool_start')!
   expect(ts.data).toEqual({ id: 't1', name: 'Bash', summary: 'ls', input: { command: 'ls' } })
   expect(f.evs.find(e => e.kind === 'tool_end')!.data.output.length).toBe(8000)
-  expect(f.evs.find(e => e.kind === 'turn_end')!.data).toEqual({ answer: 'listo', reason: 'answer', outputTokens: 7 })
+  expect(f.evs.find(e => e.kind === 'turn_end')!.data).toEqual({ answer: 'listo', reason: 'answer', outputTokens: 7, tokens: { in: 0, out: 7, cache: 0 }, model: '' })
   await flush()
   expect(f.updates).toEqual([{ state: 'working' }, { state: 'idle' }, { contextPct: 42 }])
 })
@@ -223,4 +223,21 @@ test('tool_start carries input', () => {
   const ts = f.evs.find(e => e.kind === 'tool_start')!
   expect(ts.data.input).toEqual({ file_path: '/f', old_string: 'a', new_string: 'b' })
   expect(ts.data.id).toBe('t9')
+})
+
+test('turn_end carries the turn tokens and model', () => {
+  const f = fakeLink()
+  makeHandlers(() => f.link).turnComplete({
+    answer: 'ok', usage: { input_tokens: 1000, output_tokens: 200, cache_read_input_tokens: 50, cache_creation_input_tokens: 25, model: 'm-1' },
+  })
+  expect(f.evs.find(e => e.kind === 'turn_end')!.data).toMatchObject({ tokens: { in: 1000, out: 200, cache: 75 }, model: 'm-1' })
+})
+
+test('turnStart: the user event carries images only when there are some', () => {
+  const f = fakeLink()
+  const h = makeHandlers(() => f.link)
+  h.turnStart({ text: 'see [Image #1]', images: [{ n: 1, path: '/tmp/claude-1000/-a/S1/images/1.png' }] })
+  h.turnStart({ text: 'plain', images: [] })
+  const users = f.evs.filter(e => e.kind === 'user').map(e => e.data)
+  expect(users).toEqual([{ text: 'see [Image #1]', images: [{ n: 1, path: '/tmp/claude-1000/-a/S1/images/1.png' }] }, { text: 'plain' }])
 })

@@ -214,23 +214,31 @@ func (s *Store) SaveSession(si proto.SessionInfo) (applied string, err error) {
 		}
 	}
 	var res sql.Result
+	pluginsJSON, _ := json.Marshal(append([]string{}, si.Plugins...))
+	tokensJSON, _ := json.Marshal(si.Tokens)
 	// previous_id persists the latest rename (/clear, /resume) so an app that
 	// was disconnected sees it in the snapshot or the REST API; an empty one does not clear it.
 	// An empty recap does not clear the stored one either (upsert without a recap yet), except in a
 	// rename (/clear): the moved row is the previous conversation's.
 	// launch_req and the herdr pane are always replaced: the live process sends them.
 	res, err = tx.Exec(`INSERT INTO sessions(id,machine,name,cwd,root,model,role,state,context_pct,started_at,updated_at,previous_id,recap,
-		launch_req,herdr_pane,herdr_workspace)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		launch_req,herdr_pane,herdr_workspace,account,account_key,config_dir,plugins,context_estimate,tokens,images_dir)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET machine=excluded.machine, name=excluded.name, cwd=excluded.cwd,
 		root=excluded.root, model=excluded.model, role=excluded.role, state=excluded.state,
 		context_pct=excluded.context_pct, started_at=excluded.started_at, updated_at=excluded.updated_at,
 		launch_req=excluded.launch_req, herdr_pane=excluded.herdr_pane, herdr_workspace=excluded.herdr_workspace,
+		account=CASE WHEN excluded.account<>'' THEN excluded.account ELSE sessions.account END,
+		account_key=CASE WHEN excluded.account_key<>'' THEN excluded.account_key ELSE sessions.account_key END,
+		config_dir=CASE WHEN excluded.config_dir<>'' THEN excluded.config_dir ELSE sessions.config_dir END,
+		plugins=CASE WHEN excluded.plugins<>'[]' THEN excluded.plugins ELSE sessions.plugins END,
+		context_estimate=excluded.context_estimate, tokens=excluded.tokens, images_dir=excluded.images_dir,
 		recap=CASE WHEN excluded.recap<>'' OR ? THEN excluded.recap ELSE sessions.recap END,
 		previous_id=CASE WHEN excluded.previous_id<>'' THEN excluded.previous_id ELSE sessions.previous_id END
 		WHERE sessions.machine=excluded.machine`,
 		si.ID, si.Machine, si.Name, si.Cwd, si.Root, si.Model, string(si.Role), string(si.State),
-		si.ContextPct, si.StartedAt, si.UpdatedAt, prev, si.Recap, si.LaunchReq, si.HerdrPane, si.HerdrWorkspace, prev != "")
+		si.ContextPct, si.StartedAt, si.UpdatedAt, prev, si.Recap, si.LaunchReq, si.HerdrPane, si.HerdrWorkspace,
+		si.Account, si.AccountKey, si.ConfigDir, string(pluginsJSON), b2i(si.ContextEstimate), string(tokensJSON), si.ImagesDir, prev != "")
 	if err != nil {
 		return "", err
 	}
@@ -333,7 +341,28 @@ const sessionCols = `s.id,s.machine,s.name,s.cwd,s.root,s.model,s.role,s.state,s
 	COALESCE((SELECT c.repo_url FROM checkouts c WHERE c.machine=s.machine AND c.root=s.root),''),
 	COALESCE((SELECT c.branch FROM checkouts c WHERE c.machine=s.machine AND c.root=s.root),''),
 	COALESCE((SELECT c.project_id FROM checkouts c WHERE c.machine=s.machine AND c.root=s.root),''),
-	s.launch_req,s.herdr_pane,s.herdr_workspace`
+	s.launch_req,s.herdr_pane,s.herdr_workspace,
+	s.account,s.account_key,s.config_dir,s.plugins,s.context_estimate,s.tokens,s.images_dir`
+
+// scanDest returns the Scan destinations for sessionCols; finish must run after a successful Scan.
+func scanDest(si *proto.SessionInfo, role, state, plugins, tokens *string, ctxEst *int) []any {
+	return []any{&si.ID, &si.Machine, &si.Name, &si.Cwd, &si.Root, &si.Model, role, state,
+		&si.ContextPct, &si.StartedAt, &si.UpdatedAt, &si.PreviousID, &si.Recap, &si.RepoURL, &si.Branch, &si.ProjectID,
+		&si.LaunchReq, &si.HerdrPane, &si.HerdrWorkspace,
+		&si.Account, &si.AccountKey, &si.ConfigDir, plugins, ctxEst, tokens, &si.ImagesDir}
+}
+
+func finishSession(si *proto.SessionInfo, role, state, plugins, tokens string, ctxEst int) {
+	si.Role, si.State = proto.Role(role), proto.SessionState(state)
+	si.ContextEstimate = ctxEst != 0
+	si.Plugins = []string{}
+	_ = json.Unmarshal([]byte(plugins), &si.Plugins)
+	if si.Plugins == nil {
+		si.Plugins = []string{}
+	}
+	_ = json.Unmarshal([]byte(tokens), &si.Tokens)
+	si.RateLimits = []proto.RateLimit{} // usage lives in account_usage, not on the session
+}
 
 func (s *Store) ListSessions(includeClosed bool) ([]proto.SessionInfo, error) {
 	q := `SELECT ` + sessionCols + ` FROM sessions s`
@@ -349,13 +378,12 @@ func (s *Store) ListSessions(includeClosed bool) ([]proto.SessionInfo, error) {
 	var out []proto.SessionInfo
 	for rows.Next() {
 		var si proto.SessionInfo
-		var role, state string
-		if err := rows.Scan(&si.ID, &si.Machine, &si.Name, &si.Cwd, &si.Root, &si.Model, &role, &state,
-			&si.ContextPct, &si.StartedAt, &si.UpdatedAt, &si.PreviousID, &si.Recap, &si.RepoURL, &si.Branch, &si.ProjectID,
-			&si.LaunchReq, &si.HerdrPane, &si.HerdrWorkspace); err != nil {
+		var role, state, plugins, tokens string
+		var ctxEst int
+		if err := rows.Scan(scanDest(&si, &role, &state, &plugins, &tokens, &ctxEst)...); err != nil {
 			return nil, err
 		}
-		si.Role, si.State = proto.Role(role), proto.SessionState(state)
+		finishSession(&si, role, state, plugins, tokens, ctxEst)
 		out = append(out, si)
 	}
 	return out, rows.Err()
@@ -752,15 +780,16 @@ func (s *Store) CloseMachineSessionsExcept(machine string, keep []string) ([]str
 // Session returns session id, or ErrNotFound if it does not exist.
 func (s *Store) Session(id string) (proto.SessionInfo, error) {
 	var si proto.SessionInfo
-	var role, state string
+	var role, state, plugins, tokens string
+	var ctxEst int
 	err := s.db.QueryRow(`SELECT `+sessionCols+` FROM sessions s WHERE s.id=?`, id).
-		Scan(&si.ID, &si.Machine, &si.Name, &si.Cwd, &si.Root, &si.Model, &role, &state,
-			&si.ContextPct, &si.StartedAt, &si.UpdatedAt, &si.PreviousID, &si.Recap, &si.RepoURL, &si.Branch, &si.ProjectID,
-			&si.LaunchReq, &si.HerdrPane, &si.HerdrWorkspace)
+		Scan(scanDest(&si, &role, &state, &plugins, &tokens, &ctxEst)...)
 	if errors.Is(err, sql.ErrNoRows) {
 		return si, ErrNotFound
 	}
-	si.Role, si.State = proto.Role(role), proto.SessionState(state)
+	if err == nil {
+		finishSession(&si, role, state, plugins, tokens, ctxEst)
+	}
 	return si, err
 }
 

@@ -2,9 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { ChevronLeft, MonitorPlay, MoreHorizontal, Plus, Square, XCircle } from 'lucide-react'
 import AskCard from '../components/AskCard'
 import Composer from '../components/Composer'
+import QueueSection from '../components/QueueSection'
+import TimelineSection from '../components/TimelineSection'
 import StatePill from '../components/StatePill'
 import Transcript from '../components/Transcript'
 import { abortSession, closeSession, listEvents } from '../lib/api'
+import { contextTone, formatTokens, toneClass } from '../lib/meters'
 import { launchIn, loadPrefs } from '../lib/launch'
 import type { AppState } from '../lib/store'
 import { sessionTitle } from '../lib/title'
@@ -38,7 +41,7 @@ export default function Session({ state, id, onBack, onEvents, onGuard, busy = f
   busy?: boolean
   onViewTerminal?: (machine: string, pane: string) => void
   /** opens a file of the session in the viewer */
-  onOpenFile?: (machine: string, path: string) => void
+  onOpenFile?: (machine: string, path: string, o?: { images: true }) => void
 }) {
   const s = state.sessions[id]
   const narrow = useNarrow()
@@ -93,6 +96,9 @@ export default function Session({ state, id, onBack, onEvents, onGuard, busy = f
   const asks = Object.values(state.asks).filter((a) => a.session === id && !dismissed[a.askId])
   const closed = s.state === 'closed'
   const item = 'min-h-11 gap-2.5 px-3'
+  const ctxTone = contextTone(s.contextPct)
+  const tokens = s.tokens && s.tokens.in + s.tokens.out > 0 ? `↑${formatTokens(s.tokens.in)} ↓${formatTokens(s.tokens.out)}` : ''
+  const meters = !!(s.account || s.contextPct > 0 || tokens)
   const sub = [s.machine, s.model, s.branch].filter(Boolean).join(' · ')
 
   return (
@@ -134,10 +140,14 @@ export default function Session({ state, id, onBack, onEvents, onGuard, busy = f
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
-        {(sub || narrow) && (
-          <div className="flex min-w-0 items-center gap-2 pb-1 pl-2.5">
+        {(sub || narrow || meters) && (
+          // wraps at 320 px: pill + subtitle + account + ctx + tokens never overflow the header
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 pb-1 pl-2.5 text-xs text-zinc-500">
             {narrow && <StatePill state={s.state} />}
-            {sub && <span className="min-w-0 truncate text-xs text-zinc-500">{sub}</span>}
+            {sub && <span className="min-w-0 max-w-full shrink truncate">{sub}</span>}
+            {s.account && <span className="max-w-24 shrink-0 truncate rounded bg-zinc-800 px-1.5 text-zinc-300">{s.account}</span>}
+            {s.contextPct > 0 && <span data-tone={ctxTone} className={`shrink-0 ${toneClass[ctxTone]}`}>{`ctx ${s.contextEstimate ? '~' : ''}${Math.round(s.contextPct)}%`}</span>}
+            {tokens && <span className="shrink-0">{tokens}</span>}
           </div>
         )}
       </header>
@@ -146,15 +156,21 @@ export default function Session({ state, id, onBack, onEvents, onGuard, busy = f
         events={events}
         base={s.root || s.cwd}
         machine={s.machine}
+        sessionId={id}
         live={state.live[id]}
         liveAgent={state.liveAgent[id]}
         working={s.state === 'working'}
         hasMore={hasMore}
         autoLoad={!failed}
         onLoadMore={() => oldest.current !== undefined && load(oldest.current)}
-        onOpenFile={onOpenFile ? (path) => onOpenFile(s.machine, path) : undefined}
+        onOpenFile={onOpenFile ? (path, o) => (o ? onOpenFile(s.machine, path, o) : onOpenFile(s.machine, path)) : undefined}
       />
       {asks.map((a) => <AskCard key={a.askId} session={id} ask={a} onDone={() => setDismissed((d) => ({ ...d, [a.askId]: true }))} />)}
+      {/* one row for the plugin sections (hidden when neither shows): Timeline and Queue side by side */}
+      <div data-testid="plugin-bar" className="flex flex-wrap border-t border-zinc-800 bg-zinc-950 empty:hidden">
+        <TimelineSection session={s} events={events} />
+        <QueueSection session={s} events={events} />
+      </div>
       <Composer session={s} />
     </div>
   )

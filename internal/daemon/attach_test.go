@@ -128,3 +128,15 @@ func TestRunAttachStreamErrorExitCode(t *testing.T) {
 	require.Contains(t, out.String(), "ping")
 	require.NotEmpty(t, errb.String())
 }
+
+// The daemon relays every command type unfiltered; plugin commands reach the mod intact.
+func TestAttachForwardsPluginCommand(t *testing.T) {
+	reg, srv := newTestAPI(t)
+	_, rd := openAttach(t, context.Background(), srv.URL, "tok")
+	require.True(t, reg.Send("s1", proto.Command{Type: "plugin", Command: "timeline", Args: "undo"}))
+	l, err := rd.ReadString('\n')
+	require.NoError(t, err)
+	var c proto.Command
+	require.NoError(t, json.Unmarshal([]byte(l), &c))
+	require.Equal(t, proto.Command{Type: "plugin", Command: "timeline", Args: "undo"}, c)
+}

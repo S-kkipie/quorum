@@ -1,12 +1,16 @@
 import type { Register } from 'claude-code'
 
+import { configDirFrom, enabledPlugins, makeAccountLookup, accountKey } from '../src/account'
 import { optional } from '../src/compat'
 import { type Control, makeControl } from '../src/control'
 import { type Hold, makeHold } from '../src/hold'
 import { TERM_ALLOW, TERM_DENY } from '../src/permission'
-import { contextPct, fromPlugin, makeHandlers, stepHook, toolHook } from '../src/events'
+import { runPluginCommand } from '../src/plugincmd'
+import { fromPlugin, makeHandlers, stepHook, toolHook } from '../src/events'
+import { imageIds, makeImageFinder } from '../src/images'
 import { makeIO } from '../src/io'
 import { Link } from '../src/link'
+import { contextOf, Meters } from '../src/meters'
 import { Recap } from '../src/recap'
 import { detectRepo, makeBranchRefresher, type RepoDeps } from '../src/repo'
 import { detectRole } from '../src/role'
@@ -15,16 +19,22 @@ import { detectRole } from '../src/role'
 // via `quorum.link`.
 // `control` (Task 10) also lives here: it is built in session.start with closures over `$`
 // (the mod compiler does not allow storing `$` in a module variable).
-export const quorum: { link?: Link; control?: Control; recap?: Recap } = {}
+export const quorum: { link?: Link; control?: Control; recap?: Recap; images?: ReturnType<typeof makeImageFinder> } = {}
 
 // once per session (warns only once if hold fails): session.start creates a new one
 let hold: Hold | undefined
 
+// the images folder last reported in the register (re-sent only when it changes)
+let imagesDirSent = ''
+// how long turn.start may wait for the pasted-image lookup
+const IMAGES_DEADLINE_MS = 300
 // last main-thread prompt and whether the first one was seen (for the recap)
 let lastPrompt = ''
 let firstSeen = false
 // branch refresh (at most once per minute) when a turn ends
 let branchRefresh: { seed(b: string): void; refresh(): Promise<void> } | undefined
+// token totals and throttled usage reports of the current session
+let meters: Meters | undefined
 
 /** `/quorum ticket 41` -> '41'; `/quorum ticket -` -> ''; other command -> undefined. */
 export function ticketArg(args: string): string | undefined {
@@ -52,8 +62,10 @@ export const register: Register = on => {
       quorum.link = undefined
       quorum.control = undefined
       quorum.recap = undefined
+      quorum.images = undefined
       hold = undefined
       branchRefresh = undefined
+      meters = undefined
       return started
     }
     hold = makeHold({
@@ -67,6 +79,7 @@ export const register: Register = on => {
     branchRefresh = undefined
     const link = new Link(makeIO($))
     quorum.link = link
+    meters = new Meters({ now: () => Date.now(), update: p => link.update(p) })
     const control = makeControl({
       getLink: () => link,
       submit: text => $.prompt.submit({ text, asUser: true }),
@@ -74,12 +87,15 @@ export const register: Register = on => {
       stopTask: id => $.tool.call({ tool: 'TaskStop', task_id: id } as never),
       exit: () => $.command.run({ command: 'exit', args: '' } as never),
       sleep: ms => $.clock.sleep(ms),
+      runPlugin: (command, args) => runPluginCommand({
+        commandRun: (c, a) => $.command.run({ command: c, args: a }),
+      }, command, args),
     })
     quorum.control = control
     // recap (session name) with Haiku, only in work sessions; without $.model.complete there is no recap
     quorum.recap = undefined
     link.onCommand(c => { void control.handle(c).catch(() => {}) })
-    const [id, cwd, root, model, ccapi, sinfo, launchReq, herdrPane, herdrWorkspace] = await Promise.all([
+    const [id, cwd, root, model, ccapi, sinfo, launchReq, herdrPane, herdrWorkspace, envDir, home] = await Promise.all([
       // optional: an API missing in this Claude Code version does not abort registration
       optional(() => $.session.id(), ''),
       optional(() => $.session.cwd(), ''),
@@ -91,7 +107,13 @@ export const register: Register = on => {
       optional(() => $.env.get('QUORUM_LAUNCH_REQ'), ''),
       optional(() => $.env.get('HERDR_PANE_ID'), ''),
       optional(() => $.env.get('HERDR_WORKSPACE_ID'), ''),
+      optional(() => $.env.get('CLAUDE_CONFIG_DIR'), ''),
+      optional(() => $.env.get('HOME'), ''),
     ])
+    const configDir = configDirFrom(envDir, home)
+    const plugins = configDir
+      ? enabledPlugins(await optional(() => $.fs.read(`${configDir}/settings.json`) as Promise<string>, ''))
+      : []
     const r = detectRole(k => (k === 'CCAPI_SERVER' ? ccapi : undefined))
     const now = Date.now()
     if (r.role === 'work') {
@@ -118,7 +140,43 @@ export const register: Register = on => {
       role: r.role, state: 'idle', contextPct: 0, startedAt: now, updatedAt: now,
       transcriptPath: String(sinfo?.transcriptPath ?? ''), recap: '', repoUrl: '', branch: '', projectId: '',
       launchReq: launchReq ?? '', herdrPane: herdrPane ?? '', herdrWorkspace: herdrWorkspace ?? '',
+      account: '', accountKey: '', configDir, plugins, contextEstimate: false,
+      tokens: { in: 0, out: 0, cache: 0 }, rateLimits: [], usageAt: 0, imagesDir: '',
     }).catch(() => {})
+    // pasted images (`[Image #N]`): Claude Code's per-session temp folder. Windows has no uid
+    // and another layout: the feature stays off there.
+    const isWindows = (sinfo as { platform?: string } | undefined)?.platform === 'windows'
+    quorum.images = isWindows ? undefined : makeImageFinder({
+      tmpRoot: () => optional(() => $.env.get('CLAUDE_CODE_TMPDIR'), undefined),
+      uid: async () => {
+        const r = await $.process.run(['id', '-u'], { timeoutMs: 3000 })
+        const out = String(r.stdout ?? '').trim()
+        return r.exitCode === 0 && /^\d{1,10}$/.test(out) ? Number(out) : undefined
+      },
+      projects: [root || cwd, cwd],
+      sessionId: () => link.sessionId,
+      list: dir => $.fs.list(dir),
+    })
+    imagesDirSent = ''
+    void quorum.images?.dir().then(dir => {
+      if (dir && quorum.link === link) { imagesDirSent = dir; link.update({ imagesDir: dir }) }
+    }).catch(() => {})
+    // account (whoas alias + hashed identity) resolves without blocking the registration
+    const lookup = makeAccountLookup({
+      run: async (argv, dir) => {
+        const r = await $.process.run(argv, dir ? { cwd: dir, timeoutMs: 3000 } : { timeoutMs: 3000 })
+        return r.exitCode === 0 ? String(r.stdout) : ''
+      },
+    })
+    void (async () => {
+      const [account, ident] = await Promise.all([
+        lookup(cwd || root || '').catch(() => 'default'),
+        optional(() => $.session.identity(), undefined),
+      ])
+      // only the hash leaves this function: the email / organization id are never stored or sent
+      const idValue = ident?.email || ident?.organizationId || ''
+      link.update({ account, accountKey: idValue ? await accountKey(idValue) : '' })
+    })().catch(() => {})
     // repo and branch go separately (git can be slow): detected without blocking and sent with update
     const repoDeps: RepoDeps = {
       repo: () => ($.session as unknown as { repo: RepoDeps['repo'] }).repo(),
@@ -138,7 +196,19 @@ export const register: Register = on => {
 
   on('turn.start', async ($, e, next) => {
     quorum.control?.turnStart(e)
-    h.turnStart(e)
+    let images: Array<{ n: number; path: string }> | undefined
+    const finder = quorum.images
+    if (e.agentId === undefined && finder && imageIds(e.text).length) {
+      // a few local file system calls, never more than IMAGES_DEADLINE_MS of the turn; the folder
+      // found is reported so the hub can serve from it
+      const r = await Promise.race([
+        finder.find(e.text, dir => $.fs.list(dir)).catch(() => undefined),
+        optional(() => $.clock.sleep(IMAGES_DEADLINE_MS), undefined).then(() => undefined),
+      ])
+      if (r?.dir && r.dir !== imagesDirSent) { imagesDirSent = r.dir; quorum.link?.update({ imagesDir: r.dir }) }
+      images = r?.images
+    }
+    h.turnStart({ ...e, images })
     if (e.agentId === undefined) {
       lastPrompt = e.text
       if (!firstSeen) { firstSeen = true; quorum.recap?.onFirstPrompt(e.text) }
@@ -195,10 +265,31 @@ export const register: Register = on => {
 
   on('turn.complete', async ($, e, next) => {
     const r = await next(e)
-    h.turnComplete(e as never, async () => contextPct((await $.session.usage()) as never))
+    const main = (e as { agentId?: string }).agentId === undefined
+    // one $.session.usage() per main-thread turn, shared by the context percentage and the meters
+    const usageP = main ? optional(() => $.session.usage(), undefined) : undefined
+    h.turnComplete(e as never, async () => {
+      const ctx = contextOf((await usageP)?.context)
+      // pct and its estimate flag come from the same reading
+      if (ctx) quorum.link?.update({ contextEstimate: ctx.estimate })
+      return ctx?.pct
+    })
+    if (main && meters) {
+      const m = meters
+      m.addTurn((e as { usage?: never }).usage)
+      // the totals and context go with every main-turn end; only rate limits are throttled
+      void Promise.all([usageP, optional(() => $.clock.now(), Date.now())]).then(([u, at]) => { m.report(u as never, at, { turnEnd: true }) }).catch(() => {})
+    }
     quorum.control?.turnEnd(e)
     if ((e as { agentId?: string }).agentId === undefined) void branchRefresh?.refresh().catch(() => {})
     if ((e as { agentId?: string }).agentId === undefined) quorum.recap?.onTurnEnd(lastPrompt, String((e as { answer?: string }).answer ?? ''))
+    return r
+  })
+
+  // Claude Code measures the window as it moves: report it (throttled to once per 30 s)
+  on('session.measure', async ($, e, next) => {
+    const r = await next(e)
+    try { meters?.report(e as never, await optional(() => $.clock.now(), Date.now())) } catch { /* never break the measure chain */ }
     return r
   })
 

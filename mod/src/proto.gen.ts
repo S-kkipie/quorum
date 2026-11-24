@@ -54,6 +54,77 @@ export interface SessionInfo {
    */
   herdrPane: string;
   herdrWorkspace: string;
+  /**
+   * Account is the whoas alias the session runs under (or "default"). AccountKey is the first
+   * 16 hex of sha256("quorum-account:" + email-or-org); the email and org id themselves are never sent
+   * (empty when the identity is unavailable: the hub then falls back to machine/alias).
+   */
+  account: string;
+  accountKey: string;
+  /**
+   * ConfigDir is the Claude config dir the session uses.
+   */
+  configDir: string;
+  /**
+   * Plugins lists the enabled better-claude plugins (subset of after, time-machine, use-haiku,
+   * think-hard, image-preview, quick-peek).
+   */
+  plugins: string[];
+  /**
+   * ContextEstimate is true when ContextPct is estimated rather than reported by Claude Code.
+   */
+  contextEstimate: boolean;
+  /**
+   * Tokens are the session totals, RateLimits the last reported windows (reported at most once per 30 s).
+   */
+  tokens: TokenCount;
+  rateLimits: RateLimit[];
+  /**
+   * UsageAt is when RateLimits were measured (Unix ms, 0 when never). Every update re-sends the last
+   * RateLimits, so the hub saves them only when UsageAt is newer than what it has.
+   */
+  usageAt: number /* int64 */;
+  /**
+   * ImagesDir is the folder Claude Code stores this session's pasted images in
+   * (`<tmp>/claude-<uid>/<project dashed>/<id>/images`; empty when unknown). The hub only
+   * serves single image files from it, and only when its shape matches this session.
+   */
+  imagesDir: string;
+}
+/**
+ * TokenCount sums token usage: In is uncached input, Out is output, Cache is cache read plus creation.
+ */
+export interface TokenCount {
+  in: number /* int */;
+  out: number /* int */;
+  cache: number /* int */;
+}
+/**
+ * RateLimit is one rate-limit window: Kind is "five_hour" or "seven_day"; ResetsAt is ISO 8601 (may be empty).
+ */
+export interface RateLimit {
+  kind: string;
+  percentUsed: number /* float64 */;
+  resetsAt: string;
+}
+/**
+ * UsageWindow is one subscription window of an account: Pct 0-100, ResetsAt ISO 8601 (may be empty).
+ */
+export interface UsageWindow {
+  pct: number /* float64 */;
+  resetsAt: string;
+}
+/**
+ * AccountUsage is the subscription usage of one Claude account (shared by every session and machine
+ * on it). Key is the accountKey, or machine + "/" + alias when the account identity is unavailable.
+ * At is the report time in Unix milliseconds.
+ */
+export interface AccountUsage {
+  key: string;
+  alias: string;
+  fiveHour: UsageWindow;
+  sevenDay: UsageWindow;
+  at: number /* int64 */;
 }
 export type EventKind = string;
 export const KindUser: EventKind = "user";
@@ -65,6 +136,9 @@ export const KindToolEnd: EventKind = "tool_end";
 export const KindAsk: EventKind = "ask";
 export const KindAskResolved: EventKind = "ask_resolved";
 export const KindTurnStart: EventKind = "turn_start";
+/**
+ * KindTurnEnd data: {answer, reason, outputTokens, tokens: TokenCount, model: string}.
+ */
 export const KindTurnEnd: EventKind = "turn_end";
 export const KindStatus: EventKind = "status";
 export const KindAgentStart: EventKind = "agent_start";
@@ -128,17 +202,21 @@ export interface AgentEnd {
  * Command is an order addressed to a session.
  */
 export interface Command {
-  type: string; // prompt|decide|abort|close
+  type: string; // prompt|decide|abort|close|plugin
   text: string;
   mode: string; // now|queue|interrupt
   askId: string;
   decision: string; // allow|deny
   reason: string;
   answers: { [key: string]: string};
+  command: string; // plugin: after|before|timeline
+  args: string; // plugin: everything after the command name
 }
 /**
  * Envelope is the WS wrapper daemon<->hub and hub<->app.
- * Type: hello|session_upsert|session_gone|session_removed|event|events|command|launch|launch_result|machine_status|backfill|backfill_result|ack|project_upsert|tickets|session_ticket|proposal_upsert|workspace_upsert|workspace_gone|project_gone
+ * Type: hello|session_upsert|session_gone|session_removed|event|events|command|launch|launch_result|machine_status|backfill|backfill_result|ack|project_upsert|tickets|session_ticket|proposal_upsert|workspace_upsert|workspace_gone|project_gone|usage_upsert|usage_gone
+ * usage_upsert (hub->app): Payload AccountUsage, when an account's usage changes; GET /api/usage lists them.
+ * usage_gone (hub->app): Payload {key}; a machine/alias fallback row was superseded by the account's real key.
  * session_gone (hub->app): the session was closed (state closed). session_removed (hub->app): the session closed without ever receiving a user prompt and was deleted; Envelope.Session is the id.
  * workspace_upsert|workspace_gone (hub->app): Payload Workspace (for gone only the id matters); the initial snapshot carries one workspace_upsert per workspace.
  * project_gone (hub->app): Payload {id}.
