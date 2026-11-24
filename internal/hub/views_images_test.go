@@ -49,6 +49,7 @@ func TestViewImagesLinkAndServe(t *testing.T) {
 	defer vf.mu.Unlock()
 	require.Equal(t, s1Images, vf.reads[0]["base"])
 	require.Equal(t, s1Images+"/1.png", vf.reads[0]["path"])
+	require.Equal(t, true, vf.reads[0]["imageOnly"])
 	// the cwd-named folder is Claude Code's other choice: also accepted
 	require.NoError(t, vf.st.UpsertSession(proto.SessionInfo{ID: "s1", Machine: "m1", Root: "/work/proj", Cwd: "/work/proj/sub", State: proto.StateIdle,
 		ImagesDir: "/var/tmp/claude-501/-work-proj-sub/s1/images"}))

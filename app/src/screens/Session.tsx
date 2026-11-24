@@ -6,10 +6,12 @@ import QueueSection from '../components/QueueSection'
 import TimelineSection from '../components/TimelineSection'
 import StatePill from '../components/StatePill'
 import Transcript from '../components/Transcript'
+import { UsageInline } from '../components/UsageStrip'
 import { abortSession, closeSession, listEvents } from '../lib/api'
-import { contextTone, formatTokens, toneClass } from '../lib/meters'
+import { accountUsageOf, contextTone, formatTokens, toneClass } from '../lib/meters'
 import { launchIn, loadPrefs } from '../lib/launch'
 import type { AppState } from '../lib/store'
+import type { OpenOpts } from '../lib/timeline'
 import { sessionTitle } from '../lib/title'
 import type { Event } from '../proto.gen'
 import { Button } from '@/components/ui/button'
@@ -41,7 +43,7 @@ export default function Session({ state, id, onBack, onEvents, onGuard, busy = f
   busy?: boolean
   onViewTerminal?: (machine: string, pane: string) => void
   /** opens a file of the session in the viewer */
-  onOpenFile?: (machine: string, path: string, o?: { images: true }) => void
+  onOpenFile?: (machine: string, path: string, o?: OpenOpts) => void
 }) {
   const s = state.sessions[id]
   const narrow = useNarrow()
@@ -98,7 +100,8 @@ export default function Session({ state, id, onBack, onEvents, onGuard, busy = f
   const item = 'min-h-11 gap-2.5 px-3'
   const ctxTone = contextTone(s.contextPct)
   const tokens = s.tokens && s.tokens.in + s.tokens.out > 0 ? `↑${formatTokens(s.tokens.in)} ↓${formatTokens(s.tokens.out)}` : ''
-  const meters = !!(s.account || s.contextPct > 0 || tokens)
+  const usage = accountUsageOf(state.usage, s)
+  const meters = !!(s.account || usage || s.contextPct > 0 || tokens)
   const sub = [s.machine, s.model, s.branch].filter(Boolean).join(' · ')
 
   return (
@@ -141,11 +144,12 @@ export default function Session({ state, id, onBack, onEvents, onGuard, busy = f
           </DropdownMenu>
         </div>
         {(sub || narrow || meters) && (
-          // wraps at 320 px: pill + subtitle + account + ctx + tokens never overflow the header
+          // wraps at 320 px: pill + subtitle + account + usage + ctx + tokens never overflow the header
           <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 pb-1 pl-2.5 text-xs text-zinc-500">
             {narrow && <StatePill state={s.state} />}
             {sub && <span className="min-w-0 max-w-full shrink truncate">{sub}</span>}
             {s.account && <span className="max-w-24 shrink-0 truncate rounded bg-zinc-800 px-1.5 text-zinc-300">{s.account}</span>}
+            {usage && <UsageInline usage={usage} />}
             {s.contextPct > 0 && <span data-tone={ctxTone} className={`shrink-0 ${toneClass[ctxTone]}`}>{`ctx ${s.contextEstimate ? '~' : ''}${Math.round(s.contextPct)}%`}</span>}
             {tokens && <span className="shrink-0">{tokens}</span>}
           </div>

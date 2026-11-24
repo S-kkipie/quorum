@@ -740,6 +740,25 @@ func closeOrRemove(tx *sql.Tx, id string) (bool, error) {
 	return true, nil
 }
 
+// HasReadOf reports whether the session's stored events include a Read tool_start whose
+// input file_path is exactly path and whose tool_end (same id, same session) succeeded: a denied
+// or failed Read, or one with no tool_end, does not count.
+func (s *Store) HasReadOf(sessionID, path string) (bool, error) {
+	if sessionID == "" || path == "" {
+		return false, nil
+	}
+	var ok bool
+	err := s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM events s WHERE s.session=? AND s.kind=?
+		AND CASE WHEN json_valid(s.data) THEN json_extract(s.data,'$.name')='Read'
+			AND json_extract(s.data,'$.input.file_path')=? AND COALESCE(json_extract(s.data,'$.id'),'')<>''
+			AND EXISTS(SELECT 1 FROM events e WHERE e.session=s.session AND e.kind=?
+				AND CASE WHEN json_valid(e.data) THEN json_extract(e.data,'$.id')=json_extract(s.data,'$.id')
+					AND json_extract(e.data,'$.ok')=1 ELSE 0 END)
+			ELSE 0 END)`,
+		sessionID, string(proto.KindToolStart), path, string(proto.KindToolEnd)).Scan(&ok)
+	return ok, err
+}
+
 // SessionOwner returns the machine that owns session id (ok=false if it does not exist).
 func (s *Store) SessionOwner(id string) (machine string, ok bool, err error) {
 	err = s.db.QueryRow(`SELECT machine FROM sessions WHERE id=?`, id).Scan(&machine)

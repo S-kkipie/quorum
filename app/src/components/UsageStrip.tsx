@@ -1,7 +1,6 @@
+import { Fragment } from 'react'
 import type { AccountUsage, UsageWindow } from '../proto.gen'
-import { resetIn, toneClass, usageTone } from '../lib/meters'
-
-const STALE_MS = 3_600_000
+import { USAGE_STALE_MS as STALE_MS, resetIn, toneClass, usageTone } from '../lib/meters'
 
 function Win({ label, w, now }: { label: string; w: UsageWindow; now: number }) {
   // a window Claude Code did not report has no reset time: show nothing rather than "0%"
@@ -33,5 +32,21 @@ export default function UsageStrip({ usage, now = Date.now() }: { usage: Record<
         )
       })}
     </div>
+  )
+}
+
+/** One account's usage in a line, `5h 58% · week 24%` (no reset times): the session header's meter. */
+export function UsageInline({ usage: u, now = Date.now() }: { usage: AccountUsage; now?: number }) {
+  // a window Claude Code did not report has no reset time: omitted, as in the strip
+  const wins = ([['5h', u.fiveHour], ['week', u.sevenDay]] as const).filter(([, w]) => w.resetsAt)
+  if (wins.length === 0) return null
+  const stale = now - u.at > STALE_MS
+  return (
+    <span data-testid="session-usage" data-stale={stale ? '' : undefined} className={`shrink-0 whitespace-nowrap ${stale ? 'opacity-50' : ''}`}>
+      {wins.map(([label, w], k) => {
+        const tone = usageTone(w.pct)
+        return <Fragment key={label}>{k > 0 && ' · '}<span data-tone={tone} className={toneClass[tone]}>{`${label} ${Math.round(w.pct)}%`}</span></Fragment>
+      })}
+    </span>
   )
 }

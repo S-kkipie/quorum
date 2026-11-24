@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/S-kkipie/quorum/internal/viewguard"
 )
 
 const fileReadMaxChunk = 1 << 20
@@ -44,6 +46,12 @@ func inside(base, p string) bool {
 	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
 }
 
+// servableImage reports whether a resolved absolute path is an image name and not a sensitive path.
+func servableImage(p string) bool {
+	s := strings.TrimLeft(filepath.ToSlash(strings.TrimPrefix(p, filepath.VolumeName(p))), "/")
+	return viewguard.IsImage(p) && !viewguard.Sensitive(s)
+}
+
 // rpcFileRead returns a chunk of a file that lives inside the base folder.
 func rpcFileRead(_ context.Context, _ *Host, params json.RawMessage) (any, error) {
 	var p struct {
@@ -51,6 +59,9 @@ func rpcFileRead(_ context.Context, _ *Host, params json.RawMessage) (any, error
 		Base   string `json:"base"`
 		Offset int64  `json:"offset"`
 		Length int    `json:"length"`
+		// ImageOnly: a single-file image link (pasted or read image); the file it resolves to
+		// must still be an image and not a sensitive path.
+		ImageOnly bool `json:"imageOnly"`
 	}
 	if err := decodeParams(params, &p); err != nil {
 		return nil, err
@@ -73,7 +84,7 @@ func rpcFileRead(_ context.Context, _ *Host, params json.RawMessage) (any, error
 	if err != nil {
 		return nil, errNoFile
 	}
-	if !inside(base, path) {
+	if !inside(base, path) || (p.ImageOnly && !servableImage(path)) {
 		return nil, errOutsideBase
 	}
 	f, err := openNoFollow(path)
@@ -84,7 +95,7 @@ func rpcFileRead(_ context.Context, _ *Host, params json.RawMessage) (any, error
 	// on Linux, make sure the opened file is still inside the base (guards against
 	// a swap between EvalSymlinks and open)
 	if real, err := os.Readlink("/proc/self/fd/" + strconv.Itoa(int(f.Fd()))); err == nil && filepath.IsAbs(real) {
-		if !inside(base, real) {
+		if !inside(base, real) || (p.ImageOnly && !servableImage(real)) {
 			return nil, errOutsideBase
 		}
 	}

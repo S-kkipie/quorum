@@ -79,7 +79,8 @@ export const register: Register = on => {
     branchRefresh = undefined
     const link = new Link(makeIO($))
     quorum.link = link
-    meters = new Meters({ now: () => Date.now(), update: p => link.update(p) })
+    const m = new Meters({ now: () => Date.now(), update: p => link.update(p) })
+    meters = m
     const control = makeControl({
       getLink: () => link,
       submit: text => $.prompt.submit({ text, asUser: true }),
@@ -143,6 +144,11 @@ export const register: Register = on => {
       account: '', accountKey: '', configDir, plugins, contextEstimate: false,
       tokens: { in: 0, out: 0, cache: 0 }, rateLimits: [], usageAt: 0, imagesDir: '',
     }).catch(() => {})
+    // the account's usage as Claude Code knows it at start (after link.start, which holds the info
+    // updates apply to): reported right away, without the 30 s throttle, so the account shows on the
+    // board before the first turn ends; nothing when it has no rate limits yet
+    void Promise.all([optional(() => $.session.usage(), undefined), optional(() => $.clock.now(), Date.now())])
+      .then(([u, at]) => { if (meters === m) m.reportStart(u as never, at) }).catch(() => {})
     // pasted images (`[Image #N]`): Claude Code's per-session temp folder. Windows has no uid
     // and another layout: the feature stays off there.
     const isWindows = (sinfo as { platform?: string } | undefined)?.platform === 'windows'

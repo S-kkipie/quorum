@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import {
   Ban, Bot, Check, Circle, CircleCheck, CircleDot, ExternalLink, FilePen, FilePlus, FileText, Globe,
   ListTodo, Loader2, Plug, Search, Sparkles, Terminal, Wrench, X, type LucideIcon,
@@ -6,7 +6,8 @@ import {
 import { Tool as ToolBox, ToolContent, ToolHeader } from '@/components/ai-elements/tool'
 import { cn } from '@/lib/utils'
 import { toolPartState, toolView, type ToolView } from '../../lib/elements'
-import { absPath, inBase, type AgentItem, type ReadsItem, type ToolItem as Tool, type ToolKind } from '../../lib/timeline'
+import { absPath, basename, inBase, type AgentItem, type OpenOpts, type ReadsItem, type ToolItem as Tool, type ToolKind } from '../../lib/timeline'
+import ViewThumb from './ViewThumb'
 
 const KIND: Record<ToolKind, { icon: LucideIcon; tint: string }> = {
   read: { icon: FileText, tint: 'bg-sky-500/15 text-sky-300' },
@@ -25,6 +26,10 @@ const KIND: Record<ToolKind, { icon: LucideIcon; tint: string }> = {
 
 /** Files the viewer can show when they were edited (Edit of a .md or an image gets no card). */
 const OPENABLE_EDIT = /\.(md|png|jpe?g|gif|webp)$/i
+/** Images the Read tool can show; only absolute paths can get a link. */
+const READ_IMAGE = /\.(png|jpe?g|gif|webp)$/i
+const ABS = /^(\/|[a-zA-Z]:[\\/]|\\\\)/
+const MAX_THUMBS = 4
 const MAX_LINES = 200
 const MAX_CHARS = 4000
 
@@ -134,12 +139,46 @@ function ToolDetail({ t }: { t: Tool }) {
   }
 }
 
-/** A collapsed row on the vendored Tool (Radix Collapsible); the header toggles the detail. */
-function Row({ name, view, tint, Icon, right, nested, children }: {
-  name: string; view: ToolView; tint: string; Icon: LucideIcon; right?: ReactNode; nested?: boolean; children: ReactNode
+/** The images successfully read by these tools, once each, in order. */
+function readImages(tools: Tool[]): string[] {
+  const out = new Set<string>()
+  for (const t of tools) if (t.kind === 'read' && t.state === 'ok' && t.file && ABS.test(t.file) && READ_IMAGE.test(t.file)) out.add(t.file)
+  return [...out]
+}
+
+/**
+ * 64 px thumbnails of the images a Read row read (at most 4, then a +N tile that opens the row),
+ * shown while it is collapsed; a tap on a thumbnail opens the Viewer.
+ */
+function ReadThumbs({ files, machine, sessionId, onOpenFile, onMore }: {
+  files: string[]; machine: string; sessionId: string; onOpenFile?: (path: string, o?: OpenOpts) => void; onMore: () => void
 }) {
+  if (!files.length || !machine || !sessionId) return null
+  const more = files.length - MAX_THUMBS
   return (
-    <ToolBox className={cn('my-0.5 mb-0.5 rounded-lg border-0', nested && 'ml-5')}>
+    <div className="mb-1 ml-[2.4rem] flex flex-wrap gap-2">
+      {files.slice(0, MAX_THUMBS).map((f) => (
+        <ViewThumb key={f} machine={machine} sessionId={sessionId} path={f} mode="read" label={basename(f)}
+          onOpen={onOpenFile ? () => onOpenFile(f, { read: true }) : undefined} />
+      ))}
+      {more > 0 && (
+        <button type="button" aria-label={`Show ${more} more images`} onClick={onMore}
+          className="flex size-16 shrink-0 items-center justify-center rounded-lg border border-zinc-800 text-xs text-zinc-500 hover:border-zinc-600 hover:text-zinc-300">{`+${more}`}</button>
+      )}
+    </div>
+  )
+}
+
+/** A collapsed row on the vendored Tool (Radix Collapsible); the header toggles the detail. */
+function Row({ name, view, tint, Icon, right, nested, below, children }: {
+  name: string; view: ToolView; tint: string; Icon: LucideIcon; right?: ReactNode; nested?: boolean
+  /** shown under the header whether or not the row is open; `expand` opens the row */
+  below?: (expand: () => void) => ReactNode
+  children: ReactNode
+}) {
+  const [open, setOpen] = useState(false)
+  return (
+    <ToolBox open={open} onOpenChange={setOpen} className={cn('my-0.5 mb-0.5 rounded-lg border-0', nested && 'ml-5')}>
       <ToolHeader
         type="dynamic-tool" toolName={name} title={view.title} state={toolPartState(view.state)}
         className="min-h-11 gap-2.5 rounded-lg px-1.5 py-0 text-left hover:bg-zinc-900 active:bg-zinc-900 text-zinc-300"
@@ -147,6 +186,7 @@ function Row({ name, view, tint, Icon, right, nested, children }: {
         meta={right}
         status={<StateIcon state={view.state} />}
       />
+      {below?.(() => setOpen(true))}
       <ToolContent className="mb-1 ml-[2.4rem] mr-1 space-y-0 rounded-lg border border-zinc-800 bg-zinc-950 p-2.5 text-zinc-300">{children}</ToolContent>
     </ToolBox>
   )
@@ -156,13 +196,16 @@ function Row({ name, view, tint, Icon, right, nested, children }: {
  * One timeline action as a short, collapsed row; tapping it shows the detail for its kind.
  * Handles single tools, merged reads and subagents.
  */
-export default function ToolItem({ item, live, base = '', onOpenFile }: {
+export default function ToolItem({ item, live, base = '', machine = '', sessionId = '', onOpenFile }: {
   item: Tool | ReadsItem | AgentItem
   /** streamed text of a running subagent */
   live?: string
   /** session base: decides whether an edited file can be opened */
   base?: string
-  onOpenFile?: (path: string) => void
+  /** the session's machine and id: read-image thumbnails ask the hub for links with them */
+  machine?: string
+  sessionId?: string
+  onOpenFile?: (path: string, o?: OpenOpts) => void
 }) {
   if (item.t === 'agent') {
     const running = item.status === 'running'
@@ -175,9 +218,10 @@ export default function ToolItem({ item, live, base = '', onOpenFile }: {
   }
   const view = toolView(item)
   const k = KIND[view.icon]
+  const thumbs = (tools: Tool[]) => (expand: () => void) => <ReadThumbs files={readImages(tools)} machine={machine} sessionId={sessionId} onOpenFile={onOpenFile} onMore={expand} />
   if (item.t === 'reads') {
     return (
-      <Row name="Read" view={view} Icon={k.icon} tint={k.tint} nested={!!item.agent}>
+      <Row name="Read" view={view} Icon={k.icon} tint={k.tint} nested={!!item.agent} below={thumbs(item.tools)}>
         <Pre>{clip(item.files.join('\n'))}</Pre>
       </Row>
     )
@@ -190,7 +234,7 @@ export default function ToolItem({ item, live, base = '', onOpenFile }: {
     </span>
   )
   return (
-    <Row name={item.name} view={view} Icon={k.icon} tint={k.tint} right={diff} nested={!!item.agent}>
+    <Row name={item.name} view={view} Icon={k.icon} tint={k.tint} right={diff} nested={!!item.agent} below={item.kind === 'read' ? thumbs([item]) : undefined}>
       <ToolDetail t={item} />
       {canOpen && (
         <button type="button" onClick={() => onOpenFile?.(absPath(item.file!, base))}

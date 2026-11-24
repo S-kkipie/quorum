@@ -16,6 +16,7 @@ import (
 
 	"github.com/S-kkipie/quorum/internal/hub/store"
 	"github.com/S-kkipie/quorum/internal/proto"
+	"github.com/S-kkipie/quorum/internal/viewguard"
 )
 
 const (
@@ -177,6 +178,9 @@ func (s *Server) handleCreateView(w http.ResponseWriter, r *http.Request) {
 		// Images: the path is an image the owner pasted in the terminal; the base is the
 		// session's images folder and the link serves that one file.
 		Images bool `json:"images"`
+		// Read: the path is an image Claude read with the Read tool in this session; the base
+		// is its folder and the link serves that one file.
+		Read bool `json:"read"`
 	}
 	if !decode(w, r, &b) {
 		return
@@ -193,19 +197,31 @@ func (s *Server) handleCreateView(w http.ResponseWriter, r *http.Request) {
 	}
 	fold := s.hub.caseInsensitiveOS(m)
 	base, only := sessionBase(si.Root, si.Cwd), ""
-	if b.Images {
+	switch {
+	case b.Images && b.Read:
+		base = ""
+	case b.Images:
 		base = imagesDirOf(si, fold)
+	case b.Read:
+		base, err = s.readImageBase(si.ID, b.Path)
+		if err != nil {
+			apiErr(w, 500, "internal error")
+			return
+		}
 	}
 	rel, ok := relInside(base, b.Path, fold)
 	if b.Images && ok {
 		// exactly one pasted image right in the folder
 		ok = len(rel) == 1 && pastedImage.MatchString(rel[0])
-		if ok {
-			only = rel[0]
-		}
+	}
+	if b.Read && ok {
+		ok = len(rel) == 1
+	}
+	if (b.Images || b.Read) && ok {
+		only = rel[0]
 	}
 	if base == "" || !ok {
-		if b.Images {
+		if b.Images || b.Read {
 			apiErr(w, 403, viewNoImage)
 		} else {
 			apiErr(w, 403, viewOutside)
@@ -224,30 +240,33 @@ func (s *Server) handleCreateView(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]string{"url": "/v/" + tok + "/" + strings.Join(esc, "/")})
 }
 
-// viewSensitive reports whether a cleaned relative path names something a link must
-// never serve (repository internals, keys, credentials), even inside the base. The base
-// can be the home folder, so tool credential folders are denied too. Other
-// dot-directories stay allowed: artifacts live under .claude/quorum/artifacts/.
-func viewSensitive(rel string) bool {
-	segs := strings.Split(strings.ToLower(rel), "/")
-	for i, seg := range segs {
-		switch {
-		case seg == ".git", seg == ".ssh", seg == ".gnupg", seg == ".aws", strings.HasPrefix(seg, ".env"),
-			seg == ".docker", seg == ".kube", seg == ".azure":
-			return true
-		case seg == ".config" && i+1 < len(segs) && segs[i+1] == "gh":
-			return true
+// readImageBase returns the folder of p when p is an image Claude read in session sid: an
+// absolute path with no "." or ".." segment, an image extension, not a sensitive path, and a
+// Read tool_start of exactly p among the session's stored events. Otherwise "".
+func (s *Server) readImageBase(sid, p string) (string, error) {
+	if !isAbsAnyOS(p) || strings.ContainsRune(p, 0) || !viewguard.IsImage(p) {
+		return "", nil
+	}
+	for _, seg := range strings.FieldsFunc(p, func(r rune) bool { return r == '/' || r == '\\' }) {
+		if seg == "." || seg == ".." {
+			return "", nil
 		}
 	}
-	name := segs[len(segs)-1]
-	switch name {
-	case ".credentials.json", ".npmrc", ".netrc", ".pypirc", ".git-credentials", ".pgpass":
-		return true
+	if viewSensitive(strings.Join(pathSegs(p), "/")) {
+		return "", nil
 	}
-	return strings.HasPrefix(name, "id_rsa") || strings.HasPrefix(name, "id_ed25519") ||
-		strings.HasSuffix(name, ".pem") || strings.HasSuffix(name, ".key") ||
-		strings.HasSuffix(name, ".p12") || strings.HasSuffix(name, ".pfx")
+	if ok, err := s.st.HasReadOf(sid, p); err != nil || !ok {
+		return "", err
+	}
+	i := strings.LastIndexAny(p, `/\`)
+	if i == 0 || (i == 2 && p[1] == ':') {
+		return p[:i+1], nil // a file right in the root: "/", "C:\"
+	}
+	return p[:i], nil
 }
+
+// viewSensitive reports whether a cleaned relative path names something a link must never serve.
+func viewSensitive(rel string) bool { return viewguard.Sensitive(rel) }
 
 // viewContentTypes by lowercase extension; anything else is application/octet-stream.
 var viewContentTypes = map[string]string{
@@ -363,6 +382,10 @@ func (s *Server) handleView(w http.ResponseWriter, r *http.Request) {
 			EOF  bool   `json:"eof"`
 		}
 		p := map[string]any{"path": full, "base": link.base, "offset": off, "length": viewChunk}
+		if link.only != "" {
+			// a single-file image link: the daemon checks the file it resolves to is still an image and not sensitive
+			p["imageOnly"] = true
+		}
 		err := s.hub.call(r.Context(), link.machine, "file_read", p, &out)
 		var data []byte
 		if err == nil {

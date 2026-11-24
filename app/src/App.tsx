@@ -39,7 +39,7 @@ type Tab = 'projects' | 'sessions'
 /** Open terminal; root/label (if they come from "Terminal") let the screen offer "Open another". */
 export interface TermNav { machine: string; pane: string; root?: string; label?: string }
 /** Open local artifact of a session. */
-export interface ViewNav { machine: string; sessionId: string; path: string; images?: boolean }
+export interface ViewNav { machine: string; sessionId: string; path: string; images?: boolean; read?: boolean }
 interface Nav { tab?: Tab; project?: string | null; projectTickets?: string | null; checkouts?: boolean; ticket?: string | null; config?: string | null; session?: string | null; starting?: boolean; terminal?: TermNav | null; viewer?: ViewNav | null; depth?: number }
 const navNow = (): Nav => history.state ?? {}
 
@@ -279,7 +279,7 @@ function Main() {
       base={state.sessions[viewer.sessionId]?.root || state.sessions[viewer.sessionId]?.cwd || ''} onBack={back} />
   )
   const startingView = starting && <Starting pending={pending} terminal={!!(pending && state.machines[pending.machine]?.caps?.terminal)} onBack={back} onViewTerminal={onViewTerminal} />
-  const sessionView = current && vanished.current !== current ? <LazyBoundary><Session key={viewKey} state={state} id={current} onBack={wide ? undefined : back} onEvents={onEvents} onGuard={guardLaunch} busy={launchBusy} onViewTerminal={onViewTerminal} onOpenFile={(machine, path, o) => current && go({ viewer: { machine, sessionId: current, path, ...(o?.images ? { images: true } : {}) } })} /></LazyBoundary> : null
+  const sessionView = current && vanished.current !== current ? <LazyBoundary><Session key={viewKey} state={state} id={current} onBack={wide ? undefined : back} onEvents={onEvents} onGuard={guardLaunch} busy={launchBusy} onViewTerminal={onViewTerminal} onOpenFile={(machine, path, o) => current && go({ viewer: { machine, sessionId: current, path, ...(o && 'images' in o ? { images: true } : o && 'read' in o ? { read: true } : {}) } })} /></LazyBoundary> : null
   const sessionsList = <Sessions state={state} onOpen={openSession} selected={current} />
   const projectsView = <Projects state={state} wide={wide} selected={project} onOpen={(id) => go({ project: id, projectTickets: null, checkouts: false, ticket: null })} onOpenSession={openSession} onConfig={() => openConfig('')} />
   const configView = config !== null && <Config key={config} state={state} editProject={config || null} onBack={back} />

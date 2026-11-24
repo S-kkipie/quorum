@@ -6,7 +6,7 @@ import { PathLinksProvider } from '@/components/ai-elements/pathLinks'
 import { Shimmer } from '@/components/ai-elements/shimmer'
 import type { Event } from '../proto.gen'
 import { formatTokens } from '../lib/meters'
-import { buildTimeline } from '../lib/timeline'
+import { buildTimeline, type OpenOpts } from '../lib/timeline'
 import ArtifactCard from './timeline/ArtifactCard'
 import PastedImages from './timeline/PastedImages'
 import ToolItem from './timeline/ToolItem'
@@ -59,8 +59,8 @@ export default function Transcript({ events, base = '', machine = '', sessionId 
   working?: boolean
   hasMore?: boolean
   onLoadMore?: () => void
-  /** opens a file of the session in the viewer (`images`: a pasted image) */
-  onOpenFile?: (path: string, o?: { images: true }) => void
+  /** opens a file of the session in the viewer (`images`: a pasted image; `read`: an image Claude read) */
+  onOpenFile?: (path: string, o?: OpenOpts) => void
 }) {
   const rows = useMemo(() => buildTimeline(events, base), [events, base])
   const last = events[events.length - 1]
@@ -101,7 +101,7 @@ export default function Transcript({ events, base = '', machine = '', sessionId 
               </div>
             )
             case 'info': return <Message key={`i${r.seq}`} from="system" role="note" className="my-2 max-w-full text-center text-xs text-zinc-600">{r.text}</Message>
-            case 'tool': case 'reads': return <ToolItem key={`t${r.seq}`} item={r} base={base} onOpenFile={onOpenFile} />
+            case 'tool': case 'reads': return <ToolItem key={`t${r.seq}`} item={r} base={base} machine={machine} sessionId={sessionId} onOpenFile={onOpenFile} />
             case 'agent': return <ToolItem key={`a${r.seq}`} item={r} live={liveAgent?.[r.id]} />
             case 'artifact': return <ArtifactCard key={`f${r.seq}`} item={r} machine={machine} base={base} onOpen={onOpenFile} />
           }

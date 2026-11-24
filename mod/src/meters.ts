@@ -54,12 +54,30 @@ export class Meters {
     const ctx = contextOf(m?.context)
     if (ctx) { patch.contextPct = ctx.pct; patch.contextEstimate = ctx.estimate }
     if (due) this.last = now
-    if (due && Array.isArray(m?.rateLimits)) {
-      patch.rateLimits = m.rateLimits
-        .filter(r => r.kind === 'five_hour' || r.kind === 'seven_day')
-        .map(r => ({ kind: r.kind, percentUsed: r.percentUsed, resetsAt: r.resetsAt ?? '' }))
+    const rateLimits = due ? rateLimitsOf(m) : undefined
+    if (rateLimits) {
+      patch.rateLimits = rateLimits
       patch.usageAt = now
     }
     this.deps.update(patch)
   }
+
+  /**
+   * The usage read once when the session starts: its rate limits go out at once (no 30 s throttle),
+   * so the account shows on the board before the first turn ends. Without rate limits nothing is sent.
+   */
+  reportStart(m: Measure | undefined, at?: number): void {
+    const rateLimits = rateLimitsOf(m)
+    if (!rateLimits?.length) return
+    const now = at ?? this.deps.now()
+    this.last = now
+    this.deps.update({ tokens: { ...this.tokens }, rateLimits, usageAt: now })
+  }
+}
+
+function rateLimitsOf(m: Measure | undefined): RateLimit[] | undefined {
+  if (!Array.isArray(m?.rateLimits)) return undefined
+  return m.rateLimits
+    .filter(r => r.kind === 'five_hour' || r.kind === 'seven_day')
+    .map(r => ({ kind: r.kind, percentUsed: r.percentUsed, resetsAt: r.resetsAt ?? '' }))
 }

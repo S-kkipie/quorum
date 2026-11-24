@@ -13,6 +13,9 @@ export type ReadsItem = { t: 'reads'; seq: number; files: string[]; title: strin
 export type AgentItem = { t: 'agent'; seq: number; id: string; type: string; description: string; status: string; answer?: string }
 export type ArtifactItem = { t: 'artifact'; seq: number; path: string; name: string; inBase: boolean }
 export type TurnItem = { t: 'turn'; seq: number; tokens?: { in: number; out: number; cache: number }; model: string }
+/** How the Viewer asks for a file's link: an image pasted in the terminal, or an image Claude read. */
+export type OpenOpts = { images: true } | { read: true }
+
 /** An image the owner pasted in the terminal (`[Image #n]`), stored at `path` on the session's machine. */
 export type PastedImage = { n: number; path: string }
 

@@ -35,7 +35,13 @@ describe('Viewer', () => {
     createView.mockResolvedValue({ url: '/v/tok/1.png' })
     render(<Viewer {...props} path="/tmp/claude-1000/-p/s1/images/1.png" images />)
     expect(await screen.findByRole('img', { name: '1.png' })).toBeTruthy()
-    expect(createView).toHaveBeenCalledWith('vps-1', 's1', '/tmp/claude-1000/-p/s1/images/1.png', true)
+    expect(createView).toHaveBeenCalledWith('vps-1', 's1', '/tmp/claude-1000/-p/s1/images/1.png', 'images')
+  })
+  it('an image Claude read asks for a read link', async () => {
+    createView.mockResolvedValue({ url: '/v/tok/shot.png' })
+    render(<Viewer {...props} path="/home/u/shot.png" read />)
+    expect(await screen.findByRole('img', { name: 'shot.png' })).toBeTruthy()
+    expect(createView).toHaveBeenCalledWith('vps-1', 's1', '/home/u/shot.png', 'read')
   })
   it('image viewer zoom buttons', async () => {
     createView.mockResolvedValue({ url: '/v/tok/a.png' })

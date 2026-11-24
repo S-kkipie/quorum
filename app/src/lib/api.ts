@@ -195,10 +195,12 @@ export const unlinkTicket = (sessionId: string, ticketId: string) => apiFetch(`/
 
 /**
  * Asks the hub for a short-lived link to a file of the session; `url` is relative to the hub.
- * `images`: the file is an image pasted in the terminal (served from the session's images folder).
+ * `mode` 'images': an image pasted in the terminal (served from the session's images folder);
+ * 'read': an image Claude read with the Read tool (served from its own folder). Both links serve that one file.
  */
-export const createView = (machine: string, sessionId: string, path: string, images?: boolean) =>
-  apiFetch<{ url: string }>(`/api/machines/${enc(machine)}/views`, json('POST', images ? { sessionId, path, images: true } : { sessionId, path }))
+export type ViewMode = 'images' | 'read'
+export const createView = (machine: string, sessionId: string, path: string, mode?: ViewMode) =>
+  apiFetch<{ url: string }>(`/api/machines/${enc(machine)}/views`, json('POST', mode ? { sessionId, path, [mode]: true } : { sessionId, path }))
 
 // --- better-claude plugins (read from the session's store files, commands via the mod) ---
 

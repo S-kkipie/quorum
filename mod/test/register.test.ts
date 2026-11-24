@@ -149,7 +149,7 @@ test('register reports account, accountKey, configDir and plugins; never the ide
 })
 
 // Plan 6 Task 2 fix round: turn.complete and session.measure at hook level.
-async function metered($: never, on: never, usage: () => unknown) {
+async function metered($: never, on: never, usage: () => unknown, startAt = 0) {
   const o = on as unknown as (...a: unknown[]) => void
   mock.env(on as never, { CLAUDE_CONFIG_DIR: '/cfg' }) // no CCAPI_SERVER: a work session, which emits turn_end
   const clock = mock.clock(on as never)
@@ -172,6 +172,7 @@ async function metered($: never, on: never, usage: () => unknown) {
     else if (url.endsWith('/events')) for (const ev of JSON.parse(String(e.init?.body))) if (ev.kind === 'turn_end') turnEnds.push(ev.data)
     return { value: { status: 204 } }
   })
+  if (startAt) await clock.advance(startAt)
   await ($ as { session: { start(x: unknown): Promise<unknown> } }).session.start({ cwd: '/x', surface: null })
   const until = async (f: () => boolean) => { for (let i = 0; i < 100 && !f(); i++) await new Promise(r => setTimeout(r, 5)) }
   await until(() => registers.length > 0)
@@ -198,7 +199,7 @@ test('turn.complete: turn_end carries tokens and model, totals reach the next re
   const r = m.registers.find(x => x.tokens?.in === 1000)!
   expect(r.tokens).toEqual({ in: 1000, out: 200, cache: 75 })
   expect(r.rateLimits).toEqual([{ kind: 'five_hour', percentUsed: 7, resetsAt: '2026-01-01T00:00:00Z' }])
-  expect(m.usageCalls()).toBe(1) // one usage read per main-thread turn
+  expect(m.usageCalls()).toBe(2) // one usage read at session start, one per main-thread turn
 })
 
 test('two main turns 5 s apart: the second update carries both turns\' totals; usageAt only with fresh rate limits', async ($, on) => {
@@ -238,6 +239,49 @@ test('session.measure feeds rate limits through the 30 s throttle', async ($, on
     expect(withRl(13)).toBeGreaterThan(0)
     expect(withRl(11)).toBeGreaterThan(0)
   }
+})
+
+// session.start reads the usage once: rate limits go out at once, before any turn, so the account
+// shows on the board right away; without rate limits nothing is reported.
+test('session.start: usage with rate limits is reported at once with usageAt, no turn needed', async ($, on) => {
+  const rl = [{ kind: 'five_hour', percentUsed: 41, resetsAt: '2026-01-01T05:00:00Z' }, { kind: 'seven_day', percentUsed: 9, resetsAt: '2026-01-07T00:00:00Z' }]
+  const m = await metered($ as never, on as never, () => ({ context: { window: 1000, percent: 3 }, rateLimits: [...rl, { kind: 'spend_limit', percentUsed: 1 }] }), 5_000)
+  await m.clock.advance(1000)
+  await m.until(() => m.registers.some(r => r.rateLimits?.length))
+  const r = m.registers.find(x => x.rateLimits?.length)!
+  expect(r.rateLimits).toEqual(rl)
+  expect(r.usageAt).toBe(5_000)
+  expect(m.turnEnds).toHaveLength(0)
+  expect(m.usageCalls()).toBe(1)
+})
+
+test('session.start: the first report bypasses the throttle but a measure 10 s later is still throttled', async ($, on) => {
+  const m = await metered($ as never, on as never, () => ({ rateLimits: [{ kind: 'five_hour', percentUsed: 41, resetsAt: 'x' }] }), 5_000)
+  await m.clock.advance(1000)
+  await m.until(() => m.registers.some(r => r.rateLimits?.length))
+  await m.clock.advance(9_000)
+  const s = $ as unknown as { session: { measure(x: unknown): Promise<unknown> } }
+  await s.session.measure({ rateLimits: [{ kind: 'five_hour', percentUsed: 77 }], changed: ['rateLimits'] })
+  await new Promise(r => setTimeout(r, 40))
+  expect(m.registers.some(r => r.rateLimits?.[0]?.percentUsed === 77)).toBe(false)
+})
+
+async function noRateLimits($: never, on: never, u: unknown) {
+  const m = await metered($, on, () => u, 5_000)
+  await m.clock.advance(1000)
+  await m.until(() => m.usageCalls() > 0)
+  await new Promise(r => setTimeout(r, 40))
+  expect(m.usageCalls()).toBe(1)
+  expect(m.registers.length).toBeGreaterThan(0)
+  expect(m.registers.every(r => !r.rateLimits?.length && !r.usageAt)).toBe(true)
+}
+
+test('session.start: usage without rate limits yet reports nothing', async ($, on) => {
+  await noRateLimits($ as never, on as never, { context: { window: 1000, percent: 3 } })
+})
+
+test('session.start: usage with only other limit kinds reports nothing', async ($, on) => {
+  await noRateLimits($ as never, on as never, { rateLimits: [{ kind: 'spend_limit', percentUsed: 1 }] })
 })
 
 // Plan 6 Task 10: a prompt naming pasted images carries the files that exist; the register

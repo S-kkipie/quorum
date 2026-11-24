@@ -141,6 +141,39 @@ describe('Session: meters', () => {
   })
 })
 
+describe('Session: account usage', () => {
+  const NOW = Date.now()
+  const iso = (ms: number) => new Date(NOW + ms).toISOString()
+  const usage = (key: string, five: number, week: number, o: any = {}) => ({ key, alias: 'work', fiveHour: { pct: five, resetsAt: iso(3_600_000) }, sevenDay: { pct: week, resetsAt: iso(86_400_000) }, at: NOW, ...o })
+  const text = (el: Element) => (el.textContent ?? '').replace(/\s+/g, ' ').trim()
+  it('shows the account usage after the chip, by accountKey, with tones', () => {
+    const s = { ...st(), usage: { k1: usage('k1', 58, 96), 'vps-2/work': usage('vps-2/work', 1, 1) }, sessions: { a: sess('a', { account: 'work', accountKey: 'k1', machine: 'vps-2' }) } }
+    render(<Session state={s} id="a" onEvents={vi.fn()} />)
+    const el = screen.getByTestId('session-usage')
+    expect(text(el)).toBe('5h 58% · week 96%')
+    expect(el.previousElementSibling?.textContent).toBe('work')
+    expect(screen.getByText('5h 58%').getAttribute('data-tone')).toBe('ok')
+    expect(screen.getByText('week 96%').getAttribute('data-tone')).toBe('danger')
+    expect(el.hasAttribute('data-stale')).toBe(false)
+    expect(el.parentElement!.className).toMatch(/\bflex-wrap\b/)
+  })
+  it('falls back to machine/account; omits an unreported window; dims a stale report', () => {
+    const s = { ...st(), usage: { 'vps-2/work': usage('vps-2/work', 82, 24, { sevenDay: { pct: 0, resetsAt: '' }, at: NOW - 2 * 3_600_000 }) }, sessions: { a: sess('a', { account: 'work', accountKey: '', machine: 'vps-2' }) } }
+    render(<Session state={s} id="a" onEvents={vi.fn()} />)
+    const el = screen.getByTestId('session-usage')
+    expect(text(el)).toBe('5h 82%')
+    expect(screen.getByText('5h 82%').getAttribute('data-tone')).toBe('warn')
+    expect(el.hasAttribute('data-stale')).toBe(true)
+    expect(el.className).toMatch(/opacity-50/)
+  })
+  it('nothing without usage for the account', () => {
+    const s = { ...st(), usage: { other: usage('other', 50, 50) }, sessions: { a: sess('a', { account: 'work', accountKey: 'k1', machine: 'vps-2' }) } }
+    render(<Session state={s} id="a" onEvents={vi.fn()} />)
+    expect(screen.queryByTestId('session-usage')).toBeNull()
+    expect(screen.queryByText(/5h/)).toBeNull()
+  })
+})
+
 describe('Session: plugin bar', () => {
   it('Timeline and Queue share one row; the queue panel opens below it', async () => {
     const f = vi.fn(async (u: string) => {

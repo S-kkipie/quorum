@@ -136,7 +136,7 @@ describe('Transcript pasted images', () => {
     expect(one.getAttribute('src')).toBe('/v/aa01/1.png')
     expect(two.getAttribute('src')).toBe('/v/aa02/2.jpg')
     expect(one.className).toContain('size-16')
-    expect(createView).toHaveBeenCalledWith('vps-1', 's1', `${IMG}/1.png`, true)
+    expect(createView).toHaveBeenCalledWith('vps-1', 's1', `${IMG}/1.png`, 'images')
     fireEvent.click(screen.getByRole('button', { name: 'Open Image #2' }))
     expect(onOpenFile).toHaveBeenCalledWith(`${IMG}/2.jpg`, { images: true })
   })
@@ -182,12 +182,67 @@ describe('Transcript pasted images', () => {
       ev(5, 'tool_start', { id: 't2', name: 'Write', summary: '/p/r.html', input: { file_path: '/p/r.html', content: '<img src="https://example.com/d.png">' } }),
       ev(6, 'tool_end', { id: 't2', ok: true, ms: 1, output: 'ok' }),
       ev(7, 'info', { text: '<img src="https://example.com/e.png">' }),
+      ev(8, 'tool_start', { id: 't3', name: 'Write', summary: '/p/w.png', input: { file_path: '/p/w.png' } }),
+      ev(9, 'tool_end', { id: 't3', ok: true, ms: 1, output: 'ok' }),
     ]
     const { container } = render(<Transcript machine="vps-1" sessionId="s1" base="/p" onOpenFile={() => {}} events={events} live="![l](https://example.com/f.png)" />)
     await screen.findByRole('img', { name: 'Image #1' })
+    await screen.findByRole('img', { name: 'shot.png' })
     const nonData = [...container.querySelectorAll('img')].filter((i) => !(i.getAttribute('src') ?? '').startsWith('data:'))
-    expect(nonData).toHaveLength(1)
-    expect(nonData[0].getAttribute('alt')).toBe('Image #1')
-    expect(nonData[0].getAttribute('src')).toMatch(/^\/v\/[0-9a-f]+\/1\.png$/)
+    expect(nonData.map((i) => i.getAttribute('alt'))).toEqual(['Image #1', 'shot.png'])
+    for (const i of nonData) expect(i.getAttribute('src')).toMatch(/^\/v\/[0-9a-f]+\/[^/]+$/)
+    expect(createView.mock.calls.map((c) => c.slice(2))).toEqual([[`${IMG}/1.png`, 'images'], ['/p/shot.png', 'read']])
+  })
+})
+
+describe('Transcript read images', () => {
+  const read = (seq: number, id: string, file: string, ok = true) => [
+    ev(seq, 'tool_start', { id, name: 'Read', summary: file, input: { file_path: file } }),
+    ev(seq + 1, 'tool_end', { id, ok, ms: 1, output: '' }),
+  ]
+  afterEach(() => { createView.mockReset(); resetPastedImageLinks() })
+
+  it('a Read of an image shows a 64 px thumbnail in the collapsed row; tap opens the Viewer in read mode', async () => {
+    createView.mockImplementation(async (_m: string, _s: string, p: string) => ({ url: `/v/beef/${p.split('/').pop()}` }))
+    const onOpenFile = vi.fn()
+    render(<Transcript machine="vps-1" sessionId="s1" base="/p" onOpenFile={onOpenFile} events={read(1, 't1', '/home/u/Shot.PNG')} />)
+    const img = await screen.findByRole('img', { name: 'Shot.PNG' })
+    expect(img.getAttribute('src')).toBe('/v/beef/Shot.PNG')
+    expect(img.className).toContain('size-16')
+    expect(screen.getByRole('button', { name: /Read Shot\.PNG/ }).getAttribute('aria-expanded')).toBe('false')
+    expect(createView).toHaveBeenCalledWith('vps-1', 's1', '/home/u/Shot.PNG', 'read')
+    fireEvent.click(screen.getByRole('button', { name: 'Open Shot.PNG' }))
+    expect(onOpenFile).toHaveBeenCalledWith('/home/u/Shot.PNG', { read: true })
+  })
+
+  it('a grouped Read row shows at most 4 thumbnails and +N; non-images, relative and failed reads get none', async () => {
+    createView.mockImplementation(async (_m: string, _s: string, p: string) => ({ url: `/v/beef/${p.split('/').pop()}` }))
+    const files = ['/p/1.png', '/p/a.ts', '/p/2.jpg', '/p/3.jpeg', '/p/4.gif', '/p/5.webp', '/p/6.png']
+    const events = [...files.flatMap((f, k) => read(1 + 2 * k, `t${k}`, f)), ...read(20, 'tx', 'rel.png'), ...read(30, 'ty', '/p/bad.png', false)]
+    render(<Transcript machine="vps-1" sessionId="s1" base="/p" onOpenFile={() => {}} events={events} />)
+    await screen.findByRole('img', { name: '4.gif' })
+    expect(screen.getAllByRole('img').map((i) => i.getAttribute('alt'))).toEqual(['1.png', '2.jpg', '3.jpeg', '4.gif'])
+    expect(createView).toHaveBeenCalledTimes(4)
+    // +N is a 64 px button that opens the row, which lists every file
+    const more = screen.getByRole('button', { name: 'Show 2 more images' })
+    expect(more.textContent).toBe('+2')
+    expect(more.className).toContain('size-16')
+    const row = screen.getByRole('button', { name: /Read 1\.png and 8 more/ })
+    expect(row.getAttribute('aria-expanded')).toBe('false')
+    fireEvent.click(more)
+    expect(row.getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByText(/\/p\/6\.png/)).toBeTruthy()
+  })
+
+  it('a refused or foreign link shows a placeholder, never an img', async () => {
+    createView.mockImplementation(async (_m: string, _s: string, p: string) => {
+      if (p.endsWith('a.png')) throw new Error('This image is not available.')
+      return { url: 'https://evil.example/v/ab/b.png' }
+    })
+    const { container } = render(<Transcript machine="vps-1" sessionId="s1" events={[...read(1, 't1', '/p/a.png'), ...read(5, 't2', '/q/b.png')]} />)
+    await waitFor(() => expect(createView).toHaveBeenCalledTimes(2))
+    await new Promise((r) => setTimeout(r, 0))
+    expect(container.querySelector('img')).toBeNull()
+    expect(screen.getByText('a.png', { selector: 'button span' })).toBeTruthy()
   })
 })

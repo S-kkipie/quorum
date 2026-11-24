@@ -51,12 +51,14 @@ async function readCapped(r: Response, max: number): Promise<{ text: string; cut
 }
 
 /** Full-screen viewer of a file of a session, served by the hub through a short-lived /v/ link. */
-export default function Viewer({ machine, sessionId, path, base = '', images = false, onBack }: {
+export default function Viewer({ machine, sessionId, path, base = '', images = false, read = false, onBack }: {
   machine: string
   sessionId: string
   path: string
   /** an image pasted in the terminal: the link comes from the session's images folder */
   images?: boolean
+  /** an image Claude read with the Read tool: the link comes from the image's own folder */
+  read?: boolean
   /** session base, only used to show the folder relative to it */
   base?: string
   onBack: () => void
@@ -75,7 +77,8 @@ export default function Viewer({ machine, sessionId, path, base = '', images = f
     setSrc(''); setError(''); setText(''); setCut(false)
     ;(async () => {
       try {
-        const { url } = await (images ? createView(machine, sessionId, path, true) : createView(machine, sessionId, path))
+        const mode = images ? 'images' : read ? 'read' : undefined
+        const { url } = await (mode ? createView(machine, sessionId, path, mode) : createView(machine, sessionId, path))
         const full = hubUrl() + url
         if (kind === 'md' || kind === 'code') {
           const r = await fetch(full)
@@ -94,7 +97,7 @@ export default function Viewer({ machine, sessionId, path, base = '', images = f
       }
     })()
     return () => { live = false }
-  }, [machine, sessionId, path, kind, nonce, images])
+  }, [machine, sessionId, path, kind, nonce, images, read])
 
   const openTab = useCallback(() => { if (src) window.open(src, '_blank', 'noopener') }, [src])
   const where = [machine, folderOf(path, base || path.replace(/[\\/]+[^\\/]*$/, ''))].filter(Boolean).join(' · ')

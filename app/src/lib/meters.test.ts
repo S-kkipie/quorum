@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { contextTone, formatTokens, resetIn, usageTone } from './meters'
+import { accountUsageOf, contextTone, formatTokens, resetIn, usageTone } from './meters'
+import type { AccountUsage } from '../proto.gen'
 
 describe('meters', () => {
   it('formatTokens', () => {
@@ -20,5 +21,14 @@ describe('meters', () => {
     expect(resetIn(at(-1000), now)).toBe('')
     expect(resetIn('', now)).toBe('')
     expect(resetIn('garbage', now)).toBe('')
+  })
+  it('accountUsageOf: by accountKey, else machine/account; nothing otherwise', () => {
+    const u = (key: string): AccountUsage => ({ key, alias: 'a', fiveHour: { pct: 1, resetsAt: '' }, sevenDay: { pct: 2, resetsAt: '' }, at: 1 })
+    const usage = { k1: u('k1'), 'm1/work': u('m1/work') }
+    expect(accountUsageOf(usage, { accountKey: 'k1', machine: 'm1', account: 'work' })?.key).toBe('k1')
+    expect(accountUsageOf(usage, { accountKey: '', machine: 'm1', account: 'work' })?.key).toBe('m1/work')
+    expect(accountUsageOf(usage, { accountKey: 'k2', machine: 'm1', account: 'work' })).toBeUndefined()
+    expect(accountUsageOf(usage, { accountKey: '', machine: 'm1', account: '' })).toBeUndefined()
+    expect(accountUsageOf({}, { accountKey: 'k1', machine: 'm1', account: 'work' })).toBeUndefined()
   })
 })

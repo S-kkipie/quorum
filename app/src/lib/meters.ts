@@ -1,4 +1,15 @@
+import type { AccountUsage } from '../proto.gen'
+
 export type Tone = 'ok' | 'warn' | 'danger'
+
+/** A usage report older than this is shown dimmed. */
+export const USAGE_STALE_MS = 3_600_000
+
+/** The usage of a session's account: by accountKey, else by `machine/account` (the hub's fallback key). */
+export function accountUsageOf(usage: Record<string, AccountUsage>, s: { accountKey: string; machine: string; account: string }): AccountUsage | undefined {
+  const key = s.accountKey || (s.account ? `${s.machine}/${s.account}` : '')
+  return key && Object.hasOwn(usage, key) ? usage[key] : undefined
+}
 
 const trim = (n: number): string => String(Math.round(n * 10) / 10)
 

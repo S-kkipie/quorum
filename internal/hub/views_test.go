@@ -119,6 +119,7 @@ func TestViewLinkAndServe(t *testing.T) {
 	defer vf.mu.Unlock()
 	require.Len(t, vf.reads, 2)
 	require.Equal(t, "/work/proj", vf.reads[0]["base"])
+	require.NotContains(t, vf.reads[0], "imageOnly") // a project link is not limited to images
 	require.EqualValues(t, 1<<20, vf.reads[1]["offset"])
 }
 

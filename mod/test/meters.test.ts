@@ -75,3 +75,17 @@ test('contextOf: reported percent is never flagged as an estimate; pct and flag 
   expect(contextOf({ window: 1000, tokens: 250 })).toEqual({ pct: 25, estimate: true })
   expect(contextOf({ window: 1000 })).toBeUndefined()
 })
+
+test('reportStart: rate limits at once with usageAt, then the 30 s throttle applies; nothing without rate limits', () => {
+  const { m, updates, advance } = setup()
+  m.reportStart({ context: { window: 1000, percent: 4 } })
+  m.reportStart({ rateLimits: [] })
+  m.reportStart({ rateLimits: [{ kind: 'spend_limit', percentUsed: 1 }] })
+  m.reportStart(undefined)
+  expect(updates).toHaveLength(0)
+  m.reportStart({ rateLimits: rl as never }, 1_000_500)
+  expect(updates).toEqual([{ tokens: { in: 0, out: 0, cache: 0 }, rateLimits: [{ kind: 'five_hour', percentUsed: 12.5, resetsAt: '2026-01-01T00:00:00Z' }], usageAt: 1_000_500 }])
+  advance(10_000)
+  m.report({ rateLimits: rl as never })
+  expect(updates).toHaveLength(1)
+})
