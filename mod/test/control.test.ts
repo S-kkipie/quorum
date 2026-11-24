@@ -389,3 +389,13 @@ test('tool.check with a terminal (hasTerminal true, or failing) opens the dialog
     expect(await p).toEqual({ decision: 'allow', reason: 'Allowed in the terminal' })
   }
 })
+
+test('a device prompt whose _ or + mark a plugin stripped is still recognised (no duplicate user event)', async () => {
+  const f = fake()
+  await f.control.handle(cmd({ type: 'prompt', text: '_Reply with ok', mode: 'queue' }))
+  await f.control.handle(cmd({ type: 'prompt', text: '+ think about it', mode: 'queue' }))
+  await flush()
+  expect(f.control.takeFromDevice('Reply with ok')).toBe(true)
+  expect(f.control.takeFromDevice('think about it')).toBe(true)
+  expect(f.control.takeFromDevice('Reply with ok')).toBe(false)
+})

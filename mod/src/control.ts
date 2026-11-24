@@ -311,7 +311,10 @@ export function makeControl(deps: ControlDeps) {
 
     /** Consumes the text if it came from the device (its `user` was already emitted). */
     takeFromDevice(text: string): boolean {
-      const i = fromDevice.indexOf(text)
+      // use-haiku / think-hard strip a leading `_` / `+` (and the spaces after it) before the turn starts
+      const unmarked = (t: string) => (/^(_(?!_)|\+)/.test(t) ? t.slice(1).trimStart() : t)
+      let i = fromDevice.indexOf(text)
+      if (i < 0) i = fromDevice.findIndex(t => unmarked(t) === text)
       if (i < 0) return false
       fromDevice.splice(i, 1)
       return true

@@ -4,6 +4,8 @@ import { resetIn, toneClass, usageTone } from '../lib/meters'
 const STALE_MS = 3_600_000
 
 function Win({ label, w, now }: { label: string; w: UsageWindow; now: number }) {
+  // a window Claude Code did not report has no reset time: show nothing rather than "0%"
+  if (!w.resetsAt) return null
   const tone = usageTone(w.pct)
   const reset = resetIn(w.resetsAt, now)
   return (

@@ -30,4 +30,10 @@ describe('UsageStrip', () => {
     expect(screen.getByText('5h 96%').getAttribute('data-tone')).toBe('danger')
     expect(screen.getByText('week 80%').getAttribute('data-tone')).toBe('warn')
   })
+  it('a window without a reset time (not reported) is not shown', () => {
+    const one = { ...u('k', 'work', 0, 24), fiveHour: { pct: 0, resetsAt: '' } }
+    const { container } = render(<UsageStrip usage={{ k: one }} now={NOW} />)
+    expect(text(container)).not.toContain('5h')
+    expect(text(container)).toContain('week 24%')
+  })
 })
