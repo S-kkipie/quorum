@@ -1,6 +1,7 @@
 import type { Project, SessionInfo } from '../proto.gen'
-import { SESSION_STATE, since } from '../lib/projects'
-import { ATTENTION } from '../lib/sessions'
+import { since, stateStyle } from '../lib/projects'
+import { byAttention, displayState, stateText } from '../lib/sessions'
+import { useWakeClock } from '../lib/useWakeClock'
 import { sessionTitle } from '../lib/title'
 
 const SHOWN = 3
@@ -16,14 +17,19 @@ export default function ProjectCard({ project, sessions, pending, lastActivity =
   onOpenSession?: (id: string) => void
 }) {
   const p = project
-  const ranked = sessions.map((x, i) => ({ x, i })).sort((a, b) => (ATTENTION[a.x.state] ?? 3) - (ATTENTION[b.x.state] ?? 3) || a.i - b.i).map((e) => e.x)
+  const ranked = byAttention(sessions)
+  const unread = sessions.some((x) => displayState(x) === 'done')
   const shown = ranked.slice(0, SHOWN)
   const more = ranked.length - shown.length
+  const now = useWakeClock(shown)
   return (
     <article className={`rounded-lg border bg-zinc-900/40 ${active ? 'border-blue-600' : 'border-zinc-800'}`}>
       <button onClick={() => onOpen?.(p.id)} className="block w-full p-3 text-left hover:bg-zinc-900/80">
         <span className="flex items-baseline justify-between gap-2">
-          <span className="truncate text-sm font-semibold">{p.name}</span>
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="truncate text-sm font-semibold">{p.name}</span>
+            {unread && <span role="img" aria-label="Unread sessions" className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" />}
+          </span>
           {pending > 0 && (
             <span className="shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 text-[11px] text-amber-300">
               {pending} {pending === 1 ? 'proposal' : 'proposals'}
@@ -41,13 +47,14 @@ export default function ProjectCard({ project, sessions, pending, lastActivity =
       {sessions.length > 0 && (
         <ul className="border-t border-zinc-800/80 py-1">
           {shown.map((s) => {
-            const st = SESSION_STATE[s.state] ?? SESSION_STATE.idle
+            const st = stateStyle(displayState(s))
+            const { text, title } = stateText(s, now)
             return (
               <li key={s.id}>
                 <button onClick={() => onOpenSession?.(s.id)} className="flex min-h-11 w-full items-center gap-2 px-3 py-1 text-left text-xs hover:bg-zinc-900">
                   <span className={`h-2 w-2 shrink-0 rounded-full ${st.dot}`} />
                   <span className="min-w-0 flex-1 truncate">{sessionTitle(s).title}</span>
-                  <span className={`shrink-0 ${st.text}`}>{st.label}</span>
+                  <span title={title} className={`min-w-0 truncate ${st.text}`}>{text}</span>
                 </button>
               </li>
             )

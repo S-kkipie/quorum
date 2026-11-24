@@ -57,9 +57,9 @@ test('simulated turn: exact event sequence', async () => {
   const ts = f.evs.find(e => e.kind === 'tool_start')!
   expect(ts.data).toEqual({ id: 't1', name: 'Bash', summary: 'ls', input: { command: 'ls' } })
   expect(f.evs.find(e => e.kind === 'tool_end')!.data.output.length).toBe(8000)
-  expect(f.evs.find(e => e.kind === 'turn_end')!.data).toEqual({ answer: 'listo', reason: 'answer', outputTokens: 7, tokens: { in: 0, out: 7, cache: 0 }, model: '' })
+  expect(f.evs.find(e => e.kind === 'turn_end')!.data).toEqual({ answer: 'listo', reason: 'answer', outputTokens: 7, tokens: { in: 0, out: 7, cache: 0 }, model: '', background: { tasks: 0, wakeAt: 0 } })
   await flush()
-  expect(f.updates).toEqual([{ state: 'working' }, { state: 'idle' }, { contextPct: 42 }])
+  expect(f.updates).toEqual([{ state: 'working' }, { state: 'idle', background: { tasks: 0, wakeAt: 0 } }, { contextPct: 42 }])
 })
 
 test('error without an answer uses the notice', () => {
@@ -88,7 +88,7 @@ test('service role: status only', async () => {
   h.turnComplete({ answer: 'r', agentId: 'g' })
   await flush()
   expect(f.kinds()).toEqual(['status', 'status'])
-  expect(f.updates).toEqual([{ state: 'working' }, { state: 'idle' }])
+  expect(f.updates).toEqual([{ state: 'working' }, { state: 'idle', background: { tasks: 0, wakeAt: 0 } }])
 })
 
 test('without a link: does nothing and does not throw', () => {
@@ -240,4 +240,27 @@ test('turnStart: the user event carries images only when there are some', () => 
   h.turnStart({ text: 'plain', images: [] })
   const users = f.evs.filter(e => e.kind === 'user').map(e => e.data)
   expect(users).toEqual([{ text: 'see [Image #1]', images: [{ n: 1, path: '/tmp/claude-1000/-a/S1/images/1.png' }] }, { text: 'plain' }])
+})
+
+test('Stop pressed in Claude Code on a running turn: its aborted turn_end carries stopped (the person was looking)', () => {
+  const f = fakeLink()
+  const h = makeHandlers(() => f.link)
+  const end = () => f.evs.filter(e => e.kind === 'turn_end').pop()!.data
+  h.turnStart({ text: 'go' })
+  h.sessionStop(true)
+  h.turnComplete({ answer: '', reason: 'aborted' })
+  expect(end().stopped).toBe(true)
+  // the next turn starts clean; an abort without a Stop (Quorum's $.turn.abort) is not marked
+  h.turnStart({ text: 'again' })
+  h.turnComplete({ answer: '', reason: 'aborted' })
+  expect(end().stopped).toBeUndefined()
+  // a Stop with no turn running, or a turn that still answered, is not marked
+  h.sessionStop(false)
+  h.turnStart({ text: 'x' })
+  h.turnComplete({ answer: 'done', reason: 'answer' })
+  expect(end().stopped).toBeUndefined()
+  h.turnStart({ text: 'y' })
+  h.sessionStop(true)
+  h.turnComplete({ answer: 'done', reason: 'answer' })
+  expect(end().stopped).toBeUndefined()
 })

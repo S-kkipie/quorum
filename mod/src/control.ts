@@ -1,3 +1,4 @@
+import { type BackgroundInfo, nextCron, stateOf, taskEnds } from './background'
 import { summarize } from './events'
 import type { Link } from './link'
 import { permissionRace } from './permission'
@@ -120,6 +121,27 @@ export type ControlDeps = {
   /** `runPluginCommand` (plugincmd.ts) over `$`: an allow-listed plugin slash command. */
   runPlugin?: (command: string, args: string) => Promise<{ ok: boolean; error?: string }>
   newId?: () => string
+  /** `$.clock.now()` (ms); Date.now when absent. */
+  now?: () => number
+}
+
+/** A scheduled wake-up: when it fires and, for a recurring cron, its expression. */
+type Wake = { at: number; cron?: string; recurring: boolean }
+/** `ScheduleWakeup` has no id: the dynamic loop has at most one pending wake-up. */
+const LOOP_WAKE = 'schedule-wakeup'
+const WAKE_MIN_S = 60
+const WAKE_MAX_S = 3600
+/** A wake-up this late (ms) without its turn did not fire: it is dropped (a recurring cron moves on). */
+export const WAKE_GRACE_MS = 60_000
+/** After a task ends between turns, how long to wait for a follow-up turn before re-publishing. */
+export const RECHECK_MS = 5000
+/** Longest single timer (setTimeout overflows past 2^31-1 ms): a later wake-up is re-armed on expiry. */
+const MAX_SLEEP_MS = 2 ** 31 - 1
+
+/** What the classic Stop hook reports (both fields absent on older builds). */
+export type StopReport = {
+  background_tasks?: ReadonlyArray<{ id?: unknown }>
+  session_crons?: ReadonlyArray<{ id?: unknown; schedule?: unknown; recurring?: unknown }>
 }
 
 /** What the tool.check hook lends to the permission race. */
@@ -159,6 +181,10 @@ export function makeControl(deps: ControlDeps) {
   const midTurn: string[] = []
   const fromDevice: string[] = []
   const tasks = new Set<string>() // known live background tasks and subagents
+  const wakes = new Map<string, Wake>() // scheduled wake-ups (ScheduleWakeup, CronCreate)
+  const now = () => { try { return deps.now?.() ?? Date.now() } catch { return Date.now() } }
+  // the state last published after a turn ended (to re-send only real changes)
+  let published = ''
   const asks = new Asks(deps.getLink, deps.sleep, deps.newId ?? randomId)
 
   const link = () => { try { return deps.getLink() } catch { return undefined } }
@@ -185,6 +211,7 @@ export function makeControl(deps: ControlDeps) {
     asks.withdrawKind('permission')
     const ids = [...tasks]
     tasks.clear()
+    wakes.clear()
     // /exit with live background work opens a dialog nobody on the device
     // can answer: what is known is stopped first (without blocking if it fails).
     await Promise.all(ids.map(id => deps.stopTask(id).catch(() => undefined)))
@@ -197,12 +224,94 @@ export function makeControl(deps: ControlDeps) {
     const res = r.result as Record<string, unknown> | undefined
     if (e.tool === 'TaskStop') {
       const id = e.task_id ?? e.shell_id
-      if (typeof id === 'string') tasks.delete(id)
+      if (typeof id === 'string' && tasks.delete(id)) recheck()
       return
     }
     if (r.deny !== undefined || r.isError || !res || typeof res !== 'object') return
     if (typeof res.backgroundTaskId === 'string') tasks.add(res.backgroundTaskId)
     if (e.tool === 'Monitor' && typeof res.taskId === 'string') tasks.add(res.taskId)
+    if (e.tool === 'ScheduleWakeup') {
+      if (e.stop === true || res.stopped === true) { wakes.delete(LOOP_WAKE); return }
+      const delay = typeof e.delaySeconds === 'number' ? Math.min(WAKE_MAX_S, Math.max(WAKE_MIN_S, e.delaySeconds)) : undefined
+      const at = typeof res.scheduledFor === 'number' ? res.scheduledFor : delay !== undefined ? now() + delay * 1000 : undefined
+      if (at !== undefined) wakes.set(LOOP_WAKE, { at, recurring: false })
+      return
+    }
+    if (e.tool === 'CronCreate' && typeof res.id === 'string') {
+      const cron = typeof e.cron === 'string' ? e.cron : undefined
+      const recurring = typeof res.recurring === 'boolean' ? res.recurring : e.recurring !== false
+      const at = typeof res.nextFireAt === 'number' ? res.nextFireAt : cron ? nextCron(cron, now()) : undefined
+      if (at !== undefined) wakes.set(res.id, { at, cron, recurring })
+      return
+    }
+    if (e.tool === 'CronDelete') {
+      if (typeof e.id === 'string') wakes.delete(e.id)
+      if (res.endedLoopWakeup === true) wakes.delete(LOOP_WAKE)
+    }
+  }
+
+  /** A wake-up whose time came (its turn started) or passed: one-shots are dropped, recurring crons move on. */
+  function expire(before: number): void {
+    const t = now()
+    for (const [id, w] of [...wakes]) {
+      if (w.at > before) continue
+      const next = w.recurring && w.cron ? nextCron(w.cron, t) : undefined
+      if (next === undefined) wakes.delete(id)
+      else w.at = next
+    }
+  }
+
+  /**
+   * Live tasks and the next wake-up. One just due (within WAKE_GRACE_MS) still counts: its
+   * turn is about to start; one later than that never fired and is dropped.
+   */
+  function background(): BackgroundInfo {
+    expire(now() - WAKE_GRACE_MS)
+    let wakeAt = 0
+    for (const w of wakes.values()) if (!wakeAt || w.at < wakeAt) wakeAt = w.at
+    return { tasks: tasks.size, wakeAt }
+  }
+
+  /**
+   * A task ended between turns: if no follow-up turn starts within RECHECK_MS, the state is
+   * re-published (otherwise the session could stay `background` with nothing left).
+   */
+  function recheck(): void {
+    if (turnId !== undefined) return
+    void deps.sleep(RECHECK_MS).then(() => republish(), () => {})
+  }
+
+  /**
+   * Re-sends the end-of-turn state when it changed: only between turns and with no
+   * question open (needs_you and working win).
+   */
+  function republish(): void {
+    if (turnId !== undefined || asks.pending.length) return
+    const bg = background()
+    watchWake(bg.wakeAt)
+    const state = stateOf(bg)
+    const key = `${state}:${bg.tasks}:${bg.wakeAt}`
+    if (key === published) return
+    published = key
+    emit('status', { state, background: bg })
+    try { link()?.update({ state, background: bg }) } catch { /* never toward Claude Code */ }
+  }
+
+  /**
+   * A published wake-up gets one re-check right after its grace (WAKE_GRACE_MS): if its turn never
+   * started, the state is re-published without it, so "waking up" does not stick (a recurring cron
+   * moves on and its next time is watched the same way). One timer per wake-up time.
+   */
+  let watched = 0
+  function watchWake(wakeAt: number): void {
+    if (!wakeAt || wakeAt === watched) return
+    watched = wakeAt
+    const ms = Math.min(MAX_SLEEP_MS, Math.max(0, wakeAt + WAKE_GRACE_MS - now()) + 1)
+    void deps.sleep(ms).then(() => {
+      if (watched !== wakeAt) return // a newer wake-up is watched instead
+      watched = 0
+      if (turnId === undefined) republish()
+    }, () => {})
   }
 
   async function question(e: Call, run: () => Promise<CallResult>): Promise<CallResult> {
@@ -243,8 +352,9 @@ export function makeControl(deps: ControlDeps) {
         case 'prompt': {
           const text = c.text ?? ''
           if (!text.trim()) return
-          // the hub does not publish the prompt: the device's user event comes from here, once
-          emit('user', { text })
+          // the hub does not publish the prompt: the device's user event comes from here, once.
+          // device: true tells the hub it was not typed in the terminal (that one marks the session seen).
+          emit('user', { text, device: true })
           if (c.mode === 'now' && turnId) { midTurn.push(text); return }
           if (c.mode === 'interrupt' && turnId) {
             // 'now' prompts not yet delivered go first, in the same prompt (not after it)
@@ -289,17 +399,24 @@ export function makeControl(deps: ControlDeps) {
     turnStart(e: { turnId?: string; agentId?: string }): void {
       if (e.agentId !== undefined) return
       turnId = e.turnId
+      published = ''
+      // a wake-up due now fired: this is its turn
+      expire(now())
     },
 
     /** turn.complete: end of a subagent or the main turn (undelivered 'now' → submit). */
     turnEnd(e: { agentId?: string }): void {
       if (e.agentId !== undefined) {
-        tasks.delete(e.agentId)
+        if (tasks.delete(e.agentId)) recheck()
         // its pending permissions died with it
         asks.withdrawAgent(e.agentId)
         return
       }
       turnId = undefined
+      // what turn.complete published (events.ts reads background() for it)
+      const bg = background()
+      published = `${stateOf(bg)}:${bg.tasks}:${bg.wakeAt}`
+      watchWake(bg.wakeAt)
       // a waiting permission died with the turn (Esc, abort, interrupt), subagents' too
       asks.withdrawKind('permission')
       for (const t of midTurn.splice(0)) void submitDevice(t)
@@ -307,6 +424,47 @@ export function makeControl(deps: ControlDeps) {
 
     agentSpawned(id: string | undefined): void {
       if (id) tasks.add(id)
+    },
+
+    /** Live background tasks and the next scheduled wake-up (ms, 0 = none). */
+    background,
+
+    /**
+     * A `<task-notification>` prompt (prompt.submit, origin task-notification): the tasks it
+     * reports as ended are dropped. Nothing is published at once: dequeued while idle it starts
+     * the follow-up turn itself, and a transient idle would read as a finished session. Without
+     * a follow-up turn, the bounded re-check (RECHECK_MS) publishes the new state.
+     */
+    taskNotification(text: string): void {
+      let removed = false
+      for (const id of taskEnds(text)) removed = tasks.delete(id) || removed
+      if (removed) recheck()
+    },
+
+    /**
+     * The classic Stop hook's report at the end of a main turn: what Claude Code still has in
+     * flight replaces the mod's own tracking (missed starts, missed ends); crons it lists that
+     * are not known are scheduled from their expression. Re-published if it changed after
+     * the turn ended.
+     */
+    stopHook(e: StopReport): void {
+      if (Array.isArray(e.background_tasks)) {
+        tasks.clear()
+        for (const t of e.background_tasks) if (typeof t?.id === 'string') tasks.add(t.id)
+      }
+      if (Array.isArray(e.session_crons)) {
+        if (!e.session_crons.length) wakes.clear()
+        const listed = new Set(e.session_crons.map(c => c?.id))
+        // a cron Claude Code no longer lists was deleted or fired (the loop's own wake-up has no id)
+        for (const id of [...wakes.keys()]) if (id !== LOOP_WAKE && !listed.has(id)) wakes.delete(id)
+        const t = now()
+        for (const c of e.session_crons) {
+          if (typeof c?.id !== 'string' || typeof c.schedule !== 'string' || wakes.has(c.id)) continue
+          const at = nextCron(c.schedule, t)
+          if (at !== undefined) wakes.set(c.id, { at, cron: c.schedule, recurring: c.recurring !== false })
+        }
+      }
+      republish()
     },
 
     /** Consumes the text if it came from the device (its `user` was already emitted). */

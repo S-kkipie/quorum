@@ -91,6 +91,17 @@ test('dedupe: the device prompt emits a single user', async () => {
   expect(f.kinds()).toEqual(['user', 'turn_start', 'status', 'turn_start', 'user', 'status'])
 })
 
+// Plan 7: the hub marks a session seen on a prompt typed in the terminal, never on one sent from a device.
+test('device prompts carry device: true; terminal-typed prompts do not', async () => {
+  const f = fake()
+  const h = makeHandlers(() => f.link, { fromDevice: t => f.control.takeFromDevice(t) })
+  await f.control.handle(cmd({ type: 'prompt', text: 'from the phone', mode: 'queue' }))
+  h.turnStart({ text: 'from the phone' })
+  h.turnStart({ text: 'typed here' })
+  const users = f.evs.filter(e => e.kind === 'user').map(e => e.data)
+  expect(users).toEqual([{ text: 'from the phone', device: true }, { text: 'typed here' }])
+})
+
 test('AskUserQuestion: the terminal wins → withdraw y ask_resolved{by:terminal}', async () => {
   const f = fake()
   let answer!: (r: any) => void

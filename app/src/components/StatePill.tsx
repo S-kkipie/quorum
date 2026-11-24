@@ -1,20 +1,18 @@
 import { Badge } from '@/components/ui/badge'
+import { stateStyle } from '../lib/projects'
+import { displayState, stateText } from '../lib/sessions'
+import { useWakeClock } from '../lib/useWakeClock'
+import type { SessionInfo } from '../proto.gen'
 
-const PILLS: Record<string, { label: string; cls: string; dot?: string }> = {
-  working: { label: 'Working', cls: 'bg-blue-500/15 text-blue-300 ring-blue-500/30', dot: 'bg-blue-400 animate-pulse' },
-  needs_you: { label: 'Needs permission', cls: 'bg-amber-500/15 text-amber-300 ring-amber-500/30', dot: 'bg-amber-400' },
-  waiting: { label: 'Waiting for you', cls: 'bg-zinc-500/15 text-zinc-300 ring-zinc-500/30' },
-  idle: { label: 'Waiting for you', cls: 'bg-zinc-500/15 text-zinc-300 ring-zinc-500/30' },
-  closed: { label: 'Closed', cls: 'bg-zinc-800/60 text-zinc-500 ring-zinc-700/40' },
-}
-
-/** Session state as a small rounded pill. */
-export default function StatePill({ state }: { state: string }) {
-  const p = PILLS[state] ?? PILLS.idle
+/** Session state as a small rounded pill: the detail when there is one ("2 tasks"), the label in its tooltip. */
+export default function StatePill({ session }: { session: Pick<SessionInfo, 'state' | 'unread' | 'background'> }) {
+  const d = displayState(session)
+  const p = stateStyle(d)
+  const { text, title } = stateText(session, useWakeClock([session]))
   return (
-    <Badge className={`gap-1.5 text-[11px] ring-1 ${p.cls}`}>
-      {p.dot && <span aria-hidden className={`h-1.5 w-1.5 rounded-full ${p.dot}`} />}
-      {p.label}
+    <Badge title={title} aria-label={title} className={`min-w-0 gap-1.5 text-[11px] ring-1 ${p.pill}`}>
+      {d !== 'idle' && d !== 'closed' && <span aria-hidden className={`h-1.5 w-1.5 shrink-0 rounded-full ${p.dot}`} />}
+      <span className="min-w-0 truncate">{text}</span>
     </Badge>
   )
 }

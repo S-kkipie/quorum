@@ -84,7 +84,8 @@ export default function Composer({ session }: { session: SessionInfo }) {
   }
 
   const off = !!block || busy || !text.trim()
-  const send: PromptMode = session.state === 'idle' ? 'queue' : 'now'
+  // 'now' joins a running turn; with no turn running (idle, background, waiting) Send is a normal prompt
+  const send: PromptMode = session.state === 'working' || session.state === 'needs_you' ? 'now' : 'queue'
   const btn = 'min-h-11 gap-1.5 rounded-lg px-3 text-sm disabled:opacity-40'
   const chipCls = (on: boolean) => `inline-flex min-h-11 items-center gap-1.5 rounded-full border px-4 text-sm disabled:opacity-40 ${on ? 'border-blue-500 bg-blue-600/20 text-blue-200' : 'border-zinc-700 bg-zinc-900 text-zinc-300'}`
   return (

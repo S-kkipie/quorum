@@ -88,6 +88,7 @@ export const register: Register = on => {
       stopTask: id => $.tool.call({ tool: 'TaskStop', task_id: id } as never),
       exit: () => $.command.run({ command: 'exit', args: '' } as never),
       sleep: ms => $.clock.sleep(ms),
+      now: () => Date.now(),
       runPlugin: (command, args) => runPluginCommand({
         commandRun: (c, a) => $.command.run({ command: c, args: a }),
       }, command, args),
@@ -143,6 +144,7 @@ export const register: Register = on => {
       launchReq: launchReq ?? '', herdrPane: herdrPane ?? '', herdrWorkspace: herdrWorkspace ?? '',
       account: '', accountKey: '', configDir, plugins, contextEstimate: false,
       tokens: { in: 0, out: 0, cache: 0 }, rateLimits: [], usageAt: 0, imagesDir: '',
+      background: { tasks: 0, wakeAt: 0 }, unread: false,
     }).catch(() => {})
     // the account's usage as Claude Code knows it at start (after link.start, which holds the info
     // updates apply to): reported right away, without the 30 s throttle, so the account shows on the
@@ -198,7 +200,33 @@ export const register: Register = on => {
     return started
   })
 
-  const h = makeHandlers(() => quorum.link, { fromDevice: t => quorum.control?.takeFromDevice(t) ?? false })
+  const h = makeHandlers(() => quorum.link, {
+    fromDevice: t => quorum.control?.takeFromDevice(t) ?? false,
+    background: () => quorum.control?.background(),
+  })
+
+  // A background task's end reaches the session as a `<task-notification>` prompt: its task
+  // is no longer pending (the follow-up turn it starts reports working on its own).
+  on('prompt.submit', async ($, e, next) => {
+    if ((e as { origin?: { kind?: string } }).origin?.kind === 'task-notification') {
+      try { quorum.control?.taskNotification(String(e.text ?? '')) } catch { /* never toward Claude Code */ }
+    }
+    return next(e)
+  })
+
+  // At the end of a main turn Claude Code says what is still in flight and which crons will
+  // wake the session (older builds omit both): the authority over the mod's own tracking.
+  on('classic.Stop', async ($, e, next) => {
+    const r = await next(e)
+    try { quorum.control?.stopHook(e as never) } catch { /* never toward Claude Code */ }
+    return r
+  })
+
+  // Stop pressed in Claude Code: noted before any await (it is raised before the abort settles)
+  on('session.stop', ($, e, next) => {
+    h.sessionStop(e.isTurnRunning === true)
+    return next(e)
+  })
 
   on('turn.start', async ($, e, next) => {
     quorum.control?.turnStart(e)

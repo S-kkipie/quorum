@@ -70,3 +70,21 @@ describe('SessionRowView closed row', () => {
     expect(screen.queryByText(/message/)).toBeNull()
   })
 })
+
+describe('SessionRowView state', () => {
+  it('shows Done · unread with a green unread dot', () => {
+    render(<ul><SessionRowView row={live({ state: 'idle', unread: true })} /></ul>)
+    expect(screen.getByText('Done · unread')).toBeTruthy()
+    expect(screen.getByRole('img', { name: 'Unread' }).className).toContain('bg-emerald-500')
+  })
+  it('no unread dot for a seen idle session', () => {
+    render(<ul><SessionRowView row={live({ state: 'idle' })} /></ul>)
+    expect(screen.getByText('Idle')).toBeTruthy()
+    expect(screen.queryByRole('img', { name: 'Unread' })).toBeNull()
+  })
+  it('background shows its detail', () => {
+    render(<ul><SessionRowView row={live({ state: 'background', background: { tasks: 2, wakeAt: 0 } })} /></ul>)
+    expect(screen.getByText('Background')).toBeTruthy()
+    expect(screen.getByText('2 tasks')).toBeTruthy()
+  })
+})

@@ -1,4 +1,4 @@
-import type { AccountUsage, Ask, Checkout, Conversation, Envelope, Event, Project, Proposal, SessionInfo, SessionTicket, Ticket, Workspace } from '../proto.gen'
+import type { AccountUsage, Ask, Attention, Checkout, Conversation, Envelope, Event, Project, Proposal, SessionInfo, SessionTicket, Ticket, Workspace } from '../proto.gen'
 import type { Machine, TicketView } from './api'
 
 export interface AppState {
@@ -32,14 +32,18 @@ export interface AppState {
   conversations: Record<string, Conversation[]>
   /** Subscription usage per account key (accountKey, or machine/alias). */
   usage: Record<string, AccountUsage>
+  /** Last attention the hub announced per session (needs_you or done), kept for native notifications. */
+  lastAttention: Record<string, LastAttention>
 }
+
+export interface LastAttention { kind: 'needs_you' | 'done'; at: number }
 
 /** Ask with the session it belongs to. */
 export type AskEntry = Ask & { session: string }
 
 export const initialState = (): AppState => ({
   machines: {}, sessions: {}, order: [], events: {}, live: {}, liveAgent: {}, asks: {}, replaced: {}, replacedBy: {},
-  workspaces: {}, projects: {}, tickets: {}, links: {}, proposals: {}, checkouts: {}, worked: {}, conversations: {}, usage: {},
+  workspaces: {}, projects: {}, tickets: {}, links: {}, proposals: {}, checkouts: {}, worked: {}, conversations: {}, usage: {}, lastAttention: {},
 })
 
 /** Inserts ev into the seq-sorted list, discarding duplicates. */
@@ -162,7 +166,12 @@ export function reduce(s: AppState, env: Envelope): AppState {
     case 'session_gone': {
       const cur = s.sessions[env.session]
       if (!cur) return s
-      return { ...s, sessions: { ...s.sessions, [cur.id]: { ...cur, state: 'closed' } }, live: omit(s.live, cur.id) }
+      return { ...s, sessions: { ...s.sessions, [cur.id]: { ...cur, state: 'closed', unread: false } }, live: omit(s.live, cur.id) }
+    }
+    case 'attention': {
+      const a = env.payload as Attention | null
+      if (!a?.session || (a.kind !== 'needs_you' && a.kind !== 'done')) return s
+      return { ...s, lastAttention: { ...s.lastAttention, [a.session]: { kind: a.kind, at: a.at } } }
     }
     case 'session_removed': {
       // closed without ever receiving a prompt: the hub deleted it
@@ -177,6 +186,7 @@ export function reduce(s: AppState, env: Envelope): AppState {
         liveAgent: omit(s.liveAgent, id),
         asks: Object.fromEntries(Object.entries(s.asks).filter(([, a]) => a.session !== id)),
         worked: omit(s.worked, id),
+        lastAttention: omit(s.lastAttention, id),
         replaced: omit(s.replaced, id),
         replacedBy: omit(s.replacedBy, id),
       }
@@ -242,6 +252,16 @@ export function dropBackfillDuplicates(list: Event[]): Event[] {
   if (first === Infinity) return list
   const out = list.filter((e) => e.seq > 0 || (e.ts < first && !(e.ts >= first - 2000 && liveKeys.has(evKey(e)))))
   return out.length === list.length ? list : out
+}
+
+/**
+ * Clears "unread" locally: once the app marked the session seen (the hub's upsert confirms it), and
+ * for the view of the session the owner is looking at (open and visible), so a turn that ends in
+ * front of them never flickers "unread" until the seen mark lands.
+ */
+export function markSeen(s: AppState, id: string): AppState {
+  const x = s.sessions[id]
+  return x?.unread ? { ...s, sessions: { ...s.sessions, [id]: { ...x, unread: false } } } : s
 }
 
 /** Merges historical events (backfill/pagination) into the state. */

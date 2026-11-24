@@ -10,7 +10,7 @@ vi.stubGlobal('fetch', fetchMock)
 
 const sess = (o: Partial<SessionInfo>): SessionInfo => ({
   id: 's1', recap: '', previousId: '', machine: 'm', name: 'n', cwd: '/x', root: '/x', model: '', role: 'work' as any,
-  state: 'idle' as any, contextPct: 0, startedAt: 0, updatedAt: 0, transcriptPath: '', repoUrl: '', branch: '', projectId: '', launchReq: '', herdrPane: '', herdrWorkspace: '', account: '', accountKey: '', configDir: '', plugins: [], contextEstimate: false, tokens: { in: 0, out: 0, cache: 0 }, rateLimits: [], usageAt: 0, imagesDir: '', ...o,
+  state: 'idle' as any, contextPct: 0, startedAt: 0, updatedAt: 0, transcriptPath: '', repoUrl: '', branch: '', projectId: '', launchReq: '', herdrPane: '', herdrWorkspace: '', account: '', accountKey: '', configDir: '', plugins: [], contextEstimate: false, tokens: { in: 0, out: 0, cache: 0 }, rateLimits: [], usageAt: 0, imagesDir: '', background: { tasks: 0, wakeAt: 0 }, unread: false, ...o,
 })
 
 function openMenu() {
@@ -38,6 +38,11 @@ describe('Composer', () => {
   })
   it('idle: Send uses mode queue', async () => {
     expect((await send(sess({ state: 'idle' as any }), 'Send')).body.mode).toBe('queue')
+  })
+  it('only a running turn (working, needs_you) sends now; background sends like idle', async () => {
+    expect((await send(sess({ state: 'needs_you' as any }), 'Send')).body.mode).toBe('now')
+    cleanup(); fetchMock.mockClear()
+    expect((await send(sess({ state: 'background' as any, background: { tasks: 1, wakeAt: 0 } }), 'Send')).body.mode).toBe('queue')
   })
   it('Queue and Interrupt', async () => {
     expect((await send(sess({ state: 'working' as any }), 'Queue')).body.mode).toBe('queue')

@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import Session from './Session'
 import { initialState } from '../lib/store'
 import { sess } from '../lib/fixtures.test-util'
+import * as api from '../lib/api'
 
+vi.mock('../lib/api', async (orig) => ({ ...(await orig<typeof import('../lib/api')>()), seen: vi.fn(async () => {}) }))
 vi.stubGlobal('fetch', vi.fn(async () => new Response('[]')))
 vi.stubGlobal('localStorage', { getItem: () => 'tok', setItem() {}, removeItem() {} })
 Element.prototype.scrollTo = Element.prototype.scrollTo ?? (() => {})
@@ -197,6 +199,43 @@ describe('Session: plugin bar', () => {
       expect(await screen.findByText('task one')).toBeTruthy()
     } finally {
       vi.stubGlobal('fetch', vi.fn(async () => new Response('[]')))
+    }
+  })
+})
+
+describe('Session: seen', () => {
+  const ev = (seq: number) => ({ seq, session: 'a', ts: seq, kind: 'assistant', data: { text: 'hi' } })
+  it('marks seen at mount with the last seq, clears unread via onSeen, and reports the header state', async () => {
+    const s = st()
+    s.sessions.a = sess('a', { state: 'idle', unread: true })
+    s.events = { a: [ev(3), ev(9)] }
+    const onSeen = vi.fn()
+    render(<Session state={s} id="a" onEvents={vi.fn()} onSeen={onSeen} />)
+    expect(api.seen).toHaveBeenCalledWith('a', 9)
+    await waitFor(() => expect(onSeen).toHaveBeenCalledWith('a'))
+    expect(screen.getAllByText('Done · unread').length).toBeGreaterThan(0)
+  })
+  it('a turn_end arriving while open is marked seen within 2 s', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.mocked(api.seen).mockClear()
+      const s = st()
+      s.sessions.a = sess('a', { state: 'working' })
+      s.events = { a: [ev(3)] }
+      const onSeen = vi.fn()
+      const { rerender } = render(<Session state={s} id="a" onEvents={vi.fn()} onSeen={onSeen} />)
+      expect(api.seen).toHaveBeenLastCalledWith('a', 3)
+      await vi.advanceTimersByTimeAsync(0)
+      onSeen.mockClear()
+      const next = { ...s, sessions: { ...s.sessions, a: { ...s.sessions.a, state: 'idle' as const, unread: true } },
+        events: { a: [ev(3), { seq: 4, session: 'a', ts: 4, kind: 'turn_end', data: {} }] } }
+      rerender(<Session state={next} id="a" onEvents={vi.fn()} onSeen={onSeen} />)
+      expect(api.seen).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(2000)
+      expect(api.seen).toHaveBeenLastCalledWith('a', 4)
+      expect(onSeen).toHaveBeenCalledWith('a')
+    } finally {
+      vi.useRealTimers()
     }
   })
 })

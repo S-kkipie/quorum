@@ -58,6 +58,25 @@ describe('App', () => {
     expect(screen.getByRole('tab', { name: 'Sessions' })).toBeTruthy()
   })
 
+  it('the open, visible session never shows as unread; hidden it does', async () => {
+    render(<App />)
+    const ws = () => FakeWS.all[FakeWS.all.length - 1]
+    await waitFor(() => expect(FakeWS.all.length).toBeGreaterThan(0))
+    const send = (e: any) => act(() => ws().onmessage({ data: JSON.stringify(e) }))
+    send({ type: 'session_upsert', payload: info('a') })
+    send({ type: 'session_upsert', payload: info('b') })
+    fireEvent.click(screen.getByRole('tab', { name: 'Sessions' }))
+    fireEvent.click(await screen.findByText('session-a'))
+    await screen.findByPlaceholderText('Type a message…')
+    send({ type: 'session_upsert', payload: { ...info('a'), unread: true } })
+    send({ type: 'session_upsert', payload: { ...info('b'), unread: true } })
+    expect(screen.getAllByRole('img', { name: 'Unread' })).toHaveLength(1) // b only
+    setVisibility('hidden')
+    expect(screen.getAllByRole('img', { name: 'Unread' })).toHaveLength(2)
+    setVisibility('visible')
+    expect(screen.getAllByRole('img', { name: 'Unread' })).toHaveLength(1)
+  })
+
   it('follows the replaced session without remounting or losing the draft', async () => {
     render(<App />)
     const ws = () => FakeWS.all[FakeWS.all.length - 1]

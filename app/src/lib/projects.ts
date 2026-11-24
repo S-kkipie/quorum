@@ -1,6 +1,6 @@
 import type { Project, SessionInfo, Ticket } from '../proto.gen'
 import type { AppState } from './store'
-import { ATTENTION } from './sessions'
+import { attentionRank } from './sessions'
 
 /** Normalized statuses in display order (done is folded at the end). */
 export const STATUSES = ['todo', 'in_progress', 'in_review', 'blocked', 'done'] as const
@@ -9,13 +9,17 @@ export const STATUS_LABEL: Record<string, string> = {
 }
 
 /** Session states with their color (shared by the session list and the board). */
-export const SESSION_STATE: Record<string, { label: string; dot: string; text: string }> = {
-  working: { label: 'working', dot: 'bg-blue-500', text: 'text-blue-400' },
-  needs_you: { label: 'needs you', dot: 'bg-amber-500', text: 'text-amber-400' },
-  waiting: { label: 'waiting', dot: 'bg-zinc-500', text: 'text-zinc-400' },
-  idle: { label: 'idle', dot: 'bg-zinc-500', text: 'text-zinc-400' },
-  closed: { label: 'closed', dot: 'bg-zinc-700', text: 'text-zinc-600' },
+export const SESSION_STATE: Record<string, { label: string; dot: string; text: string; pill: string }> = {
+  needs_you: { label: 'Needs you', dot: 'bg-amber-500', text: 'text-amber-400', pill: 'bg-amber-500/15 text-amber-300 ring-amber-500/30' },
+  done: { label: 'Done · unread', dot: 'bg-emerald-500', text: 'text-emerald-400', pill: 'bg-emerald-500/15 text-emerald-300 ring-emerald-500/30' },
+  working: { label: 'Working', dot: 'bg-blue-500 animate-pulse', text: 'text-blue-400', pill: 'bg-blue-500/15 text-blue-300 ring-blue-500/30' },
+  background: { label: 'Background', dot: 'bg-violet-500', text: 'text-violet-400', pill: 'bg-violet-500/15 text-violet-300 ring-violet-500/30' },
+  idle: { label: 'Idle', dot: 'bg-zinc-500', text: 'text-zinc-400', pill: 'bg-zinc-500/15 text-zinc-300 ring-zinc-500/30' },
+  closed: { label: 'Closed', dot: 'bg-zinc-700', text: 'text-zinc-600', pill: 'bg-zinc-800/60 text-zinc-500 ring-zinc-700/40' },
 }
+
+/** Style of a session's display state (unknown states look idle). */
+export const stateStyle = (display: string) => SESSION_STATE[display] ?? SESSION_STATE.idle
 
 export const toMs = (ts: number) => (ts > 1e12 ? ts : ts * 1000)
 
@@ -32,10 +36,10 @@ export function projectSessions(s: AppState, projectId: string): SessionInfo[] {
   return s.order.map((id) => s.sessions[id]).filter((x) => x && x.projectId === projectId && x.role !== 'service' && x.state !== 'closed')
 }
 
-/** Lowest ATTENTION rank among the project's live sessions (99 when it has none). */
+/** Lowest attention rank among the project's live sessions (99 when it has none). */
 export function projectAttention(s: AppState, projectId: string): number {
   let best = 99
-  for (const x of projectSessions(s, projectId)) best = Math.min(best, ATTENTION[x.state] ?? 3)
+  for (const x of projectSessions(s, projectId)) best = Math.min(best, attentionRank(x))
   return best
 }
 

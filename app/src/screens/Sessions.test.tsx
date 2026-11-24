@@ -31,4 +31,17 @@ describe('Sessions tab', () => {
     expect(screen.getAllByRole('button', { name: 'Session actions' })).toHaveLength(1)
     expect(screen.getByText(/Project p1/)).toBeTruthy()
   })
+  it('orders a machine by attention', () => {
+    const s = {
+      ...initialState(), machines: { 'vps-1': mach('vps-1') },
+      sessions: {
+        a: sess('a', { recap: 'Aaa idle', machine: 'vps-1' }), b: sess('b', { recap: 'Bbb working', machine: 'vps-1', state: 'working' }),
+        c: sess('c', { recap: 'Ccc done', machine: 'vps-1', unread: true }), d: sess('d', { recap: 'Ddd needs', machine: 'vps-1', state: 'needs_you' }),
+      },
+      order: ['a', 'b', 'c', 'd'],
+    }
+    render(<Sessions state={s} />)
+    const titles = screen.getAllByRole('listitem').map((x) => x.textContent!.slice(0, 3))
+    expect(titles).toEqual(['Ddd', 'Ccc', 'Bbb', 'Aaa'])
+  })
 })

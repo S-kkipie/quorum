@@ -1,9 +1,9 @@
-import { lazy, useCallback, useEffect, useRef, useState } from 'react'
+import { lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Plus, Settings } from 'lucide-react'
 import { UNAUTH_EVENT, getToken, listMachines, listUsage, openTerminal, listProjects, loadProposals, listSessions, listTickets, listWorkspaces, setDevApi, type TicketView } from './lib/api'
 import { connectLive, type Live } from './lib/live'
 import { EarlyLaunches, pendingReducer, type Pending } from './lib/launch'
-import { addEvents, initialState, reduce, replaceSessions, seed, setCheckouts, setConversations, setProjectsData, setTicketDetail, setTickets, setUsage } from './lib/store'
+import { addEvents, initialState, markSeen, reduce, replaceSessions, seed, setCheckouts, setConversations, setProjectsData, setTicketDetail, setTickets, setUsage } from './lib/store'
 import LaunchDialog from './components/LaunchDialog'
 import TicketDetail from './components/TicketDetail'
 import type { Checkout, Conversation, Envelope, Event, TermFrame } from './proto.gen'
@@ -13,9 +13,11 @@ import ProjectTickets from './screens/ProjectTickets'
 import Projects from './screens/Projects'
 import Pair from './screens/Pair'
 import Sessions from './screens/Sessions'
+import { attentionCount } from './lib/sessions'
 import Starting from './screens/Starting'
 import Terminal from './screens/Terminal'
 import Viewer from './screens/Viewer'
+import { usePageVisible } from './lib/useMarkSeen'
 import { frames } from './lib/frames'
 import LazyBoundary from './components/LazyBoundary'
 import { Button } from './components/ui/button'
@@ -97,6 +99,7 @@ function Main() {
     setState((s) => reduce(s, e))
   }, [])
   const onEvents = useCallback((id: string, evs: Event[]) => setState((s) => addEvents(s, id, evs)), [])
+  const onSeen = useCallback((id: string) => setState((s) => markSeen(s, id)), [])
   const onTickets = useCallback((pid: string, v: TicketView[]) => setState((s) => setTickets(s, pid, v)), [])
   const onCheckouts = useCallback((pid: string, cos: Checkout[]) => setState((s) => setCheckouts(s, pid, cos)), [])
   const onConversations = useCallback((m: string, root: string, l: Conversation[]) => setState((s) => setConversations(s, m, root, l)), [])
@@ -190,6 +193,13 @@ function Main() {
     else if (seenSession.current === current) { seenSession.current = null; back() }
   }, [current, state.sessions]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // The session the owner is looking at (open and the page visible) reads as seen everywhere, so a
+  // turn that ends in front of them never flickers "unread" before useMarkSeen's mark lands.
+  const visible = usePageVisible()
+  const viewing = !!current && vanished.current !== current && visible && !viewer && !terminal && !starting && (!wide || (tab === 'sessions' && config === null))
+  const shown = useMemo(() => (viewing && current ? markSeen(state, current) : state), [viewing, current, state])
+  const attention = attentionCount(Object.values(shown.sessions).filter((x) => x.role !== 'service'))
+
   const [connected, setConnected] = useState(false)
   const live = useRef<Live | null>(null)
 
@@ -265,9 +275,9 @@ function Main() {
   }
   const onViewTerminal = (machine: string, pane: string) => go({ terminal: { machine, pane } })
   const openConfig = (id: string) => go({ config: id, starting: false })
-  const dialog = launching && <LaunchDialog state={state} onClose={() => setLaunching(false)} onLaunched={onLaunched} />
+  const dialog = launching && <LaunchDialog state={shown} onClose={() => setLaunching(false)} onLaunched={onLaunched} />
   const top = (
-    <TopBar tab={tab} connected={connected} onTab={(t) => go({ tab: t, project: null, projectTickets: null, checkouts: false, ticket: null, config: null, starting: false, terminal: null, viewer: null, session: wide ? selected : null }, true)}
+    <TopBar tab={tab} attention={attention} connected={connected} onTab={(t) => go({ tab: t, project: null, projectTickets: null, checkouts: false, ticket: null, config: null, starting: false, terminal: null, viewer: null, session: wide ? selected : null }, true)}
       onLaunch={openLaunch} onConfig={() => openConfig('')} />
   )
   const terminalView = terminal && (
@@ -279,22 +289,22 @@ function Main() {
       base={state.sessions[viewer.sessionId]?.root || state.sessions[viewer.sessionId]?.cwd || ''} onBack={back} />
   )
   const startingView = starting && <Starting pending={pending} terminal={!!(pending && state.machines[pending.machine]?.caps?.terminal)} onBack={back} onViewTerminal={onViewTerminal} />
-  const sessionView = current && vanished.current !== current ? <LazyBoundary><Session key={viewKey} state={state} id={current} onBack={wide ? undefined : back} onEvents={onEvents} onGuard={guardLaunch} busy={launchBusy} onViewTerminal={onViewTerminal} onOpenFile={(machine, path, o) => current && go({ viewer: { machine, sessionId: current, path, ...(o && 'images' in o ? { images: true } : o && 'read' in o ? { read: true } : {}) } })} /></LazyBoundary> : null
-  const sessionsList = <Sessions state={state} onOpen={openSession} selected={current} />
-  const projectsView = <Projects state={state} wide={wide} selected={project} onOpen={(id) => go({ project: id, projectTickets: null, checkouts: false, ticket: null })} onOpenSession={openSession} onConfig={() => openConfig('')} />
-  const configView = config !== null && <Config key={config} state={state} editProject={config || null} onBack={back} />
+  const sessionView = current && vanished.current !== current ? <LazyBoundary><Session key={viewKey} state={shown} id={current} onBack={wide ? undefined : back} onEvents={onEvents} onSeen={onSeen} onGuard={guardLaunch} busy={launchBusy} onViewTerminal={onViewTerminal} onOpenFile={(machine, path, o) => current && go({ viewer: { machine, sessionId: current, path, ...(o && 'images' in o ? { images: true } : o && 'read' in o ? { read: true } : {}) } })} /></LazyBoundary> : null
+  const sessionsList = <Sessions state={shown} onOpen={openSession} selected={current} />
+  const projectsView = <Projects state={shown} wide={wide} selected={project} onOpen={(id) => go({ project: id, projectTickets: null, checkouts: false, ticket: null })} onOpenSession={openSession} onConfig={() => openConfig('')} />
+  const configView = config !== null && <Config key={config} state={shown} editProject={config || null} onBack={back} />
   const projectView = project && (
-    <Project key={project} state={state} id={project} onBack={wide ? () => go({ project: null, projectTickets: null, checkouts: false, ticket: null }) : back}
+    <Project key={project} state={shown} id={project} onBack={wide ? () => go({ project: null, projectTickets: null, checkouts: false, ticket: null }) : back}
       onOpenTickets={(id) => go({ projectTickets: id })} onOpenSession={openSession} onEdit={openConfig} onTickets={onTickets} onCheckouts={onCheckouts} onConversations={onConversations}
       checkoutsOpen={checkoutsOpen} onCheckoutsOpenChange={(o) => (o ? go({ checkouts: true }) : back())}
       pending={launchBusy} onLaunched={onLaunched} onGuard={guardLaunch} onTerminal={onTerminal} />
   )
   const ticketsView = projectTickets && (
-    <ProjectTickets key={projectTickets} state={state} id={projectTickets} selectedTicket={ticket} onBack={wide ? () => go({ projectTickets: null, ticket: null }) : back}
+    <ProjectTickets key={projectTickets} state={shown} id={projectTickets} selectedTicket={ticket} onBack={wide ? () => go({ projectTickets: null, ticket: null }) : back}
       onOpenTicket={(id) => go({ ticket: id })} onTickets={onTickets} />
   )
   const ticketView = ticket && (
-    <TicketDetail key={ticket} state={state} ticketId={ticket} onBack={wide ? () => go({ ticket: null }) : back} onOpenSession={openSession} onLoaded={onTicket} onCheckouts={onCheckouts} onLaunched={onLaunched} />
+    <TicketDetail key={ticket} state={shown} ticketId={ticket} onBack={wide ? () => go({ ticket: null }) : back} onOpenSession={openSession} onLoaded={onTicket} onCheckouts={onCheckouts} onLaunched={onLaunched} />
   )
 
   const toggle = mode && dev && (
@@ -342,14 +352,14 @@ function Main() {
   return <div className="h-dvh">{view}{dialog}{toggle}</div>
 }
 
-function TopBar({ tab, connected, onTab, onLaunch, onConfig }: { tab: Tab; connected: boolean; onTab: (t: Tab) => void; onLaunch: () => void; onConfig: () => void }) {
+function TopBar({ tab, attention, connected, onTab, onLaunch, onConfig }: { tab: Tab; /** Sessions that need you or are done and unread. */ attention: number; connected: boolean; onTab: (t: Tab) => void; onLaunch: () => void; onConfig: () => void }) {
   const tabCls = (t: Tab) => `min-h-11 px-2.5 ${tab === t ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-zinc-200'}`
   return (
     <header className="sticky top-0 z-10 flex shrink-0 items-center gap-2 border-b border-zinc-800 bg-zinc-950/90 px-3 py-2 backdrop-blur">
       <h1 className="mr-1 hidden text-base font-semibold sm:block">Quorum</h1>
       <nav role="tablist" className="flex min-w-0 gap-1">
         <Button variant="ghost" role="tab" aria-selected={tab === 'projects'} onClick={() => onTab('projects')} className={tabCls('projects')}>Projects</Button>
-        <Button variant="ghost" role="tab" aria-selected={tab === 'sessions'} onClick={() => onTab('sessions')} className={tabCls('sessions')}>Sessions</Button>
+        <Button variant="ghost" role="tab" aria-selected={tab === 'sessions'} onClick={() => onTab('sessions')} className={tabCls('sessions')}>Sessions{attention > 0 && <span className="ml-1.5 rounded-full bg-emerald-500/20 px-1.5 text-xs text-emerald-300">{attention}</span>}</Button>
       </nav>
       <span className="ml-auto flex shrink-0 items-center gap-2">
         <Button variant="secondary" size="sm" onClick={onConfig} aria-label="Settings" title="Settings" className="size-11 text-xs min-[380px]:w-auto min-[380px]:px-3">

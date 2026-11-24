@@ -363,3 +363,27 @@ test('turn.start: a hung images lookup gives up after 300 ms and the turn goes o
   await until(() => users.length > 0)
   expect(users[0]).toEqual({ text: 'look at [Image #1]' })
 })
+
+// Plan 7 Task 1: the background state at hook level (classic.Stop and task notifications).
+test('classic.Stop with work in flight → register background; a task-notification ends it → idle', async ($, on) => {
+  const o = on as unknown as (...a: unknown[]) => void
+  o('classic.Stop', async () => ({}))
+  o('prompt.submit', async (_$: unknown, e: { text: string }) => ({ text: e.text }))
+  const m = await metered($ as never, on as never, () => ({ context: { window: 1000, percent: 10 }, rateLimits: [] }))
+  const e = $ as unknown as {
+    turn: { complete(x: unknown): Promise<unknown> }
+    classic: { Stop(x: unknown): Promise<unknown> }
+    prompt: { submit(x: unknown): Promise<unknown> }
+  }
+  await e.turn.complete(doneInput({}))
+  await e.classic.Stop({ stop_hook_active: false, background_tasks: [{ id: 'b1', type: 'shell', status: 'running', description: 'x' }], session_crons: [] })
+  await m.clock.advance(1000)
+  await m.until(() => m.registers.some(r => r.state === 'background'))
+  expect(m.registers.find(r => r.state === 'background')!.background).toEqual({ tasks: 1, wakeAt: 0 })
+  await e.prompt.submit({ text: '<task-notification><task-id>b1</task-id><status>completed</status></task-notification>', wait: false, origin: { kind: 'task-notification' } })
+  // the follow-up turn ends with nothing left (no Stop report: the mod's own tracking)
+  await e.turn.complete(doneInput({ turnId: 't2' }))
+  await m.clock.advance(1000)
+  await m.until(() => m.registers[m.registers.length - 1]?.state === 'idle')
+  expect(m.registers[m.registers.length - 1]!.background).toEqual({ tasks: 0, wakeAt: 0 })
+})

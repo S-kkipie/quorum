@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import { reduce, replaceSessions, setUsage, seed, initialState, setConversations, type AppState } from './store'
+import { markSeen, reduce, replaceSessions, setUsage, seed, initialState, setConversations, type AppState } from './store'
 import type { AccountUsage, Envelope, SessionInfo, Event } from '../proto.gen'
 
 const sess = (id: string, o: Partial<SessionInfo> = {}): SessionInfo => ({
   id, recap: '', previousId: '', machine: 'm1', name: id, cwd: '/x', root: '/x', model: '', role: 'work',
-  state: 'idle', contextPct: 0, startedAt: 1, updatedAt: 1, transcriptPath: '', repoUrl: '', branch: '', projectId: '', launchReq: '', herdrPane: '', herdrWorkspace: '', account: '', accountKey: '', configDir: '', plugins: [], contextEstimate: false, tokens: { in: 0, out: 0, cache: 0 }, rateLimits: [], usageAt: 0, imagesDir: '', ...o,
+  state: 'idle', contextPct: 0, startedAt: 1, updatedAt: 1, transcriptPath: '', repoUrl: '', branch: '', projectId: '', launchReq: '', herdrPane: '', herdrWorkspace: '', account: '', accountKey: '', configDir: '', plugins: [], contextEstimate: false, tokens: { in: 0, out: 0, cache: 0 }, rateLimits: [], usageAt: 0, imagesDir: '', background: { tasks: 0, wakeAt: 0 }, unread: false, ...o,
 })
 const up = (s: SessionInfo): Envelope => ({ type: 'session_upsert', machine: s.machine, session: s.id, payload: s })
 const ev = (session: string, seq: number, kind: string, data: any = {}): Envelope => {
@@ -241,5 +241,44 @@ describe('usage', () => {
     expect(s.usage.b).toBeDefined()
     s = setUsage(s, [u('b', 6, 300)], true)
     expect(Object.keys(s.usage)).toEqual(['b'])
+  })
+})
+
+describe('attention and unread', () => {
+  const att = (session: string, kind: string, at: number): Envelope => ({ type: 'attention', machine: 'm1', session, payload: { session, kind, at } })
+  it('keeps the last attention per session', () => {
+    let s = run([up(sess('a')), att('a', 'needs_you', 10)])
+    expect(s.lastAttention['a']).toEqual({ kind: 'needs_you', at: 10 })
+    s = run([att('a', 'done', 20), att('b', 'done', 5)], s)
+    expect(s.lastAttention).toEqual({ a: { kind: 'done', at: 20 }, b: { kind: 'done', at: 5 } })
+  })
+  it('ignores malformed attentions', () => {
+    const s0 = initialState()
+    expect(run([{ type: 'attention', machine: 'm1', session: '', payload: null }], s0)).toBe(s0)
+    expect(run([{ type: 'attention', machine: 'm1', session: 'a', payload: { session: 'a', kind: 'other', at: 1 } }], s0)).toBe(s0)
+  })
+  it('unread follows the hub upserts and a closed session is never unread', () => {
+    let s = run([up(sess('a', { unread: true }))])
+    expect(s.sessions['a'].unread).toBe(true)
+    s = run([up(sess('a', { unread: false }))], s)
+    expect(s.sessions['a'].unread).toBe(false)
+    s = run([up(sess('a', { unread: true })), { type: 'session_gone', machine: 'm1', session: 'a', payload: null }], s)
+    expect(s.sessions['a'].state).toBe('closed')
+    expect(s.sessions['a'].unread).toBe(false)
+  })
+  it('session_removed drops its last attention', () => {
+    let s = run([up(sess('a')), att('a', 'done', 1)])
+    s = run([{ type: 'session_removed', machine: 'm1', session: 'a', payload: null }], s)
+    expect(s.lastAttention['a']).toBeUndefined()
+  })
+})
+
+describe('markSeen', () => {
+  it('clears unread locally and leaves others alone', () => {
+    const s0 = reduce(initialState(), up(sess('a', { state: 'idle', unread: true })))
+    const s1 = markSeen(s0, 'a')
+    expect(s1.sessions.a.unread).toBe(false)
+    expect(markSeen(s1, 'a')).toBe(s1)
+    expect(markSeen(s1, 'zz')).toBe(s1)
   })
 })

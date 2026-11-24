@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"math"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -82,6 +83,12 @@ type Hub struct {
 	touch func(projectID string)
 	// seenSess: session -> project it was already reported for (only a new session in the project counts).
 	seenSess map[string]string
+	// doneTimers: session -> end_seq whose done attention grace timer is armed.
+	doneTimers map[string]int64
+	// upsertLocks: session id -> *sync.Mutex held from reading a session's unread to publishing it,
+	// so a seen that lands meanwhile is always published after (never undone by) a stale upsert.
+	upsertLocks sync.Map
+	upsertHook  atomic.Pointer[func(id string)] // tests: runs between the unread read and the publish
 
 	pmu sync.Mutex // serializes the creation/update of drafts
 	// pending: launches from a ticket waiting for the session to register (by reqId).
@@ -99,17 +106,18 @@ func (h *Hub) Connected(machine string) bool {
 
 func newHub(st *store.Store) *Hub {
 	return &Hub{
-		st:        st,
-		conns:     map[string]*machineConn{},
-		timers:    map[string]stopper{},
-		gens:      map[string]uint64{},
-		bc:        noopBroadcaster{},
-		backfills: map[string]time.Time{},
-		sugg:      map[string]string{},
-		seenSess:  map[string]string{},
-		pending:   map[string]pendingLaunch{},
-		now:       time.Now,
-		afterFunc: defaultAfterFunc,
+		st:         st,
+		conns:      map[string]*machineConn{},
+		timers:     map[string]stopper{},
+		gens:       map[string]uint64{},
+		bc:         noopBroadcaster{},
+		backfills:  map[string]time.Time{},
+		sugg:       map[string]string{},
+		seenSess:   map[string]string{},
+		doneTimers: map[string]int64{},
+		pending:    map[string]pendingLaunch{},
+		now:        time.Now,
+		afterFunc:  defaultAfterFunc,
 	}
 }
 
@@ -405,6 +413,7 @@ func (h *Hub) onHello(name string, hello proto.MachineHello) bool {
 		if si.LaunchReq != "" {
 			h.matchPending(si, false) // the launched session may have arrived first in the hello
 		}
+		h.checkAttention(name, id) // only real transitions: the announced marks are stored
 	}
 	h.publishStatus(name)
 	return true
@@ -470,6 +479,7 @@ func (h *Hub) onMessage(c *machineConn, env proto.Envelope) {
 		return // connection replaced: it no longer rules
 	}
 	env.Machine = name
+	var upsert *proto.SessionInfo // session_upsert: its unread is read fresh right before publishing
 	switch env.Type {
 	case "session_upsert":
 		var si proto.SessionInfo
@@ -491,10 +501,12 @@ func (h *Hub) onMessage(c *machineConn, env proto.Envelope) {
 		}
 		si.PreviousID = applied
 		si.RepoURL, si.Branch = repo, branch
-		defer h.saveUsage(name, si) // after the session_upsert is published
+		si.Unread = false // computed by the hub right before publishing, never trusted from the mod
+		upsert = &si
+		defer h.checkAttention(name, si.ID) // after the session_upsert is published
+		defer h.saveUsage(name, si)         // after the session_upsert is published
 		h.attachCheckout(name, &si)
 		env.Session = si.ID
-		env.Payload, _ = json.Marshal(si)
 		// By reqId any session fulfills it (also a resume with a new id); by folder only
 		// a new one: a rename (/clear: PreviousID applied) follows the old session.
 		if fresh := !existed && applied == ""; fresh || si.LaunchReq != "" {
@@ -519,6 +531,20 @@ func (h *Hub) onMessage(c *machineConn, env proto.Envelope) {
 		if removed {
 			h.publish(proto.Envelope{Type: "session_removed", Machine: name, Session: env.Session})
 			return
+		}
+	case "session_seen":
+		// the owner focused this session's herdr pane: it was looked at up to its latest event
+		if !h.owns(name, env.Session) {
+			return
+		}
+		before, err := h.st.Session(env.Session)
+		if err != nil {
+			return // unknown session
+		}
+		if moved, err := h.st.SetSeen(env.Session, math.MaxInt64); err != nil {
+			log.Printf("hub: seen of %s: %v", env.Session, err)
+		} else if moved && before.Unread {
+			h.publishStored(env.Session)
 		}
 	case "backfill_result":
 		var evs []proto.Event
@@ -568,6 +594,9 @@ func (h *Hub) onMessage(c *machineConn, env proto.Envelope) {
 		ev.Seq = seq
 		env.Session = ev.Session
 		env.Payload, _ = json.Marshal(ev)
+		if seq > 0 {
+			defer h.afterEvent(name, ev) // after the event is published
+		}
 		if ev.Kind == proto.KindTurnEnd {
 			defer h.suggestFromTurnEnd(ev)
 			defer h.draftFromTurnEnd(ev)
@@ -602,7 +631,26 @@ func (h *Hub) onMessage(c *machineConn, env proto.Envelope) {
 		// unknown types (or ones only the hub emits, like machine_status) are not broadcast
 		return
 	}
+	if upsert != nil {
+		unlock := h.lockUpsert(upsert.ID)
+		defer unlock() // runs before the deferred attention/usage work above
+		if stored, err := h.st.Session(upsert.ID); err == nil {
+			upsert.Unread = stored.Unread // a seen that landed meanwhile is not undone by a stale true
+		}
+		env.Payload, _ = json.Marshal(upsert)
+		if hook := h.upsertHook.Load(); hook != nil {
+			(*hook)(upsert.ID)
+		}
+	}
 	h.publish(env)
+}
+
+// lockUpsert serializes reading a session's unread with publishing it (see upsertLocks).
+func (h *Hub) lockUpsert(id string) (unlock func()) {
+	m, _ := h.upsertLocks.LoadOrStore(id, new(sync.Mutex))
+	mu := m.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
 }
 
 func (h *Hub) touchProject(id string) {

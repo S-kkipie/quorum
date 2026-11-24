@@ -147,7 +147,12 @@ func migrate(s *Store) error {
 	for _, c := range [][2]string{{"account", "TEXT NOT NULL DEFAULT ''"}, {"account_key", "TEXT NOT NULL DEFAULT ''"},
 		{"config_dir", "TEXT NOT NULL DEFAULT ''"}, {"plugins", "TEXT NOT NULL DEFAULT '[]'"},
 		{"context_estimate", "INTEGER NOT NULL DEFAULT 0"}, {"tokens", "TEXT NOT NULL DEFAULT '{}'"},
-		{"images_dir", "TEXT NOT NULL DEFAULT ''"}} { // Task 10: the session's pasted-images folder
+		{"images_dir", "TEXT NOT NULL DEFAULT ''"}, // Task 10: the session's pasted-images folder
+		// Plan 7: pending background work, seen marks and the attention already announced. Existing
+		// sessions start with every mark at 0: nothing becomes unread on upgrade.
+		{"background", "TEXT NOT NULL DEFAULT '{}'"}, {"seen_seq", "INTEGER NOT NULL DEFAULT 0"},
+		{"end_seq", "INTEGER NOT NULL DEFAULT 0"}, {"attention_end_seq", "INTEGER NOT NULL DEFAULT 0"},
+		{"needs_you_announced", "INTEGER NOT NULL DEFAULT 0"}} {
 		if err := s.db.QueryRow(`SELECT count(*) FROM pragma_table_info('sessions') WHERE name=?`, c[0]).Scan(&n); err != nil {
 			return err
 		}

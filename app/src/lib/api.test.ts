@@ -6,7 +6,7 @@ vi.stubGlobal('localStorage', {
   setItem: (k: string, v: string) => { mem[k] = v },
   removeItem: (k: string) => { delete mem[k] },
 })
-import { apiFetch, setHub, getToken, pluginState, pluginCommand } from './api'
+import { apiFetch, setHub, getToken, pluginState, pluginCommand, seen } from './api'
 
 beforeEach(() => { for (const k in mem) delete mem[k]; setHub('http://h:1/', 'tok') })
 
@@ -128,5 +128,17 @@ describe('plugin helpers', () => {
     expect(JSON.parse(init.body)).toEqual({ command: 'after', args: 'fix it' })
     vi.stubGlobal('fetch', vi.fn(async () => new Response('{"error":"/timeline takes undo, redo or a state number"}', { status: 400 })))
     await expect(pluginCommand('s1', 'timeline', 'x')).rejects.toThrow('/timeline takes')
+  })
+})
+
+describe('seen', () => {
+  it('posts the seen mark of the session', async () => {
+    const f = vi.fn(async () => new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', f)
+    await expect(seen('a b', 42)).resolves.toBe(undefined)
+    const [u, init] = f.mock.calls[0] as any
+    expect(u).toBe('http://h:1/api/sessions/a%20b/seen')
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(init.body)).toEqual({ seq: 42 })
   })
 })

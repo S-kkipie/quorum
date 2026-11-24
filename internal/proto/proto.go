@@ -13,7 +13,10 @@ const (
 	StateNeedsYou SessionState = "needs_you"
 	StateWaiting  SessionState = "waiting"
 	StateIdle     SessionState = "idle"
-	StateClosed   SessionState = "closed"
+	// StateBackground: the turn ended but background tasks (background Bash, Monitor, background
+	// subagents) or a scheduled wake-up (/loop, ScheduleWakeup, CronCreate) are pending.
+	StateBackground SessionState = "background"
+	StateClosed     SessionState = "closed"
 )
 
 type Role string
@@ -72,6 +75,18 @@ type SessionInfo struct {
 	// (`<tmp>/claude-<uid>/<project dashed>/<id>/images`; empty when unknown). The hub only
 	// serves single image files from it, and only when its shape matches this session.
 	ImagesDir string `json:"imagesDir"`
+	// Background is what was left pending when the last main turn ended (zero when nothing).
+	Background BackgroundInfo `json:"background"`
+	// Unread is computed by the hub (whatever the mod sends is ignored): the session is idle and its
+	// last turn_end is newer than its seen mark ("done, unread"). background/working/needs_you/closed never are.
+	Unread bool `json:"unread"`
+}
+
+// BackgroundInfo is a session's pending background work: Tasks live background tasks and
+// subagents, WakeAt the next scheduled wake-up in Unix ms (0 = none).
+type BackgroundInfo struct {
+	Tasks  int   `json:"tasks"`
+	WakeAt int64 `json:"wakeAt"`
 }
 
 // TokenCount sums token usage: In is uncached input, Out is output, Cache is cache read plus creation.
@@ -105,9 +120,18 @@ type AccountUsage struct {
 	At       int64       `json:"at"`
 }
 
+// Attention is the payload of an attention envelope: Kind is "needs_you" or "done", At Unix ms.
+type Attention struct {
+	Session string `json:"session"`
+	Kind    string `json:"kind"`
+	At      int64  `json:"at"`
+}
+
 type EventKind string
 
 const (
+	// KindUser data: {text, images?, device?}. device is true when the prompt was sent from a Quorum
+	// device; without it the prompt was typed in the terminal and the hub marks the session seen.
 	KindUser           EventKind = "user"
 	KindAssistantDelta EventKind = "assistant_delta"
 	KindAssistant      EventKind = "assistant"
@@ -117,7 +141,8 @@ const (
 	KindAsk            EventKind = "ask"
 	KindAskResolved    EventKind = "ask_resolved"
 	KindTurnStart      EventKind = "turn_start"
-	// KindTurnEnd data: {answer, reason, outputTokens, tokens: TokenCount, model: string}.
+	// KindTurnEnd data: {answer, reason, outputTokens, tokens: TokenCount, model: string, background: BackgroundInfo,
+	// stopped?: true when the person pressed Stop in Claude Code on this turn (it ended "aborted"): never unread}.
 	KindTurnEnd    EventKind = "turn_end"
 	KindStatus     EventKind = "status"
 	KindAgentStart EventKind = "agent_start"
@@ -166,9 +191,13 @@ type AskResolved struct {
 }
 
 type TurnEnd struct {
-	Answer       string `json:"answer"`
-	Reason       string `json:"reason"`
-	OutputTokens int    `json:"outputTokens"`
+	Answer       string         `json:"answer"`
+	Reason       string         `json:"reason"`
+	OutputTokens int            `json:"outputTokens"`
+	Background   BackgroundInfo `json:"background"`
+	// Stopped: the person pressed Stop in Claude Code (Esc, Ctrl+C) on this turn; they were looking at it, so the
+	// hub treats it as seen. Never set for an abort from Quorum.
+	Stopped bool `json:"stopped,omitempty"`
 }
 
 type AgentStart struct {
@@ -197,7 +226,7 @@ type Command struct {
 }
 
 // Envelope is the WS wrapper daemon<->hub and hub<->app.
-// Type: hello|session_upsert|session_gone|session_removed|event|events|command|launch|launch_result|machine_status|backfill|backfill_result|ack|project_upsert|tickets|session_ticket|proposal_upsert|workspace_upsert|workspace_gone|project_gone|usage_upsert|usage_gone
+// Type: hello|session_upsert|session_gone|session_removed|event|events|command|launch|launch_result|machine_status|backfill|backfill_result|ack|project_upsert|tickets|session_ticket|proposal_upsert|workspace_upsert|workspace_gone|project_gone|usage_upsert|usage_gone|attention|session_seen
 // usage_upsert (hub->app): Payload AccountUsage, when an account's usage changes; GET /api/usage lists them.
 // usage_gone (hub->app): Payload {key}; a machine/alias fallback row was superseded by the account's real key.
 // session_gone (hub->app): the session was closed (state closed). session_removed (hub->app): the session closed without ever receiving a user prompt and was deleted; Envelope.Session is the id.
@@ -208,9 +237,16 @@ type Command struct {
 // tickets (hub->app): Payload {projectId, tickets: []Ticket}, after a successful sync.
 // session_ticket (hub->app): Payload {sessionId, ticketId, confirmed, removed?} when a link is suggested, confirmed or unlinked.
 // events (hub->app): Payload []Event of a session (backfilled history, in a single envelope).
+// session_seen (daemon->hub): Envelope.Session was looked at on the machine (its herdr pane got focus); the hub moves the
+// session's seen mark to its latest event and publishes the session_upsert when it changed. Only for the machine's own sessions; no payload.
 // caps (daemon->hub): Payload MachineCaps; the hub stores it and republishes machine_status.
 // rpc / rpc_result (hub<->daemon): Payload RPC / RPCResult; request and response correlated by reqId.
 // term_frame (daemon->hub->app): Payload TermFrame; a pane's screen, only while someone is watching, never stored.
+// attention (hub->app): Payload Attention; published once on each transition into needs_you, and once per
+// turn_end into unread done (after a short grace, so a session ending in front of the owner never fires). The
+// announced marks are persisted: a hub restart or a daemon reconnect never replays them. needs_you is announced at
+// most once per needs_you period: closing keeps the mark (a session that drops and comes back with the same question
+// is not announced again); only moving to another live state re-arms it. Hook for native notifications.
 // launch_session (hub->app): Payload {reqId, sessionId}; the launched session has registered and the app can navigate to it.
 type Envelope struct {
 	Type    string          `json:"type"`

@@ -10,6 +10,7 @@ import { UsageInline } from '../components/UsageStrip'
 import { abortSession, closeSession, listEvents } from '../lib/api'
 import { accountUsageOf, contextTone, formatTokens, toneClass } from '../lib/meters'
 import { launchIn, loadPrefs } from '../lib/launch'
+import { useMarkSeen } from '../lib/useMarkSeen'
 import type { AppState } from '../lib/store'
 import type { OpenOpts } from '../lib/timeline'
 import { sessionTitle } from '../lib/title'
@@ -33,11 +34,13 @@ function useNarrow() {
   return narrow
 }
 
-export default function Session({ state, id, onBack, onEvents, onGuard, busy = false, onViewTerminal, onOpenFile }: {
+export default function Session({ state, id, onBack, onEvents, onSeen, onGuard, busy = false, onViewTerminal, onOpenFile }: {
   state: AppState
   id: string
   onBack?: () => void
   onEvents: (id: string, evs: Event[]) => void
+  /** The session was marked seen (clears unread locally before the hub answers). */
+  onSeen?: (id: string) => void
   onGuard?: (fn: () => Promise<{ reqId: string; machine: string; label: string }>) => Promise<void>
   /** A launch is in progress. */
   busy?: boolean
@@ -78,6 +81,9 @@ export default function Session({ state, id, onBack, onEvents, onGuard, busy = f
     load(0)
   }, [id]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  const lastSeq = events.reduce((m, e) => Math.max(m, e.seq), 0)
+  useMarkSeen(id, lastSeq, !!s && s.state !== 'closed', onSeen)
+
   const act = async (f: () => Promise<unknown>) => {
     setError('')
     try { await f() } catch (e) { setError(e instanceof Error ? e.message : 'error') }
@@ -114,7 +120,7 @@ export default function Session({ state, id, onBack, onEvents, onGuard, busy = f
             </Button>
           )}
           <div className={`min-w-0 flex-1 truncate text-[15px] font-semibold ${onBack ? '' : 'pl-1.5'}`}>{sessionTitle(s).title}</div>
-          {!narrow && <StatePill state={s.state} />}
+          {!narrow && <StatePill session={s} />}
           {s.state === 'working' && (
             <Button variant="secondary" onClick={() => act(() => abortSession(id))} aria-label="Interrupt" title="Interrupt"
               className={narrow ? 'size-11 shrink-0' : 'min-h-11 shrink-0 gap-1 px-2.5 text-xs'}>
@@ -146,7 +152,7 @@ export default function Session({ state, id, onBack, onEvents, onGuard, busy = f
         {(sub || narrow || meters) && (
           // wraps at 320 px: pill + subtitle + account + usage + ctx + tokens never overflow the header
           <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 pb-1 pl-2.5 text-xs text-zinc-500">
-            {narrow && <StatePill state={s.state} />}
+            {narrow && <StatePill session={s} />}
             {sub && <span className="min-w-0 max-w-full shrink truncate">{sub}</span>}
             {s.account && <span className="max-w-24 shrink-0 truncate rounded bg-zinc-800 px-1.5 text-zinc-300">{s.account}</span>}
             {usage && <UsageInline usage={usage} />}

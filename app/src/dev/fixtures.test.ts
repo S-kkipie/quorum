@@ -12,8 +12,11 @@ describe('worst', () => {
     expect(Object.values(s.projects).some((p) => p.name.length === 120)).toBe(true)
     expect(sessions.some((x) => (x.recap || x.name).length === 200)).toBe(true)
     expect(sessions.some((x) => (x.recap || x.name).length === 1)).toBe(true)
-    for (const st of ['working', 'needs_you', 'waiting', 'idle', 'closed']) expect(sessions.some((x) => x.state === st)).toBe(true)
+    for (const st of ['working', 'needs_you', 'background', 'idle', 'closed']) expect(sessions.some((x) => x.state === st)).toBe(true)
     expect(Object.values(s.machines).some((m) => !m.online)).toBe(true)
+  })
+  it('every session has a context percentage', () => {
+    for (const x of sessions) expect(Number.isFinite(x.contextPct)).toBe(true)
   })
   it('has a long path, a 200-line code block, a max-size tool output', () => {
     const evs = Object.values(s.events).flat()

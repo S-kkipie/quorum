@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { ApiError, confirmTicketLink, getTicket, listCheckouts, launchTicket, proposeStatus, unlinkTicket, type TicketView } from '../lib/api'
-import { SESSION_STATE, STATUSES, STATUS_LABEL, TONE_TEXT, projectCheckouts, ticketLine, ticketSessions } from '../lib/projects'
+import { displayState } from '../lib/sessions'
+import { STATUSES, STATUS_LABEL, TONE_TEXT, projectCheckouts, stateStyle, ticketLine, ticketSessions } from '../lib/projects'
 import type { AppState } from '../lib/store'
 import type { Checkout } from '../proto.gen'
 import { sessionTitle } from '../lib/title'
@@ -138,7 +139,7 @@ export default function TicketDetail({ state, ticketId, onBack, onOpenSession, o
 function LinkRow({ id, session, confirmed, ticketId, onOpenSession }: { id: string; session?: AppState['sessions'][string]; confirmed: boolean; ticketId: string; onOpenSession?: (id: string) => void }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const st = SESSION_STATE[session?.state ?? 'closed'] ?? SESSION_STATE.idle
+  const st = stateStyle(session ? displayState(session) : 'closed')
   const run = async (fn: () => Promise<unknown>) => {
     setBusy(true)
     setError('')

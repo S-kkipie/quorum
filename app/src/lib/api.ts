@@ -122,6 +122,9 @@ export const listEvents = (id: string, before = 0, limit = 50): Promise<Event[]>
   devApi ? devApi.listEvents(id, before, limit) : apiFetch<Event[]>(`/api/sessions/${encodeURIComponent(id)}/events?before=${before}&limit=${limit}`)
 export const sendPrompt = (id: string, text: string, mode: PromptMode) =>
   apiFetch(`/api/sessions/${encodeURIComponent(id)}/prompt`, { method: 'POST', body: JSON.stringify({ text, mode }) })
+/** Marks the session seen up to seq on every device (the hub caps it at the latest event, never backwards). */
+export const seen = (id: string, seq: number) =>
+  apiFetch<void>(`/api/sessions/${encodeURIComponent(id)}/seen`, { method: 'POST', body: JSON.stringify({ seq }) })
 export const decide = (id: string, body: { askId: string; decision: 'allow' | 'deny'; answers?: Record<string, string>; reason?: string }) =>
   apiFetch(`/api/sessions/${encodeURIComponent(id)}/decide`, { method: 'POST', body: JSON.stringify(body) })
 export const abortSession = (id: string) => apiFetch(`/api/sessions/${encodeURIComponent(id)}/abort`, { method: 'POST' })

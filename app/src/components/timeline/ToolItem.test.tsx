@@ -96,11 +96,18 @@ describe('ArtifactCard', () => {
 
 describe('StatePill', () => {
   it('labels each state', () => {
-    const label = (s: string) => { const { container } = render(<StatePill state={s} />); const t = container.textContent; cleanup(); return t }
+    const label = (state: string, o = {}) => { const { container } = render(<StatePill session={{ state, unread: false, background: { tasks: 0, wakeAt: 0 }, ...o }} />); const t = container.textContent; cleanup(); return t }
     expect(label('working')).toBe('Working')
-    expect(label('needs_you')).toBe('Needs permission')
-    expect(label('waiting')).toBe('Waiting for you')
-    expect(label('idle')).toBe('Waiting for you')
+    expect(label('needs_you')).toBe('Needs you')
+    expect(label('waiting')).toBe('Idle')
+    expect(label('idle')).toBe('Idle')
+    expect(label('idle', { unread: true })).toBe('Done · unread')
+    expect(label('background', { background: { tasks: 2, wakeAt: 0 } })).toBe('2 tasks')
     expect(label('closed')).toBe('Closed')
+    expect(label('background')).toBe('Background')
+    const { container } = render(<StatePill session={{ state: 'background', unread: false, background: { tasks: 2, wakeAt: 0 } }} />)
+    const pill = container.firstElementChild as HTMLElement
+    expect(pill.getAttribute('title')).toBe('Background · 2 tasks')
+    expect(pill.getAttribute('aria-label')).toBe('Background · 2 tasks')
   })
 })

@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import { MoreHorizontal } from 'lucide-react'
 import { closeSession } from '../lib/api'
-import { SESSION_STATE, since, toMs } from '../lib/projects'
-import type { SessionRow } from '../lib/sessions'
+import { since, stateStyle, toMs } from '../lib/projects'
+import { displayState, stateDetail, type SessionRow } from '../lib/sessions'
 import { sessionTitle } from '../lib/title'
+import { useWakeClock } from '../lib/useWakeClock'
 import { Button } from './ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './ui/dropdown-menu'
@@ -24,10 +25,13 @@ export default function SessionRowView({ row, project, active, disabled, detaile
   const [confirm, setConfirm] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const now = useWakeClock(row.kind === 'live' ? [row.session] : [])
   const cls = `flex min-h-11 w-full items-center gap-3 px-3 py-1.5 text-left hover:bg-zinc-900 disabled:opacity-40 ${active ? 'bg-zinc-900' : ''}`
   if (row.kind === 'live') {
     const s = row.session
-    const st = SESSION_STATE[s.state] ?? SESSION_STATE.idle
+    const display = displayState(s)
+    const st = stateStyle(display)
+    const detail = stateDetail(s, now)
     const { title, short } = sessionTitle(s)
     const closable = s.role !== 'service'
     async function close() {
@@ -47,7 +51,7 @@ export default function SessionRowView({ row, project, active, disabled, detaile
       <li>
         <div className="flex items-center">
           <button onClick={() => onOpen?.(s.id)} className={`${cls} min-w-0 flex-1`}>
-            <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${st.dot}`} />
+            <span {...(display === 'done' ? { role: 'img', 'aria-label': 'Unread' } : {})} className={`h-2.5 w-2.5 shrink-0 rounded-full ${st.dot}`} />
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm font-medium">{title}</span>
               <span className="block truncate text-xs text-zinc-500">
@@ -56,6 +60,7 @@ export default function SessionRowView({ row, project, active, disabled, detaile
             </span>
             <span className="shrink-0 text-right text-xs">
               <span className={`block ${st.text}`}>{st.label}</span>
+              {detail && <span className={`block ${st.text} opacity-80`}>{detail}</span>}
               {detailed && <span className="block text-zinc-600">{s.contextPct > 0 ? `${s.contextPct}% · ` : ''}{since(toMs(s.updatedAt))}</span>}
             </span>
           </button>

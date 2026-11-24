@@ -62,6 +62,7 @@ func machineEnv() string {
 // connection's hello restores the sessions' state.
 func RunHubLink(ctx context.Context, cfg Config, reg *Registry, host *Host) {
 	host.trackSessions(reg)
+	host.watchFocus(ctx, reg)
 	backoff := backoffMin
 	for ctx.Err() == nil {
 		start := time.Now()

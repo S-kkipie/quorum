@@ -25,7 +25,7 @@ const checkout = (id: string, projectId: string, m: string, root: string): Check
 const session = (id: string, o: Partial<SessionInfo> = {}): SessionInfo => ({
   id, previousId: '', machine: 'vps-1', name: '', cwd: '/work/app', root: '/work/app', model: 'claude-opus-4', role: 'work', state: 'idle',
   contextPct: 40, startedAt: NOW - 60 * MIN, updatedAt: NOW - MIN, transcriptPath: '', recap: '', repoUrl: '', branch: 'main', projectId: '',
-  launchReq: '', herdrPane: '', herdrWorkspace: '', account: '', accountKey: '', configDir: '', plugins: [], contextEstimate: false, tokens: { in: 0, out: 0, cache: 0 }, rateLimits: [], usageAt: 0, imagesDir: '', ...o,
+  launchReq: '', herdrPane: '', herdrWorkspace: '', account: '', accountKey: '', configDir: '', plugins: [], contextEstimate: false, tokens: { in: 0, out: 0, cache: 0 }, rateLimits: [], usageAt: 0, imagesDir: '', background: { tasks: 0, wakeAt: 0 }, unread: false, ...o,
 })
 // Usage windows are relative to the real clock at fixture build (the strip compares them with
 // Date.now()): five_hour resets within 0-5 h, seven_day within 0-7 d; ageMin > 60 is a stale report.
@@ -117,7 +117,7 @@ const finish = (parts: { machines: Machine[]; workspaces: Workspace[]; projects:
   return s
 }
 
-const STATES: SessionState[] = ['working', 'needs_you', 'waiting', 'idle', 'closed']
+const STATES: SessionState[] = ['working', 'needs_you', 'background', 'idle', 'closed', 'background', 'idle']
 
 function worst(): AppState {
   const machines = [machine('vps-1'), machine('laptop', { os: 'darwin', online: false }), machine('desktop-wsl', { os: 'linux' })]
@@ -138,8 +138,12 @@ function worst(): AppState {
   ]
   const sessions: SessionInfo[] = STATES.map((st, i) => session(`s${i + 1}-` + 'a1b2c3d4e5f6'.slice(0, 8), {
     state: st, machine: i === 2 ? 'laptop' : 'vps-1', projectId: i % 2 ? 'p2' : 'p1', root: i % 2 ? checkouts[3].root : '/work/app', cwd: i % 2 ? checkouts[3].root : '/work/app',
-    recap: i === 0 ? longTitle(200, 'Recap') : i === 1 ? 'x' : i === 2 ? 'Überprüfung 日本語' : '', name: i === 3 ? longTitle(200, 'Name') : '', contextPct: [0, 55, 99, 100, 7][i], account: i % 2 ? 'personal-test' : 'work', accountKey: i % 2 ? 'b'.repeat(16) : 'a'.repeat(16), contextEstimate: i % 2 === 1, tokens: { in: 12_000 * (i + 1), out: 3_000 * (i + 1), cache: 40_000 }, branch: i === 0 ? 'feature/' + 'very-long-branch-name-'.repeat(8) : 'main',
+    recap: i === 0 ? longTitle(200, 'Recap') : i === 1 ? 'x' : i === 2 ? 'Überprüfung 日本語' : '', name: i === 3 ? longTitle(200, 'Name') : '', contextPct: [0, 55, 99, 100, 7, 42, 88][i], account: i % 2 ? 'personal-test' : 'work', accountKey: i % 2 ? 'b'.repeat(16) : 'a'.repeat(16), contextEstimate: i % 2 === 1, tokens: { in: 12_000 * (i + 1), out: 3_000 * (i + 1), cache: 40_000 }, branch: i === 0 ? 'feature/' + 'very-long-branch-name-'.repeat(8) : 'main',
   }))
+  // background with tasks (s3), background with a wake-up only (s6), done unread (s7)
+  sessions[2].background = { tasks: 3, wakeAt: NOW + 30 * MIN }
+  sessions[5].background = { tasks: 0, wakeAt: NOW + 90 * MIN }
+  sessions[6].unread = true
   sessions.forEach((x) => { if (x.state !== 'closed') x.plugins = ['after', 'time-machine'] })
   sessions.push(session('s6-unassigned', { state: 'working', projectId: '', root: '/work/scratch', cwd: '/work/scratch', name: 'scratch' }))
   const events: Record<string, Event[]> = {}
@@ -156,7 +160,7 @@ function empty(): AppState {
 }
 
 function one(): AppState {
-  const x = session('s1-onlyone', { state: 'needs_you', projectId: 'p1', recap: 'Only session', plugins: ['after', 'time-machine'] })
+  const x = session('s1-onlyone', { state: 'idle', unread: true, projectId: 'p1', recap: 'Only session', plugins: ['after', 'time-machine'] })
   return finish({
     machines: [machine('vps-1')], workspaces: [workspace('w1', 'Platform', '#2563eb')], projects: [project('p1', 'w1', 'Only project', { progress: { done: 1, total: 2 } })],
     checkouts: [checkout('k1', 'p1', 'vps-1', '/work/app')], sessions: [x], proposals: [proposal('pr1', 't1')], convs: () => conversations(1), usage: [usage('a'.repeat(16), 'work', 58, 22)],
@@ -169,7 +173,7 @@ function huge(): AppState {
   const machines = names.map((n) => machine(n))
   const checkouts = names.map((n, i) => checkout('k' + i, 'p1', n, '/work/app'))
   const sessions = Array.from({ length: 200 }, (_, i) => session(`h${String(i).padStart(3, '0')}-live`, {
-    machine: names[i % 5], projectId: 'p1', state: (['working', 'needs_you', 'waiting', 'idle'] as SessionState[])[i % 4], recap: `Live session ${i + 1}`, updatedAt: NOW - i * MIN,
+    machine: names[i % 5], projectId: 'p1', state: (['working', 'needs_you', 'background', 'idle'] as SessionState[])[i % 4], unread: i % 8 === 3, background: i % 4 === 2 ? { tasks: (i % 3) + 1, wakeAt: i % 8 === 2 ? NOW + 20 * MIN : 0 } : { tasks: 0, wakeAt: 0 }, recap: `Live session ${i + 1}`, updatedAt: NOW - i * MIN,
   }))
   return finish({
     machines, workspaces: [workspace('w1', 'Platform', '#2563eb')], projects: [project('p1', 'w1', 'Busy project')], checkouts, sessions,

@@ -1,3 +1,4 @@
+import { type BackgroundInfo, stateOf } from './background'
 import type { Link } from './link'
 import { sumTokens } from './meters'
 import { trimInput } from './trim'
@@ -48,11 +49,13 @@ type Done = {
  * (the Link is born in session.start); `turnComplete` receives `getPct` for the context percentage.
  * `opts.fromDevice(text)` says (and consumes) whether the prompt came from the device: its
  * `user` was already emitted by the control, so turnStart does not repeat it.
+ * `opts.background()` says what is left when a main turn ends (live background tasks, next
+ * wake-up): with any, the session is `background` instead of `idle`.
  * Nothing here throws or waits on anything slow.
  */
 export function makeHandlers(
   getLink: () => Link | undefined,
-  opts: { fromDevice?: (text: string) => boolean } = {},
+  opts: { fromDevice?: (text: string) => boolean; background?: () => BackgroundInfo | undefined } = {},
 ) {
   const safe = (fn: (l: Link) => void): void => {
     try {
@@ -66,11 +69,14 @@ export function makeHandlers(
     l.emit({ kind: 'status', data: { state } })
     l.update({ state })
   }
+  // the person pressed Stop in Claude Code (Esc, Ctrl+C, a client's Stop) on the running main turn
+  let stopped = false
 
   return {
     /** `images`: the pasted images the prompt names that exist on disk (see images.ts). */
     turnStart(e: { text: string; agentId?: string; images?: Array<{ n: number; path: string }> }): void {
       if (e.agentId !== undefined) return
+      stopped = false
       safe(l => {
         if (full(l)) {
           l.emit({ kind: 'turn_start', data: {} })
@@ -129,6 +135,11 @@ export function makeHandlers(
       })
     },
 
+    /** session.stop: the person pressed Stop; it counts only on a running main turn. */
+    sessionStop(isTurnRunning: boolean): void {
+      if (isTurnRunning) stopped = true
+    },
+
     agentSpawn(e: { subagentType?: string; description?: string }, r: { agentId?: string } | undefined): void {
       safe(l => {
         if (!full(l) || !r?.agentId) return
@@ -144,17 +155,26 @@ export function makeHandlers(
           l.emit({ kind: 'agent_end', data: { id: e.agentId, status, answer: (e.answer ?? '').slice(0, AGENT_ANSWER_MAX) } })
           return
         }
+        // aborted by the person's own Stop: they were looking, so the hub never makes it unread
+        // (session.stop never fires for $.turn.abort, Quorum's interrupt)
+        const byStop = stopped && e.reason === 'aborted'
+        stopped = false
+        let bg: BackgroundInfo = { tasks: 0, wakeAt: 0 }
+        try { bg = opts.background?.() ?? bg } catch { /* idle then */ }
         if (full(l)) {
           const answer = e.reason === 'error' && !(e.answer ?? '').trim() ? ERROR_ANSWER : (e.answer ?? '')
           l.emit({
             kind: 'turn_end',
             data: {
               answer: answer.slice(0, TURN_ANSWER_MAX), reason: e.reason ?? 'answer', outputTokens: e.usage?.output_tokens ?? 0,
-              tokens: sumTokens(e.usage), model: e.usage?.model ?? '',
+              tokens: sumTokens(e.usage), model: e.usage?.model ?? '', background: bg,
+              ...(byStop ? { stopped: true } : {}),
             },
           })
         }
-        status(l, 'idle')
+        const state = stateOf(bg)
+        l.emit({ kind: 'status', data: { state, background: bg } })
+        l.update({ state, background: bg })
         if (full(l) && getPct) {
           void getPct().then(p => {
             if (typeof p === 'number') safe(l2 => l2.update({ contextPct: p }))

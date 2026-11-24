@@ -1,5 +1,6 @@
 import type { AppState } from '../lib/store'
 import SessionRowView from '../components/SessionRow'
+import { byAttention } from '../lib/sessions'
 
 export default function Sessions({ state, onOpen, selected }: { state: AppState; onOpen?: (id: string) => void; selected?: string | null }) {
   const all = state.order.map((id) => state.sessions[id]).filter((s) => s && s.state !== 'closed')
@@ -15,7 +16,7 @@ export default function Sessions({ state, onOpen, selected }: { state: AppState;
       {machines.map((m) => {
         const info = state.machines[m]
         const offline = info ? !info.online : true
-        const list = work.filter((s) => s.machine === m)
+        const list = byAttention(work.filter((s) => s.machine === m))
         return (
           <section key={m} className={`mt-4 ${offline ? 'opacity-60' : ''}`}>
             <h2 className="flex items-center gap-2 px-3 pb-1 text-xs font-semibold uppercase tracking-wide text-zinc-400">
@@ -36,7 +37,7 @@ export default function Sessions({ state, onOpen, selected }: { state: AppState;
       {services.length > 0 && (
         <section className="mt-6">
           <h2 className="px-3 pb-1 text-xs font-semibold uppercase tracking-wide text-zinc-400">Services</h2>
-          <ul className="divide-y divide-zinc-900 border-y border-zinc-900">{services.map((s) => <SessionRowView key={s.id} row={{ kind: 'live', id: s.id, session: s }} detailed onOpen={onOpen} active={s.id === selected} />)}</ul>
+          <ul className="divide-y divide-zinc-900 border-y border-zinc-900">{byAttention(services).map((s) => <SessionRowView key={s.id} row={{ kind: 'live', id: s.id, session: s }} detailed onOpen={onOpen} active={s.id === selected} />)}</ul>
         </section>
       )}
     </div>

@@ -50,6 +50,7 @@ type Pane struct {
 	Agent        string `json:"agent"`
 	AgentStatus  string `json:"agent_status"` // e.g. idle, working, blocked
 	AgentSession *struct {
+		Agent string `json:"agent"`
 		Value string `json:"value"`
 	} `json:"agent_session"`
 }
