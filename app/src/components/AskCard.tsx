@@ -1,6 +1,10 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
+import {
+  Confirmation, ConfirmationAccepted, ConfirmationAction, ConfirmationActions, ConfirmationRejected, ConfirmationRequest, ConfirmationTitle,
+} from '@/components/ai-elements/confirmation'
 import { Check, MessageCircleQuestion, Send, ShieldAlert, X } from 'lucide-react'
 import { decide } from '../lib/api'
+import { useDraft } from '../lib/drafts'
 import type { Ask } from '../proto.gen'
 
 interface Q { question: string; header?: string; options?: { label: string; description?: string }[]; multiSelect?: boolean }
@@ -12,19 +16,35 @@ function parseQuestions(raw: unknown): Q[] {
   return Array.isArray(v) ? (v as Q[]) : []
 }
 
+function parseOther(raw: string): Record<number, string> {
+  try {
+    const v = JSON.parse(raw || '{}')
+    return v && typeof v === 'object' && !Array.isArray(v) ? v : {}
+  } catch { return {} }
+}
+
 export default function AskCard({ session, ask, onDone }: { session: string; ask: Ask; onDone?: () => void }) {
   const questions = ask.kind === 'question' ? parseQuestions(ask.questions) : []
   const [picked, setPicked] = useState<Record<number, string[]>>({})
-  const [other, setOther] = useState<Record<number, string>>({})
+  const [otherRaw, setOtherRaw, clearOther] = useDraft(`ask.${ask.askId}`)
+  const other = parseOther(otherRaw)
+  const setOther = (o: Record<number, string>) => setOtherRaw(JSON.stringify(o))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [gone, setGone] = useState(false)
+  // permission: the decision that was accepted; the first choice wins
+  const [decided, setDecided] = useState<'allow' | 'deny' | ''>('')
+  const inflight = useRef(false)
 
   async function send(body: Parameters<typeof decide>[1]) {
+    if (inflight.current) return
+    inflight.current = true
     setBusy(true)
     setError('')
     try {
       await decide(session, body)
+      clearOther()
+      if (ask.kind !== 'question') setDecided(body.decision as 'allow' | 'deny')
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'error'
       if (/already answered/i.test(msg)) {
@@ -32,6 +52,7 @@ export default function AskCard({ session, ask, onDone }: { session: string; ask
         setTimeout(() => onDone?.(), 2000)
       } else setError(msg)
     } finally {
+      inflight.current = false
       setBusy(false)
     }
   }
@@ -94,15 +115,24 @@ export default function AskCard({ session, ask, onDone }: { session: string; ask
           </div>
         </>
       ) : (
-        <>
+        <Confirmation
+          approval={decided ? { id: ask.askId, approved: decided === 'allow' } : { id: ask.askId }}
+          state={decided ? 'approval-responded' : 'approval-requested'}
+          role="group" aria-label="Permission request"
+          className="block border-0 bg-transparent p-0 text-zinc-200"
+        >
           <div className="flex items-center gap-2 text-xs font-medium text-amber-300"><ShieldAlert size={14} aria-hidden />Permission · {ask.tool}</div>
-          <div className="mt-1 font-medium">{ask.summary}</div>
-          {ask.detail && <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-zinc-800 bg-zinc-950 p-2.5 font-mono text-[11px] text-zinc-400">{ask.detail}</pre>}
-          <div className="mt-3 flex gap-2">
-            <button disabled={busy} onClick={() => send({ askId: ask.askId, decision: 'allow' })} className={`${btn} bg-emerald-600 text-white hover:bg-emerald-500`}><Check size={14} aria-hidden />Allow</button>
-            <button disabled={busy} onClick={() => send({ askId: ask.askId, decision: 'deny' })} className={`${btn} bg-zinc-800 text-zinc-200 hover:bg-zinc-700`}><X size={14} aria-hidden />Deny</button>
-          </div>
-        </>
+          <ConfirmationTitle className="mt-1 block font-medium text-zinc-100">{ask.summary}</ConfirmationTitle>
+          <ConfirmationRequest>
+            {ask.detail && <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-zinc-800 bg-zinc-950 p-2.5 font-mono text-[11px] text-zinc-400">{ask.detail}</pre>}
+          </ConfirmationRequest>
+          <ConfirmationAccepted><p className="mt-2 flex items-center gap-1.5 text-xs text-emerald-400"><Check size={14} aria-hidden />Allowed</p></ConfirmationAccepted>
+          <ConfirmationRejected><p className="mt-2 flex items-center gap-1.5 text-xs text-zinc-400"><X size={14} aria-hidden />Denied</p></ConfirmationRejected>
+          <ConfirmationActions className="mt-3 justify-start self-stretch">
+            <ConfirmationAction disabled={busy} onClick={() => send({ askId: ask.askId, decision: 'allow' })} className={`${btn} h-auto bg-emerald-600 text-white hover:bg-emerald-500`}><Check size={14} aria-hidden />Allow</ConfirmationAction>
+            <ConfirmationAction disabled={busy} onClick={() => send({ askId: ask.askId, decision: 'deny' })} className={`${btn} h-auto bg-zinc-800 text-zinc-200 hover:bg-zinc-700`}><X size={14} aria-hidden />Deny</ConfirmationAction>
+          </ConfirmationActions>
+        </Confirmation>
       )}
       {error && <p role="alert" className="mt-2 text-xs text-red-400">{error}</p>}
     </div>

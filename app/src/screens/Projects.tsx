@@ -1,5 +1,6 @@
 import ProjectCard from '../components/ProjectCard'
-import { pendingByProject, projectSessions, workspaceProjects } from '../lib/projects'
+import { pendingByProject, projectAttention, projectSessions, workspaceProjects } from '../lib/projects'
+import { lastActivity } from '../lib/sessions'
 import type { AppState } from '../lib/store'
 
 /** Board: projects grouped by workspace (columns on desktop, list on the phone). */
@@ -23,7 +24,9 @@ export default function Projects({ state, wide, selected, onOpen, onOpenSession,
       </div>
     )
   }
-  const column = (key: string, title: string, color: string, list: ReturnType<typeof workspaceProjects>) => (
+  const column = (key: string, title: string, color: string, projects: ReturnType<typeof workspaceProjects>) => {
+    const list = [...projects].sort((a, b) => projectAttention(state, a.id) - projectAttention(state, b.id) || a.name.localeCompare(b.name))
+    return (
     <section key={key} className={wide ? 'flex w-[300px] shrink-0 flex-col' : 'mt-4'}>
       <h2 className="flex items-center gap-2 px-3 pb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">
         <span className="h-2.5 w-2.5 rounded-full" style={{ background: color || '#71717a' }} />
@@ -32,11 +35,12 @@ export default function Projects({ state, wide, selected, onOpen, onOpenSession,
       </h2>
       <div className="space-y-2 px-3">
         {list.length ? list.map((p) => (
-          <ProjectCard key={p.id} project={p} sessions={projectSessions(state, p.id)} pending={pending[p.id] ?? 0} active={p.id === selected} onOpen={onOpen} onOpenSession={onOpenSession} />
+          <ProjectCard key={p.id} project={p} sessions={projectSessions(state, p.id)} pending={pending[p.id] ?? 0} lastActivity={lastActivity(state, p.id)} active={p.id === selected} onOpen={onOpen} onOpenSession={onOpenSession} />
         )) : <p className="text-xs text-zinc-600">No projects.</p>}
       </div>
     </section>
-  )
+    )
+  }
   return (
     <div className={wide ? 'flex h-full gap-1 overflow-x-auto py-4' : 'pb-8'}>
       {workspaces.map((w) => column(w.id, w.name, w.color, workspaceProjects(state, w.id)))}

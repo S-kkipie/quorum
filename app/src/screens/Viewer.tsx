@@ -3,6 +3,7 @@ import { ExternalLink, Minus, Plus, RotateCw, X } from 'lucide-react'
 import Markdown from '../components/Markdown'
 import { folderOf } from '../components/timeline/ArtifactCard'
 import { createView, hubUrl } from '../lib/api'
+import { Button } from '@/components/ui/button'
 
 const SANDBOX = 'allow-scripts allow-popups allow-forms allow-modals'
 const ZOOMS = [25, 50, 75, 100, 150, 200, 300, 400]
@@ -15,7 +16,7 @@ function kindOf(name: string): Kind {
   return 'image'
 }
 
-const btn = 'flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-zinc-400 hover:text-zinc-200 disabled:opacity-40'
+const btn = 'size-11 shrink-0 text-zinc-400 hover:text-zinc-200'
 
 /** Full-screen viewer of a file of a session, served by the hub through a short-lived /v/ link. */
 export default function Viewer({ machine, sessionId, path, base = '', onBack }: {
@@ -65,26 +66,26 @@ export default function Viewer({ machine, sessionId, path, base = '', onBack }: 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <header className="flex min-h-11 items-center gap-1 border-b border-zinc-800 bg-zinc-950 px-1.5 py-1">
-        <button onClick={onBack} aria-label="Close" title="Close" className={btn}><X size={20} aria-hidden /></button>
+        <Button variant="ghost" size="icon" onClick={onBack} aria-label="Close" title="Close" className={btn}><X size={20} aria-hidden /></Button>
         <div className="min-w-0 flex-1">
           <div className="truncate text-[15px] font-semibold">{name}</div>
           <div className="truncate text-xs text-zinc-500">{where}</div>
         </div>
         {kind === 'image' && src && (
           <>
-            <button onClick={() => step(-1)} aria-label="Zoom out" title="Zoom out" className={btn}><Minus size={18} aria-hidden /></button>
+            <Button variant="ghost" size="icon" onClick={() => step(-1)} aria-label="Zoom out" title="Zoom out" className={btn}><Minus size={18} aria-hidden /></Button>
             <span className="w-10 text-center text-xs text-zinc-500">{zoom}%</span>
-            <button onClick={() => step(1)} aria-label="Zoom in" title="Zoom in" className={btn}><Plus size={18} aria-hidden /></button>
+            <Button variant="ghost" size="icon" onClick={() => step(1)} aria-label="Zoom in" title="Zoom in" className={btn}><Plus size={18} aria-hidden /></Button>
           </>
         )}
-        <button onClick={() => setNonce((n) => n + 1)} aria-label="Reload" title="Reload" className={btn}><RotateCw size={18} aria-hidden /></button>
-        <button onClick={openTab} disabled={!src} aria-label="Open in new tab" title="Open in new tab" className={btn}><ExternalLink size={18} aria-hidden /></button>
+        <Button variant="ghost" size="icon" onClick={() => setNonce((n) => n + 1)} aria-label="Reload" title="Reload" className={btn}><RotateCw size={18} aria-hidden /></Button>
+        <Button variant="ghost" size="icon" onClick={openTab} disabled={!src} aria-label="Open in new tab" title="Open in new tab" className={btn}><ExternalLink size={18} aria-hidden /></Button>
       </header>
       <div className="min-h-0 flex-1 overflow-auto">
         {error ? (
           <div className="flex flex-col items-start gap-3 p-4">
             <p role="alert" className="text-sm text-red-400">{error}</p>
-            <button onClick={onBack} className="min-h-11 rounded-lg bg-zinc-800 px-4 text-sm text-zinc-200 hover:bg-zinc-700">Back</button>
+            <Button variant="secondary" onClick={onBack} className="min-h-11 px-4">Back</Button>
           </div>
         ) : !src ? (
           <p className="p-4 text-sm text-zinc-500">Loading…</p>

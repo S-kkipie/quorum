@@ -133,6 +133,8 @@ func online(f *fixture, name string) bool {
 func TestHelloRegistersMachineAndSessions(t *testing.T) {
 	f := newFixture(t, "m1")
 	require.NoError(t, f.st.UpsertSession(proto.SessionInfo{ID: "old", Machine: "m1", State: proto.StateIdle}))
+	_, err := f.st.AppendEvent(proto.Event{Session: "old", Kind: proto.KindUser, Data: mustJSON(map[string]string{"text": "hi"})})
+	require.NoError(t, err)
 	c := f.dial(t)
 	sendHello(t, c, "m1", "s1", "s2")
 	eventually(t, func() bool { return online(f, "m1") })
@@ -164,7 +166,7 @@ func TestSessionMessagesStoredAndPublished(t *testing.T) {
 	c := f.dial(t)
 	sendHello(t, c, "m1", "s1")
 	eventually(t, func() bool { return online(f, "m1") })
-	ev := proto.Event{Session: "s1", TS: 5, Kind: proto.KindInfo}
+	ev := proto.Event{Session: "s1", TS: 5, Kind: proto.KindUser}
 	require.NoError(t, wsjson.Write(context.Background(), c, proto.Envelope{Type: "event", Session: "s1", Payload: mustJSON(ev)}))
 	dl := proto.Event{Session: "s1", TS: 6, Kind: proto.KindAssistantDelta}
 	require.NoError(t, wsjson.Write(context.Background(), c, proto.Envelope{Type: "event", Session: "s1", Payload: mustJSON(dl)}))
@@ -376,4 +378,68 @@ func TestHelloAndCapsUpdatePublishStatus(t *testing.T) {
 	eventually(t, func() bool { h, n := lastStatusHerdr(f); return n == 1 && h })
 	require.NoError(t, wsjson.Write(context.Background(), c, proto.Envelope{Type: "caps", Machine: "m1", Payload: mustJSON(proto.MachineCaps{Herdr: false})}))
 	eventually(t, func() bool { h, n := lastStatusHerdr(f); return n == 2 && !h })
+}
+
+func TestSessionGoneWithoutPromptPublishesRemoved(t *testing.T) {
+	f := newFixture(t, "m1")
+	c := f.dial(t)
+	sendHello(t, c, "m1", "s1")
+	eventually(t, func() bool { return online(f, "m1") })
+	require.NoError(t, wsjson.Write(context.Background(), c, proto.Envelope{Type: "session_gone", Session: "s1"}))
+	eventually(t, func() bool { l, _ := f.st.ListSessions(true); return len(l) == 0 })
+	eventually(t, func() bool {
+		for _, ty := range f.cap.types() {
+			if ty == "session_removed" {
+				return true
+			}
+		}
+		return false
+	})
+	for _, ty := range f.cap.types() {
+		require.NotEqual(t, "session_gone", ty)
+	}
+}
+
+func TestSessionGoneKeepsTicketLinkedSession(t *testing.T) {
+	f := newFixture(t, "m1")
+	c := f.dial(t)
+	sendHello(t, c, "m1", "s1")
+	eventually(t, func() bool { return online(f, "m1") })
+	require.NoError(t, f.st.LinkSessionTicket(proto.SessionTicket{SessionID: "s1", TicketID: "t1", Confirmed: true}))
+	require.NoError(t, wsjson.Write(context.Background(), c, proto.Envelope{Type: "session_gone", Session: "s1"}))
+	eventually(t, func() bool { si, err := f.st.Session("s1"); return err == nil && si.State == proto.StateClosed })
+	for _, ty := range f.cap.types() {
+		require.NotEqual(t, "session_removed", ty)
+	}
+}
+
+func TestReconcileAndExpireCloseNeverPromptedSession(t *testing.T) {
+	f := newFixture(t, "m1")
+	c := f.dial(t)
+	sendHello(t, c, "m1", "s1", "s2")
+	eventually(t, func() bool { return online(f, "m1") })
+	require.NoError(t, f.st.LinkSessionTicket(proto.SessionTicket{SessionID: "s2", TicketID: "t1", Confirmed: true}))
+	c.Close(websocket.StatusNormalClosure, "")
+	eventually(t, func() bool { f.clock.mu.Lock(); defer f.clock.mu.Unlock(); return len(f.clock.timers) == 1 })
+	f.clock.advance(61 * time.Second)
+	for _, id := range []string{"s1", "s2"} {
+		si, err := f.st.Session(id)
+		require.NoError(t, err, id)
+		require.Equal(t, proto.StateClosed, si.State)
+	}
+	for _, ty := range f.cap.types() {
+		require.NotEqual(t, "session_removed", ty)
+	}
+	// reconcile: a new hello without s1 closes it too, and a later upsert brings s2 back with its link
+	c2 := f.dial(t)
+	sendHello(t, c2, "m1", "s3")
+	eventually(t, func() bool { si, err := f.st.Session("s3"); return err == nil && si.State != proto.StateClosed })
+	require.NoError(t, wsjson.Write(context.Background(), c2, proto.Envelope{Type: "session_upsert", Session: "s2", Payload: mustJSON(proto.SessionInfo{ID: "s2", State: proto.StateIdle})}))
+	eventually(t, func() bool { si, _ := f.st.Session("s2"); return si.State == proto.StateIdle })
+	links, err := f.st.SessionTickets("s2")
+	require.NoError(t, err)
+	require.Len(t, links, 1)
+	si, err := f.st.Session("s1")
+	require.NoError(t, err)
+	require.Equal(t, proto.StateClosed, si.State)
 }

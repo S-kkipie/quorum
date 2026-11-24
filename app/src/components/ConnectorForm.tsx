@@ -1,5 +1,8 @@
 import type { ConnectorConfig } from '../proto.gen'
 import type { ConnectorInput } from '../lib/api'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 
 export interface ConnectorDraft {
   kind: string
@@ -48,14 +51,14 @@ export function validateConnector(d: ConnectorDraft): string {
   return ''
 }
 
-const field = 'mt-1 w-full rounded border border-zinc-800 bg-zinc-900 p-2 text-sm'
+const field = 'mt-1 min-h-11 w-full rounded border border-zinc-800 bg-zinc-900 p-2 text-sm md:text-sm'
 
 export default function ConnectorForm({ value, onChange, hasToken }: { value: ConnectorDraft; onChange: (d: ConnectorDraft) => void; hasToken?: boolean }) {
   const d = value
   const set = (k: string, v: string) => onChange({ ...d, settings: { ...d.settings, [k]: v } })
   const text = (k: string, label: string, placeholder = '', hint = '') => (
     <label className="mt-3 block text-xs text-zinc-400">{label}
-      <input aria-label={label} value={d.settings[k] ?? ''} onChange={(e) => set(k, e.target.value)} placeholder={placeholder} className={field} />
+      <Input aria-label={label} value={d.settings[k] ?? ''} onChange={(e) => set(k, e.target.value)} placeholder={placeholder} className={field} />
       {hint && <span className="mt-1 block text-[11px] text-zinc-600">{hint}</span>}
     </label>
   )
@@ -87,27 +90,27 @@ export default function ConnectorForm({ value, onChange, hasToken }: { value: Co
         <>
           {text('command', 'Command', '/path/to/connector.sh', 'No shell: the program and its arguments separated by spaces.')}
           <label className="mt-3 block text-xs text-zinc-400">Status map (JSON, optional)
-            <textarea value={d.settings.statusMap ?? ''} onChange={(e) => set('statusMap', e.target.value)} rows={2} placeholder='{"waiting":"blocked"}' className={field + ' font-mono'} />
+            <Textarea value={d.settings.statusMap ?? ''} onChange={(e) => set('statusMap', e.target.value)} rows={2} placeholder='{"waiting":"blocked"}' className={field + ' font-mono'} />
           </label>
         </>
       )}
       {usesToken(d.kind) && (
         <label className="mt-3 block text-xs text-zinc-400">Token
-          <input aria-label="Token" type="password" autoComplete="new-password" value={d.token} onChange={(e) => onChange({ ...d, token: e.target.value, clearToken: false })}
+          <Input aria-label="Token" type="password" autoComplete="new-password" value={d.token} onChange={(e) => onChange({ ...d, token: e.target.value, clearToken: false })}
             placeholder={hasToken && !d.clearToken ? 'saved · type to replace it' : 'no token'} className={field} />
           {hasToken && (
             <span className="mt-1 flex items-center gap-2 text-[11px] text-zinc-500">
               {d.clearToken ? 'Will be deleted on save.' : 'Write-only: not shown.'}
-              <button type="button" onClick={() => onChange({ ...d, token: '', clearToken: !d.clearToken })} className="text-red-400 underline">
+              <Button type="button" variant="link" size="sm" onClick={() => onChange({ ...d, token: '', clearToken: !d.clearToken })} className="min-h-11 text-red-400">
                 {d.clearToken ? 'Keep' : 'Delete token'}
-              </button>
+              </Button>
             </span>
           )}
         </label>
       )}
       {d.kind !== 'none' && (
         <label className="mt-3 block text-xs text-zinc-400">Sync every (minutes)
-          <input type="number" min={1} max={60} value={d.intervalMin} onChange={(e) => onChange({ ...d, intervalMin: Number(e.target.value) })} className={field} />
+          <Input type="number" min={1} max={60} value={d.intervalMin} onChange={(e) => onChange({ ...d, intervalMin: Number(e.target.value) })} className={field} />
         </label>
       )}
     </fieldset>

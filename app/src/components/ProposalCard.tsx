@@ -2,6 +2,10 @@ import { useEffect, useState } from 'react'
 import { approveProposal, rejectProposal } from '../lib/api'
 import { STATUS_LABEL } from '../lib/projects'
 import type { Proposal } from '../proto.gen'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
+import { Textarea } from '@/components/ui/textarea'
 
 const BADGE: Record<string, string> = {
   pending: 'bg-amber-500/15 text-amber-300',
@@ -39,15 +43,15 @@ export default function ProposalCard({ proposal, onDone }: { proposal: Proposal;
   const reject = () => act(() => rejectProposal(p.id))
 
   return (
-    <div className="rounded border border-zinc-800 bg-zinc-900/40 p-2 text-sm">
+    <Card className="gap-0 rounded border-zinc-800 bg-zinc-900/40 p-2 text-sm shadow-none">
       <div className="flex items-center justify-between gap-2 text-xs">
         <span className="text-zinc-400">{isComment ? 'Proposed comment' : 'Proposed status change'}</span>
-        <span className={`rounded px-1.5 py-0.5 ${BADGE[p.status] ?? BADGE.rejected}`}>{p.status}</span>
+        <Badge className={`rounded px-1.5 ${BADGE[p.status] ?? BADGE.rejected}`}>{p.status}</Badge>
       </div>
       {isComment ? (
         pending ? (
-          <textarea aria-label="Comment text" value={body} onChange={(e) => { setBody(e.target.value); setEdited(e.target.value !== p.body) }} rows={Math.min(10, Math.max(3, body.split('\n').length))}
-            className="mt-2 w-full rounded border border-zinc-800 bg-zinc-950 p-2 text-sm" />
+          <Textarea aria-label="Comment text" value={body} onChange={(e) => { setBody(e.target.value); setEdited(e.target.value !== p.body) }} rows={Math.min(10, Math.max(3, body.split('\n').length))}
+            className="mt-2 min-h-0 w-full rounded border border-zinc-800 bg-zinc-950 p-2 text-sm md:text-sm" />
         ) : (
           <p className="mt-2 line-clamp-4 whitespace-pre-wrap text-xs text-zinc-400">{p.body}</p>
         )
@@ -58,12 +62,12 @@ export default function ProposalCard({ proposal, onDone }: { proposal: Proposal;
       {error && <p role="alert" className="mt-1 text-xs text-red-400">{error}</p>}
       {pending && (
         <div className="mt-2 flex justify-end gap-2">
-          <button disabled={busy} onClick={reject} className="rounded bg-zinc-800 px-3 py-1 text-xs disabled:opacity-40">Reject</button>
-          <button disabled={busy || (isComment && !body.trim())} onClick={approve} className="rounded bg-emerald-600 px-3 py-1 text-xs text-white disabled:opacity-40">
+          <Button variant="secondary" size="sm" disabled={busy} onClick={reject} className="min-h-11 text-xs">Reject</Button>
+          <Button size="sm" disabled={busy || (isComment && !body.trim())} onClick={approve} className="min-h-11 bg-emerald-600 text-xs text-white hover:bg-emerald-600/90">
             {busy ? 'Sending…' : 'Approve'}
-          </button>
+          </Button>
         </div>
       )}
-    </div>
+    </Card>
   )
 }

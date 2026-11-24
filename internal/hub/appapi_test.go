@@ -371,6 +371,8 @@ func TestSessionGoneDropsAsksAndEmptyAskID(t *testing.T) {
 	require.Equal(t, "missing askId", msg)
 	f.machineSend(t, askEnv("s1", "a1"))
 	eventually(t, func() bool { f.srv.asks.mu.Lock(); defer f.srv.asks.mu.Unlock(); return len(f.srv.asks.open) == 1 })
+	_, err := f.st.AppendEvent(proto.Event{Session: "s1", Kind: proto.KindUser, Data: mustJSON(map[string]string{"text": "hi"})})
+	require.NoError(t, err)
 	f.machineSend(t, proto.Envelope{Type: "session_gone", Session: "s1"})
 	eventually(t, func() bool { f.srv.asks.mu.Lock(); defer f.srv.asks.mu.Unlock(); return len(f.srv.asks.open) == 0 })
 }

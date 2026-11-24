@@ -93,6 +93,8 @@ func TestStartupGraceClosesMachinesThatNeverReturn(t *testing.T) {
 		require.NoError(t, st.UpsertSession(proto.SessionInfo{ID: x.s, Machine: x.m, State: proto.StateNeedsYou}))
 		_, err := st.AppendEvent(proto.Event{Session: x.s, Kind: proto.KindAsk, Data: mustJSON(proto.Ask{AskID: "ask-" + x.s})})
 		require.NoError(t, err)
+		_, err = st.AppendEvent(proto.Event{Session: x.s, Kind: proto.KindUser, Data: mustJSON(map[string]string{"text": "hi"})})
+		require.NoError(t, err)
 	}
 	clock := &fakeClock{now: time.Unix(1000, 0)}
 	old := defaultAfterFunc
@@ -219,6 +221,8 @@ func TestReseedOnlyForNewOrReturningSessions(t *testing.T) {
 	eventually(t, func() bool { f.srv.asks.mu.Lock(); defer f.srv.asks.mu.Unlock(); return f.srv.asks.known["s1"] })
 	// an ask stored without going through the feed (not observed)
 	_, err := f.st.AppendEvent(proto.Event{Session: "s1", Kind: proto.KindAsk, Data: mustJSON(proto.Ask{AskID: "hidden"})})
+	require.NoError(t, err)
+	_, err = f.st.AppendEvent(proto.Event{Session: "s1", Kind: proto.KindUser, Data: mustJSON(map[string]string{"text": "hi"})})
 	require.NoError(t, err)
 	f.machineSend(t, upsertEnv("s1", "", proto.StateIdle))
 	eventually(t, func() bool { si, _ := f.st.Session("s1"); return si.State == proto.StateIdle })

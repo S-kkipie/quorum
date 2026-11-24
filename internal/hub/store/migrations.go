@@ -1,6 +1,10 @@
 package store
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/S-kkipie/quorum/internal/proto"
+)
 
 const schema = `
 CREATE TABLE IF NOT EXISTS machines (
@@ -115,6 +119,19 @@ func migrate(s *Store) error {
 			if _, err := s.db.Exec(`ALTER TABLE sessions ADD COLUMN ` + col + ` TEXT NOT NULL DEFAULT ''`); err != nil {
 				return err
 			}
+		}
+	}
+	// Task 10: a session that ever received a user prompt is kept when it closes (pruning can drop the events).
+	if err := s.db.QueryRow(`SELECT count(*) FROM pragma_table_info('sessions') WHERE name='prompted'`).Scan(&n); err != nil {
+		return err
+	}
+	if n == 0 {
+		if _, err := s.db.Exec(`ALTER TABLE sessions ADD COLUMN prompted INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return err
+		}
+		if _, err := s.db.Exec(`UPDATE sessions SET prompted=1 WHERE EXISTS (SELECT 1 FROM events e WHERE e.session=sessions.id AND e.kind=?)
+			OR (SELECT COUNT(*) FROM events e WHERE e.session=sessions.id)>=?`, string(proto.KindUser), maxEventsPerSession); err != nil {
+			return err
 		}
 	}
 	return migrateEnglishStatuses(s)

@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import AskCard from './AskCard'
 import type { Ask } from '../proto.gen'
 
 const fetchMock = vi.fn(async (_u: string, _i?: RequestInit) => new Response('{}', { status: 200 }))
 vi.stubGlobal('fetch', fetchMock)
+beforeEach(() => localStorage.clear())
 afterEach(() => { cleanup(); fetchMock.mockReset(); fetchMock.mockImplementation(async () => new Response('{}')) })
 
 const perm: Ask = { askId: 'a1', kind: 'permission', tool: 'Bash', summary: 'ls -la', detail: 'ls -la /', questions: null as any }
@@ -18,6 +19,18 @@ describe('AskCard', () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalled())
     expect(fetchMock.mock.calls[0][0]).toContain('/api/sessions/s1/decide')
     expect(body()).toEqual({ askId: 'a1', decision: 'allow' })
+  })
+  it('permission renders as a confirmation and the first choice wins', async () => {
+    render(<AskCard session="s1" ask={perm} />)
+    const card = screen.getByRole('group', { name: 'Permission request' })
+    expect(card.getAttribute('data-slot')).toBe('alert')
+    expect(card.textContent).toContain('ls -la /')
+    fireEvent.click(screen.getByRole('button', { name: 'Deny' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Allow' }))
+    await screen.findByText('Denied')
+    expect(screen.queryByRole('button', { name: 'Allow' })).toBeNull()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(body()).toEqual({ askId: 'a1', decision: 'deny' })
   })
   it('question: sends answers (multi with comma, and Other)', async () => {
     const ask: Ask = { ...perm, kind: 'question', tool: 'AskUserQuestion', questions: [
@@ -45,5 +58,27 @@ describe('AskCard', () => {
     vi.advanceTimersByTime(2100)
     expect(done).toHaveBeenCalled()
     vi.useRealTimers()
+  })
+  it('free text persists across remount under ask.<askId> and clears on submit', async () => {
+    const ask: Ask = { ...perm, kind: 'question', tool: 'AskUserQuestion', questions: [{ question: 'Free', options: [{ label: 'X' }] }] as any }
+    const a = render(<AskCard session="s1" ask={ask} />)
+    fireEvent.change(screen.getByLabelText('Other: Free'), { target: { value: 'draft text' } })
+    a.unmount()
+    expect(localStorage.getItem('quorum.draft.ask.a1')).toContain('draft text')
+    render(<AskCard session="s1" ask={ask} />)
+    expect((screen.getByLabelText('Other: Free') as HTMLInputElement).value).toBe('draft text')
+    fireEvent.click(screen.getByRole('button', { name: 'Send answers' }))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled())
+    await waitFor(() => expect(localStorage.getItem('quorum.draft.ask.a1')).toBeNull())
+  })
+  it('keeps the free text when submit fails', async () => {
+    fetchMock.mockImplementation(async () => new Response('{"error":"boom"}', { status: 500 }))
+    const ask: Ask = { ...perm, kind: 'question', tool: 'AskUserQuestion', questions: [{ question: 'Free', options: [{ label: 'X' }] }] as any }
+    const a = render(<AskCard session="s1" ask={ask} />)
+    fireEvent.change(screen.getByLabelText('Other: Free'), { target: { value: 'keep me' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send answers' }))
+    await screen.findByRole('alert')
+    a.unmount()
+    expect(localStorage.getItem('quorum.draft.ask.a1')).toContain('keep me')
   })
 })

@@ -108,8 +108,16 @@ export function defaultDeviceName(ua: string = typeof navigator !== 'undefined' 
 }
 
 export type PromptMode = 'now' | 'queue' | 'interrupt'
-export const listEvents = (id: string, before = 0, limit = 50) =>
-  apiFetch<Event[]>(`/api/sessions/${encodeURIComponent(id)}/events?before=${before}&limit=${limit}`)
+/** Dev-only data override (fixture mode); inert unless set. */
+export interface DevApi {
+  listConversations: (machine: string, root: string) => Promise<Conversation[]>
+  listEvents: (id: string, before: number, limit: number) => Promise<Event[]>
+}
+let devApi: DevApi | null = null
+export const setDevApi = (d: DevApi | null) => { devApi = d }
+
+export const listEvents = (id: string, before = 0, limit = 50): Promise<Event[]> =>
+  devApi ? devApi.listEvents(id, before, limit) : apiFetch<Event[]>(`/api/sessions/${encodeURIComponent(id)}/events?before=${before}&limit=${limit}`)
 export const sendPrompt = (id: string, text: string, mode: PromptMode) =>
   apiFetch(`/api/sessions/${encodeURIComponent(id)}/prompt`, { method: 'POST', body: JSON.stringify({ text, mode }) })
 export const decide = (id: string, body: { askId: string; decision: 'allow' | 'deny'; answers?: Record<string, string>; reason?: string }) =>
@@ -123,8 +131,8 @@ export const launch = (b: { machine: string; dir: string; permissionMode?: strin
 
 const term = (machine: string, pane?: string) =>
   `/api/machines/${encodeURIComponent(machine)}/terminals` + (pane === undefined ? '' : '/' + encodeURIComponent(pane))
-export const listConversations = (machine: string, root: string) =>
-  apiFetch<Conversation[]>(`/api/machines/${encodeURIComponent(machine)}/conversations?root=${encodeURIComponent(root)}`)
+export const listConversations = (machine: string, root: string): Promise<Conversation[]> =>
+  devApi ? devApi.listConversations(machine, root) : apiFetch<Conversation[]>(`/api/machines/${encodeURIComponent(machine)}/conversations?root=${encodeURIComponent(root)}`)
 export const openTerminal = (machine: string, root: string, label: string, fresh = false) =>
   apiFetch<{ pane: string; cols: number; rows: number }>(term(machine), { method: 'POST', body: JSON.stringify({ root, label, new: fresh }) })
 export const watchTerminal = (machine: string, pane: string) => apiFetch(term(machine, pane) + '/watch', { method: 'POST' })

@@ -479,8 +479,13 @@ func (h *Hub) onMessage(c *machineConn, env proto.Envelope) {
 			return
 		}
 		h.forgetSuggested(env.Session)
-		if err := h.st.CloseSession(name, env.Session); err != nil {
+		removed, err := h.st.CloseSession(name, env.Session)
+		if err != nil {
 			log.Printf("hub: gone %s: %v", env.Session, err)
+			return
+		}
+		if removed {
+			h.publish(proto.Envelope{Type: "session_removed", Machine: name, Session: env.Session})
 			return
 		}
 	case "backfill_result":

@@ -64,7 +64,8 @@ func TestTicketLaunch(t *testing.T) {
 	require.Equal(t, "new", e["session"])
 
 	// closed: it can be launched again
-	require.NoError(t, f.st.CloseSession("m1", "new"))
+	_, err := f.st.CloseSession("m1", "new")
+	require.NoError(t, err)
 	require.Equal(t, 202, f.postJSON(t, path, `{"machine":"m1","checkoutRoot":"/w/r"}`, &res))
 }
 

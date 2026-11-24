@@ -1,6 +1,7 @@
 import type { Ticket } from '../proto.gen'
 import { TONE_TEXT, ticketLine } from '../lib/projects'
 import type { AppState } from '../lib/store'
+import { Badge } from '@/components/ui/badge'
 
 export default function TicketRow({ state, ticket, pending, active, onOpen }: {
   state: AppState
@@ -24,7 +25,7 @@ export default function TicketRow({ state, ticket, pending, active, onOpen }: {
             {t.assignee && <span className="text-zinc-600"> · {t.assignee}</span>}
           </span>
         </span>
-        {!!pending && <span className="shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 text-[11px] text-amber-300" title="pending proposals">{pending}</span>}
+        {!!pending && <Badge className="rounded bg-amber-500/15 px-1.5 text-[11px] text-amber-300" title="pending proposals">{pending}</Badge>}
       </button>
     </li>
   )

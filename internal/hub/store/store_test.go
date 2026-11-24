@@ -112,6 +112,8 @@ func TestSessionsClosed(t *testing.T) {
 	s := openMem(t)
 	require.NoError(t, s.UpsertSession(proto.SessionInfo{ID: "a", Machine: "m1", State: proto.StateWorking}))
 	require.NoError(t, s.UpsertSession(proto.SessionInfo{ID: "b", Machine: "m2", State: proto.StateWorking}))
+	_, err := s.AppendEvent(proto.Event{Session: "a", Kind: proto.KindUser, Data: json.RawMessage(`{}`)})
+	require.NoError(t, err)
 	closed, err := s.MarkMachineSessionsClosed("m1")
 	require.NoError(t, err)
 	require.Equal(t, []string{"a"}, closed)
@@ -207,7 +209,13 @@ func TestCloseSessionAndExcept(t *testing.T) {
 		require.NoError(t, s.UpsertSession(proto.SessionInfo{ID: id, Machine: "m1", State: proto.StateIdle}))
 	}
 	require.NoError(t, s.UpsertSession(proto.SessionInfo{ID: "z", Machine: "m2", State: proto.StateIdle}))
-	require.NoError(t, s.CloseSession("m2", "a")) // another machine: nothing changes
+	for _, id := range []string{"a", "b", "c"} {
+		_, err := s.AppendEvent(proto.Event{Session: id, Kind: proto.KindUser, Data: json.RawMessage(`{}`)})
+		require.NoError(t, err)
+	}
+	rm, err := s.CloseSession("m2", "a") // another machine: nothing changes
+	require.NoError(t, err)
+	require.False(t, rm)
 	l0, _ := s.ListSessions(false)
 	require.Len(t, l0, 4)
 	ow, ok, err := s.SessionOwner("a")
@@ -216,7 +224,9 @@ func TestCloseSessionAndExcept(t *testing.T) {
 	require.Equal(t, "m1", ow)
 	_, ok, _ = s.SessionOwner("nope")
 	require.False(t, ok)
-	require.NoError(t, s.CloseSession("m1", "a"))
+	rm, err = s.CloseSession("m1", "a")
+	require.NoError(t, err)
+	require.False(t, rm)
 	_, err = s.CloseMachineSessionsExcept("m1", []string{"b"})
 	require.NoError(t, err)
 	list, err := s.ListSessions(false)
@@ -411,7 +421,10 @@ func TestPreviousIDHiddenWhileOldIDLives(t *testing.T) {
 	require.NoError(t, err)
 	si, _ := s.Session("B")
 	require.Empty(t, si.PreviousID)
-	require.NoError(t, s.CloseSession("m", "A"))
+	_, err = s.AppendEvent(proto.Event{Session: "A", Kind: proto.KindUser, Data: json.RawMessage(`{}`)})
+	require.NoError(t, err)
+	_, err = s.CloseSession("m", "A")
+	require.NoError(t, err)
 	si, _ = s.Session("B")
 	require.Equal(t, "A", si.PreviousID)
 }
@@ -615,4 +628,124 @@ func TestMigrateSpanishStatusesToEnglish(t *testing.T) {
 		require.Equal(t, []string{"not json statusMap"}, got(`SELECT settings FROM projects WHERE id='p2'`))
 		require.NoError(t, s.Close())
 	}
+}
+
+func TestCloseSessionRemovesSessionWithoutPrompt(t *testing.T) {
+	s := openMem(t)
+	for _, id := range []string{"empty", "talked"} {
+		require.NoError(t, s.UpsertSession(proto.SessionInfo{ID: id, Machine: "m1", State: proto.StateIdle}))
+	}
+	_, err := s.AppendEvent(proto.Event{Session: "empty", Kind: proto.KindStatus, Data: json.RawMessage(`{}`)})
+	require.NoError(t, err)
+	_, err = s.AppendEvent(proto.Event{Session: "empty", Kind: proto.KindInfo, Data: json.RawMessage(`1`)})
+	require.NoError(t, err)
+	_, err = s.AppendEvent(proto.Event{Session: "talked", Kind: proto.KindUser, Data: json.RawMessage(`{}`)})
+	require.NoError(t, err)
+
+	removed, err := s.CloseSession("m1", "empty")
+	require.NoError(t, err)
+	require.True(t, removed)
+	_, err = s.Session("empty")
+	require.ErrorIs(t, err, ErrNotFound)
+	evs, _ := s.Events("empty", 0, 10)
+	require.Empty(t, evs)
+
+	removed, err = s.CloseSession("m1", "talked")
+	require.NoError(t, err)
+	require.False(t, removed)
+	si, err := s.Session("talked")
+	require.NoError(t, err)
+	require.Equal(t, proto.StateClosed, si.State)
+}
+
+func TestCloseMachineSessionsExceptNeverRemoves(t *testing.T) {
+	s := openMem(t)
+	for _, id := range []string{"empty", "kept"} {
+		require.NoError(t, s.UpsertSession(proto.SessionInfo{ID: id, Machine: "m1", State: proto.StateIdle}))
+	}
+	closed, err := s.CloseMachineSessionsExcept("m1", []string{"kept"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"empty"}, closed)
+	si, err := s.Session("empty")
+	require.NoError(t, err)
+	require.Equal(t, proto.StateClosed, si.State)
+}
+
+func TestPromptedSurvivesPruning(t *testing.T) {
+	s := openMem(t)
+	require.NoError(t, s.UpsertSession(proto.SessionInfo{ID: "a", Machine: "m1", State: proto.StateIdle}))
+	_, err := s.AppendEvent(proto.Event{Session: "a", Kind: proto.KindUser, Data: json.RawMessage(`{}`)})
+	require.NoError(t, err)
+	for i := 0; i < maxEventsPerSession+5; i++ {
+		_, err := s.AppendEvent(proto.Event{Session: "a", Kind: proto.KindInfo, Data: json.RawMessage(`1`)})
+		require.NoError(t, err)
+	}
+	var users int
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM events WHERE session='a' AND kind='user'`).Scan(&users))
+	require.Zero(t, users, "the user event was pruned")
+	removed, err := s.CloseSession("m1", "a")
+	require.NoError(t, err)
+	require.False(t, removed)
+	si, err := s.Session("a")
+	require.NoError(t, err)
+	require.Equal(t, proto.StateClosed, si.State)
+}
+
+func TestPrependEventsWithUserSetsPrompted(t *testing.T) {
+	s := openMem(t)
+	require.NoError(t, s.UpsertSession(proto.SessionInfo{ID: "a", Machine: "m1", State: proto.StateIdle}))
+	ok, err := s.PrependEvents("a", []proto.Event{{Session: "a", Kind: proto.KindUser, Data: json.RawMessage(`{}`)}})
+	require.NoError(t, err)
+	require.True(t, ok)
+	var p int
+	require.NoError(t, s.db.QueryRow(`SELECT prompted FROM sessions WHERE id='a'`).Scan(&p))
+	require.Equal(t, 1, p)
+}
+
+func TestCloseSessionKeepsTicketLinked(t *testing.T) {
+	s := openMem(t)
+	require.NoError(t, s.UpsertSession(proto.SessionInfo{ID: "a", Machine: "m1", State: proto.StateIdle}))
+	_, err := s.db.Exec(`INSERT INTO session_tickets(session_id, ticket_id) VALUES('a','t1')`)
+	require.NoError(t, err)
+	removed, err := s.CloseSession("m1", "a")
+	require.NoError(t, err)
+	require.False(t, removed)
+	si, err := s.Session("a")
+	require.NoError(t, err)
+	require.Equal(t, proto.StateClosed, si.State)
+	var n int
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM session_tickets WHERE session_id='a'`).Scan(&n))
+	require.Equal(t, 1, n)
+}
+
+func TestMigratePromptedBackfill(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hub.db")
+	s, err := Open(path)
+	require.NoError(t, err)
+	for _, id := range []string{"user", "big", "plain"} {
+		require.NoError(t, s.UpsertSession(proto.SessionInfo{ID: id, Machine: "m1", State: proto.StateIdle}))
+	}
+	_, err = s.db.Exec(`INSERT INTO events(session,seq,kind) VALUES('user',1,'user')`)
+	require.NoError(t, err)
+	_, err = s.db.Exec(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<?) INSERT INTO events(session,seq,kind) SELECT 'big', i, 'info' FROM n`, maxEventsPerSession)
+	require.NoError(t, err)
+	_, err = s.db.Exec(`INSERT INTO events(session,seq,kind) VALUES('plain',1,'info')`)
+	require.NoError(t, err)
+	_, err = s.db.Exec(`ALTER TABLE sessions DROP COLUMN prompted`)
+	require.NoError(t, err)
+	require.NoError(t, s.Close())
+	s, err = Open(path)
+	require.NoError(t, err)
+	defer s.Close()
+	got := map[string]int{}
+	rows, err := s.db.Query(`SELECT id, prompted FROM sessions`)
+	require.NoError(t, err)
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var p int
+		require.NoError(t, rows.Scan(&id, &p))
+		got[id] = p
+	}
+	require.Equal(t, map[string]int{"user": 1, "big": 1, "plain": 0}, got)
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { initialState, reduce, setCheckouts, setProjectsData, setTicketDetail, setTickets, type AppState } from './store'
-import { pendingByProject, projectCheckouts, projectSessions, ticketLine } from './projects'
+import { pendingByProject, projectAttention, projectCheckouts, projectSessions, ticketLine } from './projects'
 import type { Envelope, Proposal, SessionInfo, Ticket } from '../proto.gen'
 
 import { proj, sess, tk } from './fixtures.test-util'
@@ -118,5 +118,15 @@ describe('ticketLine (combined state)', () => {
   it('a suggested session does not count; without a session, the ticket source\'s status', () => {
     let s = run([env('session_upsert', sess('s1', { state: 'working' })), env('session_ticket', { sessionId: 's1', ticketId: 't1', confirmed: false })])
     expect(ticketLine(s, tk('t1', { status: 'blocked' }), now)).toEqual({ text: 'blocked', tone: 'red' })
+  })
+})
+
+describe('projectAttention', () => {
+  it('lowest attention rank among live sessions, 99 when none', () => {
+    const s = run([env('session_upsert', sess('a', { state: 'idle' })), env('session_upsert', sess('b', { state: 'needs_you' }))])
+    expect(projectAttention(s, 'p1')).toBe(0)
+    expect(projectAttention(s, 'p2')).toBe(99)
+    const w = run([env('session_upsert', sess('a', { state: 'working' }))])
+    expect(projectAttention(w, 'p1')).toBe(2)
   })
 })

@@ -1,4 +1,4 @@
-import type { Ask, Checkout, Envelope, Event, Project, Proposal, SessionInfo, SessionTicket, Ticket, Workspace } from '../proto.gen'
+import type { Ask, Checkout, Conversation, Envelope, Event, Project, Proposal, SessionInfo, SessionTicket, Ticket, Workspace } from '../proto.gen'
 import type { Machine, TicketView } from './api'
 
 export interface AppState {
@@ -28,6 +28,8 @@ export interface AppState {
   checkouts: Record<string, Checkout[]>
   /** Sessions seen working since the app opened (for "done, waiting for your review"). */
   worked: Record<string, true>
+  /** Conversations on disk per checkout, keyed machine + NUL + root. */
+  conversations: Record<string, Conversation[]>
 }
 
 /** Ask with the session it belongs to. */
@@ -35,7 +37,7 @@ export type AskEntry = Ask & { session: string }
 
 export const initialState = (): AppState => ({
   machines: {}, sessions: {}, order: [], events: {}, live: {}, liveAgent: {}, asks: {}, replaced: {}, replacedBy: {},
-  workspaces: {}, projects: {}, tickets: {}, links: {}, proposals: {}, checkouts: {}, worked: {},
+  workspaces: {}, projects: {}, tickets: {}, links: {}, proposals: {}, checkouts: {}, worked: {}, conversations: {},
 })
 
 /** Inserts ev into the seq-sorted list, discarding duplicates. */
@@ -140,6 +142,23 @@ export function reduce(s: AppState, env: Envelope): AppState {
       const cur = s.sessions[env.session]
       if (!cur) return s
       return { ...s, sessions: { ...s.sessions, [cur.id]: { ...cur, state: 'closed' } }, live: omit(s.live, cur.id) }
+    }
+    case 'session_removed': {
+      // closed without ever receiving a prompt: the hub deleted it
+      const id = env.session
+      if (!id) return s
+      return {
+        ...s,
+        sessions: omit(s.sessions, id),
+        order: s.order.filter((x) => x !== id),
+        events: omit(s.events, id),
+        live: omit(s.live, id),
+        liveAgent: omit(s.liveAgent, id),
+        asks: Object.fromEntries(Object.entries(s.asks).filter(([, a]) => a.session !== id)),
+        worked: omit(s.worked, id),
+        replaced: omit(s.replaced, id),
+        replacedBy: omit(s.replacedBy, id),
+      }
     }
     case 'event':
       return env.payload?.session ? onEvent(s, env.payload as Event) : s
@@ -312,4 +331,9 @@ export function setTicketDetail(s: AppState, v: TicketView): AppState {
 /** Saved checkouts of a project (REST). */
 export function setCheckouts(s: AppState, projectId: string, cos: Checkout[]): AppState {
   return { ...s, checkouts: { ...s.checkouts, [projectId]: cos } }
+}
+
+/** Caches the conversation list of a checkout (keyed machine + NUL + root). */
+export function setConversations(s: AppState, machine: string, root: string, list: Conversation[]): AppState {
+  return { ...s, conversations: { ...s.conversations, [machine + '\u0000' + root]: list } }
 }

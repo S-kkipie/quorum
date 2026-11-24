@@ -27,6 +27,51 @@ test('QUORUM_DISABLE=1 starts no Link and does not register /quorum', async ($, 
   expect(quorum.control).toBeUndefined()
 })
 
+// Headless runs (`claude -p`, the SDK) report isInteractive: false and must not register.
+async function startWith(on: never, $: never, extra: Record<string, unknown>): Promise<number> {
+  const o = on as (...a: unknown[]) => void
+  mock.env(on as never, { CCAPI_SERVER: '1' })
+  mock.clock(on as never)
+  let registered = 0
+  o('command.register', async () => { registered++; return { value: undefined } })
+  o('session.start', async () => ({ cwd: '/x' }))
+  await ($ as { session: { start(x: unknown): Promise<unknown> } }).session.start({ cwd: '/x', surface: null, ...extra })
+  return registered
+}
+
+test('isInteractive=false (headless) starts no Link and still calls next', async ($, on) => {
+  expect(await startWith(on as never, $ as never, { isInteractive: false })).toBe(0)
+  expect(quorum.link).toBeUndefined()
+  expect(quorum.control).toBeUndefined()
+})
+
+test('headless: next() still runs and nothing is sent to /v1/sessions/register', async ($, on) => {
+  const o = on as unknown as (...a: unknown[]) => void
+  mock.env(on as never, { CCAPI_SERVER: '1' })
+  mock.clock(on as never)
+  let nextRan = 0
+  let registerCalls = 0
+  o('command.register', async () => ({ value: undefined }))
+  o('session.start', async () => { nextRan++; return { cwd: '/x' } })
+  o('process.run', async () => ({ value: { exitCode: 0, stdout: JSON.stringify({ ok: true, port: 1, token: 't', machine: 'm' }), stderr: '' } }))
+  o('http.fetch', async (_$: unknown, e: { url?: string }) => {
+    if (String(e.url).endsWith('/v1/sessions/register')) registerCalls++
+    return { value: { status: 204 } }
+  })
+  await ($ as never as { session: { start(x: unknown): Promise<unknown> } }).session.start({ cwd: '/x', surface: null, isInteractive: false })
+  await new Promise((r) => setTimeout(r, 0))
+  expect(nextRan).toBe(1)
+  expect(registerCalls).toBe(0)
+})
+
+test('isInteractive=true registers as before', async ($, on) => {
+  expect(await startWith(on as never, $ as never, { isInteractive: true })).toBe(1)
+})
+
+test('isInteractive absent (older Claude Code) is treated as interactive', async ($, on) => {
+  expect(await startWith(on as never, $ as never, {})).toBe(1)
+})
+
 test('disabled only with QUORUM_DISABLE=1', () => {
   expect(disabled('1')).toBe(true)
   expect(disabled(undefined)).toBe(false)

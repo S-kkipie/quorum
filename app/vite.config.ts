@@ -13,7 +13,8 @@ const keep = () => ({
 
 export default defineConfig({
   plugins: [react(), tailwindcss(), keep()],
+  resolve: { alias: { '@': resolve(import.meta.dirname, 'src') } },
   build: { outDir: '../internal/hub/web/dist', emptyOutDir: true },
   server: { proxy: { '/api': { target: 'http://127.0.0.1:7420', ws: true } } },
-  test: { environment: 'node' },
+  test: { environment: 'node', setupFiles: ['./src/test-setup.ts'] },
 })

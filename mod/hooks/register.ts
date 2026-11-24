@@ -44,8 +44,10 @@ const STATE_TEXT = { connected: 'connected', reconnecting: 'reconnecting', 'no-d
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
-    // QUORUM_DISABLE=1 (e.g. the `claude -p` the hub resumes with): the session is not registered
-    if (disabled(await optional(() => $.env.get('QUORUM_DISABLE'), undefined))) {
+    // QUORUM_DISABLE=1 (e.g. the `claude -p` the hub resumes with) or headless: the session is not registered
+    // headless runs (`claude -p`, the SDK) report isInteractive: false; older builds omit it (= interactive)
+    const headless = (e as { isInteractive?: boolean } | undefined)?.isInteractive === false
+    if (headless || disabled(await optional(() => $.env.get('QUORUM_DISABLE'), undefined))) {
       quorum.link?.stop()
       quorum.link = undefined
       quorum.control = undefined

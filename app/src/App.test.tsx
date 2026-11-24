@@ -13,11 +13,15 @@ class FakeWS {
   close() {}
 }
 vi.stubGlobal('WebSocket', FakeWS)
-vi.stubGlobal('localStorage', { getItem: () => 'tok', setItem() {}, removeItem() {} })
-vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener() {}, removeEventListener() {} }))
+const store = new Map<string, string>([['quorum.token', 'tok']])
+vi.stubGlobal('localStorage', { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v) }, removeItem: (k: string) => { store.delete(k) } })
+let isWide = true
+vi.stubGlobal('matchMedia', () => ({ matches: isWide, addEventListener() {}, removeEventListener() {} }))
 let restSessions: any[] = []
+const ticketRow = { id: 't1', projectId: 'p1', externalId: '1', title: 'Fix login', status: 'todo', rawStatus: 'open', assignee: '', url: '', body: '', comments: [], updatedAt: 1 }
 const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
   if (String(url).includes('/api/sessions?')) return new Response(JSON.stringify(restSessions))
+  if (String(url).endsWith('/api/projects/p1/tickets')) return new Response(JSON.stringify([ticketRow]))
   if (String(url).endsWith('/api/launch')) return new Response(JSON.stringify({ reqId: 'r1' }), { status: 202 })
   if (init?.method === 'POST') return new Response('', { status: 202 })
   return new Response('[]')
@@ -26,13 +30,34 @@ vi.stubGlobal('fetch', fetchMock)
 import App from './App'
 
 const info = (id: string, previousId = '') => ({ id, previousId, machine: 'm', name: 'session-' + id, cwd: '/x', root: '/x', model: '', role: 'work', state: 'idle', contextPct: 0, startedAt: 0, updatedAt: 0, transcriptPath: '' })
-afterEach(() => { cleanup(); restSessions = []; FakeWS.all = []; history.replaceState(null, '') })
+afterEach(() => { isWide = true; cleanup(); restSessions = []; FakeWS.all = []; history.replaceState(null, '') })
 const setVisibility = (v: 'visible' | 'hidden') => {
   Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => v })
   act(() => { document.dispatchEvent(new Event('visibilitychange')) })
 }
 
+function openMenu(name: string) {
+  const t = screen.getByRole('button', { name })
+  fireEvent.keyDown(t, { key: 'Enter' })
+}
+
 describe('App', () => {
+  it('leaves the session view when the open session is removed (phone)', async () => {
+    isWide = false
+    render(<App />)
+    const ws = () => FakeWS.all[FakeWS.all.length - 1]
+    await waitFor(() => expect(FakeWS.all.length).toBeGreaterThan(0))
+    const send = (e: any) => act(() => ws().onmessage({ data: JSON.stringify(e) }))
+    send({ type: 'session_upsert', payload: info('a') })
+    fireEvent.click(screen.getByRole('tab', { name: 'Sessions' }))
+    fireEvent.click(await screen.findByText('session-a'))
+    await screen.findByPlaceholderText('Type a message…')
+    send({ type: 'session_removed', session: 'a' })
+    await waitFor(() => expect(screen.queryByPlaceholderText('Type a message…')).toBeNull())
+    expect(screen.queryByText('Session not found.')).toBeNull()
+    expect(screen.getByRole('tab', { name: 'Sessions' })).toBeTruthy()
+  })
+
   it('follows the replaced session without remounting or losing the draft', async () => {
     render(<App />)
     const ws = () => FakeWS.all[FakeWS.all.length - 1]
@@ -124,8 +149,50 @@ describe('App', () => {
     send({ type: 'tickets', payload: { projectId: 'p1', tickets: [{ id: 't1', projectId: 'p1', externalId: '1', title: 'Fix login', status: 'todo', rawStatus: 'open', assignee: '', url: '', body: '', comments: [], updatedAt: 1 }] } })
     expect(screen.getByText('ACME')).toBeTruthy()
     fireEvent.click(screen.getByText('Quorum', { selector: 'span' }))
+    // the project screen is sessions-only: tickets live behind the menu
+    expect(await screen.findByRole('heading', { name: 'Sessions' })).toBeTruthy()
+    expect(screen.queryByText('Fix login')).toBeNull()
+    openMenu('Project menu')
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Tickets (1)' }))
     expect(await screen.findByText('Fix login')).toBeTruthy()
-    expect(screen.getByText('Checkouts')).toBeTruthy()
+  })
+
+  const setupProject = async () => {
+    render(<App />)
+    const ws = () => FakeWS.all[FakeWS.all.length - 1]
+    await waitFor(() => expect(FakeWS.all.length).toBeGreaterThan(0))
+    const send = (e: any) => act(() => ws().onmessage({ data: JSON.stringify(e) }))
+    send({ type: 'workspace_upsert', payload: { id: 'w1', name: 'ACME', color: '#f00', whoasProfile: '' } })
+    send({ type: 'project_upsert', payload: { id: 'p1', workspaceId: 'w1', name: 'Quorum', repoUrl: '', connector: { kind: 'exec', settings: {}, hasToken: false, intervalMin: 5 }, summary: '', summaryAt: 0, progress: { done: 0, total: 1 }, syncError: '', syncedAt: 0 } })
+    send({ type: 'tickets', payload: { projectId: 'p1', tickets: [{ id: 't1', projectId: 'p1', externalId: '1', title: 'Fix login', status: 'todo', rawStatus: 'open', assignee: '', url: '', body: '', comments: [], updatedAt: 1 }] } })
+    fireEvent.click(await screen.findByText('Quorum', { selector: 'span' }))
+    await screen.findByRole('heading', { name: 'Sessions' })
+  }
+
+  it('narrow: Tickets pushes a history entry and history.back() returns to the project', async () => {
+    isWide = false
+    await setupProject()
+    const depth = history.state?.depth ?? 0
+    openMenu('Project menu')
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Tickets (1)' }))
+    expect(await screen.findByText('Fix login')).toBeTruthy()
+    expect(history.state.depth).toBe(depth + 1)
+    expect(screen.queryByRole('heading', { name: 'Sessions' })).toBeNull()
+    act(() => { history.back() })
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Sessions' })).toBeTruthy())
+    expect(screen.queryByText('Fix login')).toBeNull()
+  })
+
+  it('narrow: Checkouts opens a sheet and Back closes it', async () => {
+    isWide = false
+    await setupProject()
+    openMenu('Project menu')
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Checkouts' }))
+    expect(await screen.findByRole('dialog')).toBeTruthy()
+    expect(history.state.checkouts).toBe(true)
+    act(() => { history.back() })
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(screen.getByRole('heading', { name: 'Sessions' })).toBeTruthy()
   })
 
   it('desktop: "Back" in Settings does not leave the app (no history.back)', async () => {

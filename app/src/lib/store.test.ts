@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { reduce, replaceSessions, seed, initialState, type AppState } from './store'
+import { reduce, replaceSessions, seed, initialState, setConversations, type AppState } from './store'
 import type { Envelope, SessionInfo, Event } from '../proto.gen'
 
 const sess = (id: string, o: Partial<SessionInfo> = {}): SessionInfo => ({
@@ -54,6 +54,29 @@ describe('reduce', () => {
     const s = run([up(sess('a', { state: 'working' })), { type: 'session_gone', machine: 'm1', session: 'a', payload: null }])
     expect(s.sessions['a'].state).toBe('closed')
     expect(s.order).toEqual(['a'])
+  })
+  it('session_removed deletes the session everywhere and leaves others intact', () => {
+    let s = run([up(sess('a', { state: 'working' })), up(sess('b')), ev('a', 1, 'status'), ev('b', 1, 'user', { text: 'hi' })])
+    s = {
+      ...s,
+      live: { a: 'x', b: 'y' },
+      liveAgent: { a: { g: 'x' }, b: { g: 'y' } },
+      asks: { k1: { session: 'a' } as never, k2: { session: 'b' } as never },
+      replaced: { a: true },
+      replacedBy: { a: 'z' },
+    }
+    s = run([{ type: 'session_removed', machine: 'm1', session: 'a', payload: null }], s)
+    expect(s.sessions['a']).toBeUndefined()
+    expect(s.order).toEqual(['b'])
+    expect(s.events['a']).toBeUndefined()
+    expect(s.live).toEqual({ b: 'y' })
+    expect(s.liveAgent).toEqual({ b: { g: 'y' } })
+    expect(Object.keys(s.asks)).toEqual(['k2'])
+    expect(s.worked['a']).toBeUndefined()
+    expect(s.replaced['a']).toBeUndefined()
+    expect(s.replacedBy['a']).toBeUndefined()
+    expect(s.sessions['b']).toBeDefined()
+    expect(s.events['b'].length).toBe(1)
   })
   it('machine_status and unknown types', () => {
     let s = run([{ type: 'machine_status', machine: 'm1', session: '', payload: { name: 'm1', os: 'linux', env: 'linux', version: '1', online: true, lastSeen: 1 } }])
@@ -180,5 +203,17 @@ describe('minor fixes', () => {
     const backfill = [e(-4, 1_000, 'user', 'before'), e(-3, 9_000, 'user', 'hello'), e(-2, 10_500, 'user', 'hello'), e(-1, 11_000, 'assistant', 'how are you')]
     s = reduce(s, { type: 'events', machine: 'm1', session: 'a', payload: backfill })
     expect(s.events['a'].map((x) => x.seq)).toEqual([-4, 1, 2])
+  })
+})
+
+describe('setConversations', () => {
+  it('stores under the composed key and leaves others alone', () => {
+    const c = (id: string) => ({ id, title: '', firstPrompt: '', messages: 1, updatedAt: 1, open: false })
+    let s = setConversations(initialState(), 'vps-1', '/w/app', [c('a')])
+    s = setConversations(s, 'laptop', '/w/app', [c('b')])
+    expect(Object.keys(s.conversations).sort()).toEqual(['laptop\u0000/w/app', 'vps-1\u0000/w/app'])
+    s = setConversations(s, 'vps-1', '/w/app', [])
+    expect(s.conversations['vps-1\u0000/w/app']).toEqual([])
+    expect(s.conversations['laptop\u0000/w/app']).toHaveLength(1)
   })
 })

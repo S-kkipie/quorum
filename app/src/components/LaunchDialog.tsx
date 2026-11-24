@@ -2,6 +2,9 @@ import { useState } from 'react'
 import { launch } from '../lib/api'
 import { loadPrefs, savePrefs } from '../lib/launch'
 import type { AppState } from '../lib/store'
+import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogFooter, DialogTitle } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
 
 export const ROOT_REASON = 'Skip permissions does not work as root'
 
@@ -47,11 +50,15 @@ export default function LaunchDialog({ state, onClose, onLaunched, projectId = '
     }
   }
 
-  const field = 'mt-1 w-full rounded border border-zinc-800 bg-zinc-900 p-2 text-sm'
+  const field = 'mt-1 min-h-11 w-full rounded border border-zinc-800 bg-zinc-900 p-2 text-sm'
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 sm:items-center" role="dialog" aria-label="New session">
-      <div className="w-full max-w-md rounded-t-lg border border-zinc-800 bg-zinc-950 p-4 sm:rounded-lg">
-        <h2 className="text-base font-semibold">New session</h2>
+    <Dialog open onOpenChange={(o) => { if (!o) onClose() }}>
+      <DialogContent showCloseButton={false} aria-describedby={undefined}
+        // an accidental tap outside or Esc must not drop a typed folder; Cancel still closes
+        onInteractOutside={(e) => { if (dir.trim()) e.preventDefault() }}
+        onEscapeKeyDown={(e) => { if (dir.trim()) e.preventDefault() }}
+        className="top-auto bottom-0 left-0 max-w-none translate-x-0 translate-y-0 gap-0 rounded-b-none rounded-t-xl p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:top-[50%] sm:bottom-auto sm:left-[50%] sm:max-w-md sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-lg sm:pb-4">
+        <DialogTitle className="text-base font-semibold">New session</DialogTitle>
         {online.length === 0 ? (
           <p className="mt-3 text-sm text-zinc-500">No machines online.</p>
         ) : (
@@ -62,18 +69,18 @@ export default function LaunchDialog({ state, onClose, onLaunched, projectId = '
               </select>
             </label>
             <label className="mt-3 block text-xs text-zinc-400">Folder
-              <input list="launch-dirs" value={dir} onChange={(e) => setDir(e.target.value)} placeholder="/path/to/project" className={field} />
+              <Input list="launch-dirs" value={dir} onChange={(e) => setDir(e.target.value)} placeholder="/path/to/project" className={field} />
               <datalist id="launch-dirs">{dirs.map((d) => <option key={d} value={d} />)}</datalist>
             </label>
             <BypassToggle checked={bypass} root={root} onChange={setBypass} />
           </>
         )}
         {error && <p role="alert" className="mt-3 text-xs text-red-400">{error}</p>}
-        <div className="mt-4 flex justify-end gap-2">
-          <button onClick={onClose} className="rounded bg-zinc-800 px-3 py-1.5 text-sm">Cancel</button>
-          <button disabled={busy || !machine || !dir.trim()} onClick={go} className="rounded bg-blue-600 px-3 py-1.5 text-sm text-white disabled:opacity-40">Start</button>
-        </div>
-      </div>
-    </div>
+        <DialogFooter className="mt-4 flex-row justify-end gap-2 sm:flex-row">
+          <Button variant="secondary" className="min-h-11" onClick={onClose}>Cancel</Button>
+          <Button className="min-h-11" disabled={busy || !machine || !dir.trim()} onClick={go}>Start</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }

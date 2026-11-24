@@ -1,0 +1,86 @@
+import { useEffect, useRef, useState } from 'react'
+import { listConversations } from '../lib/api'
+import { projectCheckouts, projectSessions } from '../lib/projects'
+import { mergeSessions, type SessionRow } from '../lib/sessions'
+import type { AppState } from '../lib/store'
+import { sessionTitle } from '../lib/title'
+import type { Conversation } from '../proto.gen'
+import SessionRowView from './SessionRow'
+
+const SHOWN = 8
+type Closed = Extract<SessionRow, { kind: 'closed' }>
+
+/** The project's sessions: live ones first, then the previous conversations of every online checkout. */
+export default function ProjectSessions({ state, projectId, busy = false, onOpen, onResume, onConversations }: {
+  state: AppState
+  projectId: string
+  /** A launch is in progress: closed rows cannot be resumed. */
+  busy?: boolean
+  onOpen: (id: string) => void
+  onResume: (row: Closed) => Promise<unknown> | void
+  onConversations: (machine: string, root: string, list: Conversation[]) => void
+}) {
+  const checkouts = projectCheckouts(state, projectId)
+  const online = checkouts.filter((c) => state.machines[c.machine]?.online)
+  const fetchable = online.filter((c) => !!state.machines[c.machine]?.caps)
+  const outdated = [...new Set(online.filter((c) => !state.machines[c.machine]?.caps).map((c) => c.machine))]
+  const [errors, setErrors] = useState<Record<string, true>>({})
+  const [settled, setSettled] = useState(false)
+  const [resumeError, setResumeError] = useState('')
+  const [all, setAll] = useState(false)
+  const [q, setQ] = useState('')
+  const cb = useRef(onConversations)
+  cb.current = onConversations
+
+  const key = fetchable.map((c) => c.machine + '\u0000' + c.root).join('\n')
+  useEffect(() => {
+    let off = false
+    setSettled(false)
+    setErrors({})
+    const targets = key ? key.split('\n').map((k) => k.split('\u0000') as [string, string]) : []
+    Promise.all(targets.map(([machine, root]) =>
+      listConversations(machine, root)
+        .then((l) => { if (!off) cb.current(machine, root, l ?? []) })
+        .catch(() => { if (!off) setErrors((e) => ({ ...e, [machine]: true })) })))
+      .then(() => { if (!off) setSettled(true) })
+    return () => { off = true }
+  }, [key])
+
+  const live = projectSessions(state, projectId)
+  const lists = checkouts.map((c) => ({ machine: c.machine, root: c.root, list: state.conversations[c.machine + '\u0000' + c.root] ?? [] }))
+  const closedSessions = state.order.map((id) => state.sessions[id]).filter((x) => x && x.projectId === projectId && x.role !== 'service' && x.state === 'closed')
+  const rows = mergeSessions(live, lists, closedSessions)
+  const closedCount = rows.filter((r) => r.kind === 'closed').length
+  const needle = q.trim().toLowerCase()
+  const title = (r: SessionRow) => (r.kind === 'live' ? sessionTitle(r.session).title : r.title)
+  let shown = rows
+  if (all) shown = rows.filter((r) => !needle || title(r).toLowerCase().includes(needle))
+  else {
+    let n = 0
+    shown = rows.filter((r) => r.kind === 'live' || ++n <= SHOWN)
+  }
+
+  async function resume(row: Closed) {
+    setResumeError('')
+    try { await onResume(row) } catch (e) { setResumeError(e instanceof Error ? e.message : 'error') }
+  }
+
+  const note = 'px-3 pt-1 text-xs'
+  return (
+    <section>
+      <h3 className="mb-1 mt-5 px-3 text-xs font-semibold uppercase tracking-wide text-zinc-400">Sessions</h3>
+      {all && <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by title" aria-label="Search by title" className="mx-3 mb-2 w-[calc(100%-1.5rem)] rounded border border-zinc-800 bg-zinc-900 p-2 text-sm" />}
+      {shown.length > 0 && (
+        <ul className="divide-y divide-zinc-900 border-y border-zinc-900">
+          {shown.map((r) => <SessionRowView key={r.id} row={r} disabled={busy} onOpen={onOpen} onResume={resume} />)}
+        </ul>
+      )}
+      {!all && closedCount > SHOWN && <button onClick={() => setAll(true)} className="min-h-11 px-3 text-xs text-blue-400">See all ({closedCount})</button>}
+      {rows.length === 0 && settled && Object.keys(errors).length === 0 && <p className={`${note} text-zinc-500`}>No sessions yet. Start one above.</p>}
+      {rows.length === 0 && !settled && fetchable.length > 0 && <p className={`${note} text-zinc-600`}>Loading sessions…</p>}
+      {Object.keys(errors).map((m) => <p key={m} role="alert" className={`${note} text-red-400`}>{m}: could not list conversations</p>)}
+      {outdated.map((m) => <p key={m} className={`${note} text-zinc-600`}>Update quorumd on {m} to see its conversations</p>)}
+      {resumeError && <p role="alert" className={`${note} text-red-400`}>{resumeError}</p>}
+    </section>
+  )
+}

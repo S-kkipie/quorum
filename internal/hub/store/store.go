@@ -399,6 +399,11 @@ func (s *Store) AppendEvent(e proto.Event) (seq int64, err error) {
 		e.Session, seq, e.TS, string(e.Kind), data); err != nil {
 		return 0, err
 	}
+	if e.Kind == proto.KindUser {
+		if _, err = tx.Exec(`UPDATE sessions SET prompted=1 WHERE id=?`, e.Session); err != nil {
+			return 0, err
+		}
+	}
 	if _, err = tx.Exec(`DELETE FROM events WHERE session=? AND seq<=?`, e.Session, seq-maxEventsPerSession); err != nil {
 		return 0, err
 	}
@@ -432,6 +437,14 @@ func (s *Store) PrependEvents(session string, evs []proto.Event) (inserted bool,
 		return false, tx.Commit()
 	}
 	n := int64(len(evs))
+	for _, e := range evs {
+		if e.Kind == proto.KindUser {
+			if _, err = tx.Exec(`UPDATE sessions SET prompted=1 WHERE id=?`, session); err != nil {
+				return false, err
+			}
+			break
+		}
+	}
 	for i, e := range evs {
 		data := string(e.Data)
 		if data == "" {
@@ -642,10 +655,61 @@ func (s *Store) ListDevices() ([]Device, error) {
 	return out, rows.Err()
 }
 
-// CloseSession marks session id as closed, only if it belongs to machine.
-func (s *Store) CloseSession(machine, id string) error {
-	_, err := s.db.Exec(`UPDATE sessions SET state=?, closed_at=? WHERE id=? AND machine=?`, string(proto.StateClosed), time.Now().UnixMilli(), id, machine)
-	return err
+// CloseSession closes session id, only if it belongs to machine. A session that
+// never received a user prompt is deleted instead (removed=true).
+func (s *Store) CloseSession(machine, id string) (removed bool, err error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	var one int
+	err = tx.QueryRow(`SELECT 1 FROM sessions WHERE id=? AND machine=?`, id, machine).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	removed, err = closeOrRemove(tx, id)
+	if err != nil {
+		return false, err
+	}
+	return removed, tx.Commit()
+}
+
+// closeOrRemove deletes session id with its rows if it was never prompted and is not
+// linked to a ticket, else marks it closed. The hub row is only a cache: a resumed
+// conversation whose earlier prompts predate Quorum and that closes without a new prompt
+// is removed here, but the daemon's conversation list still shows it and it stays resumable.
+func closeOrRemove(tx *sql.Tx, id string) (bool, error) {
+	var prompted, linked, userEvents int
+	if err := tx.QueryRow(`SELECT prompted FROM sessions WHERE id=?`, id).Scan(&prompted); err != nil {
+		return false, err
+	}
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM session_tickets WHERE session_id=?`, id).Scan(&linked); err != nil {
+		return false, err
+	}
+	// Fallback for a prompt that arrived before the session row existed.
+	if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM events WHERE session=? AND kind=?)`, id, string(proto.KindUser)).Scan(&userEvents); err != nil {
+		return false, err
+	}
+	if prompted > 0 || linked > 0 || userEvents > 0 {
+		_, err := tx.Exec(`UPDATE sessions SET state=?, closed_at=? WHERE id=?`, string(proto.StateClosed), time.Now().UnixMilli(), id)
+		return false, err
+	}
+	for _, q := range []string{
+		`DELETE FROM events WHERE session=?`,
+		`DELETE FROM away WHERE session=?`,
+		`DELETE FROM session_tickets WHERE session_id=?`,
+		`DELETE FROM session_ticket_dismissed WHERE session_id=?`,
+		`DELETE FROM sessions WHERE id=?`,
+	} {
+		if _, err := tx.Exec(q, id); err != nil {
+			return false, err
+		}
+	}
+	return true, nil
 }
 
 // SessionOwner returns the machine that owns session id (ok=false if it does not exist).
@@ -658,7 +722,8 @@ func (s *Store) SessionOwner(id string) (machine string, ok bool, err error) {
 }
 
 // CloseMachineSessionsExcept closes the machine's non-closed sessions that are not
-// in keep and returns the ids it closed.
+// in keep and returns the ids it closed. It never deletes: only an explicit daemon session_gone
+// removes a session that never received a prompt (CloseSession).
 func (s *Store) CloseMachineSessionsExcept(machine string, keep []string) ([]string, error) {
 	q := `UPDATE sessions SET state=?, closed_at=? WHERE machine=? AND state<>?`
 	args := []any{string(proto.StateClosed), time.Now().UnixMilli(), machine, string(proto.StateClosed)}

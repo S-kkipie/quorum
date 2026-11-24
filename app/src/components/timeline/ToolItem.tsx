@@ -1,9 +1,12 @@
-import { useState, type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import {
-  Ban, Bot, Check, ChevronRight, Circle, CircleCheck, CircleDot, ExternalLink, FilePen, FilePlus, FileText, Globe,
+  Ban, Bot, Check, Circle, CircleCheck, CircleDot, ExternalLink, FilePen, FilePlus, FileText, Globe,
   ListTodo, Loader2, Plug, Search, Sparkles, Terminal, Wrench, X, type LucideIcon,
 } from 'lucide-react'
-import { absPath, inBase, type AgentItem, type ReadsItem, type ToolItem as Tool, type ToolKind, type ToolState } from '../../lib/timeline'
+import { Tool as ToolBox, ToolContent, ToolHeader } from '@/components/ai-elements/tool'
+import { cn } from '@/lib/utils'
+import { toolPartState, toolView, type ToolView } from '../../lib/elements'
+import { absPath, inBase, type AgentItem, type ReadsItem, type ToolItem as Tool, type ToolKind } from '../../lib/timeline'
 
 const KIND: Record<ToolKind, { icon: LucideIcon; tint: string }> = {
   read: { icon: FileText, tint: 'bg-sky-500/15 text-sky-300' },
@@ -25,10 +28,10 @@ const OPENABLE_EDIT = /\.(md|png|jpe?g|gif|webp)$/i
 const MAX_LINES = 200
 const MAX_CHARS = 4000
 
-function StateIcon({ state }: { state: ToolState }) {
+function StateIcon({ state }: { state: ToolView['state'] }) {
   switch (state) {
     case 'running': return <Loader2 size={14} aria-label="running" className="shrink-0 animate-spin text-blue-400" />
-    case 'ok': return <Check size={14} aria-label="done" className="shrink-0 text-zinc-600" />
+    case 'done': return <Check size={14} aria-label="done" className="shrink-0 text-zinc-600" />
     case 'error': return <X size={14} aria-label="failed" className="shrink-0 text-red-400" />
     case 'denied': return <Ban size={14} aria-label="denied" className="shrink-0 text-amber-400" />
   }
@@ -131,25 +134,21 @@ function ToolDetail({ t }: { t: Tool }) {
   }
 }
 
-function Row({ icon: Icon, tint, title, sub, right, state, nested, children }: {
-  icon: LucideIcon; tint: string; title: string; sub?: string; right?: ReactNode; state: ToolState; nested?: boolean; children: ReactNode
+/** A collapsed row on the vendored Tool (Radix Collapsible); the header toggles the detail. */
+function Row({ name, view, tint, Icon, right, nested, children }: {
+  name: string; view: ToolView; tint: string; Icon: LucideIcon; right?: ReactNode; nested?: boolean; children: ReactNode
 }) {
-  const [open, setOpen] = useState(false)
   return (
-    <div className={`my-0.5 ${nested ? 'ml-5' : ''}`}>
-      <button type="button" onClick={() => setOpen(!open)} aria-expanded={open}
-        className="flex min-h-11 w-full items-center gap-2.5 rounded-lg px-1.5 text-left hover:bg-zinc-900 active:bg-zinc-900">
-        <span className={`flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md ${tint}`}><Icon size={13} aria-hidden /></span>
-        <span className="min-w-0 flex-1 truncate text-[13px] text-zinc-300">
-          {title}
-          {sub && <span className="ml-1.5 text-zinc-600">{sub}</span>}
-        </span>
-        {right}
-        <StateIcon state={state} />
-        <ChevronRight size={14} aria-hidden className={`shrink-0 text-zinc-600 transition-transform ${open ? 'rotate-90' : ''}`} />
-      </button>
-      {open && <div className="mb-1 ml-[2.4rem] mr-1 rounded-lg border border-zinc-800 bg-zinc-950 p-2.5">{children}</div>}
-    </div>
+    <ToolBox className={cn('my-0.5 mb-0.5 rounded-lg border-0', nested && 'ml-5')}>
+      <ToolHeader
+        type="dynamic-tool" toolName={name} title={view.title} state={toolPartState(view.state)}
+        className="min-h-11 gap-2.5 rounded-lg px-1.5 py-0 text-left hover:bg-zinc-900 active:bg-zinc-900 text-zinc-300"
+        icon={<span className={`flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md ${tint}`}><Icon size={13} aria-hidden /></span>}
+        meta={right}
+        status={<StateIcon state={view.state} />}
+      />
+      <ToolContent className="mb-1 ml-[2.4rem] mr-1 space-y-0 rounded-lg border border-zinc-800 bg-zinc-950 p-2.5 text-zinc-300">{children}</ToolContent>
+    </ToolBox>
   )
 }
 
@@ -167,29 +166,31 @@ export default function ToolItem({ item, live, base = '', onOpenFile }: {
 }) {
   if (item.t === 'agent') {
     const running = item.status === 'running'
-    const state: ToolState = running ? 'running' : /error|fail/i.test(item.status) ? 'error' : 'ok'
+    const view: ToolView = { title: item.description || 'Subagent', icon: 'agent', state: running ? 'running' : /error|fail/i.test(item.status) ? 'error' : 'done' }
     return (
-      <Row icon={Bot} tint={KIND.agent.tint} title={item.description || 'Subagent'} sub={item.type} state={state}>
+      <Row name="Agent" view={view} Icon={Bot} tint={KIND.agent.tint} right={item.type ? <span className="shrink-0 truncate text-[13px] text-zinc-600">{item.type}</span> : undefined}>
         <Pre>{clip(item.answer || live || (running ? 'Working…' : '(no answer)'))}</Pre>
       </Row>
     )
   }
+  const view = toolView(item)
+  const k = KIND[view.icon]
   if (item.t === 'reads') {
     return (
-      <Row icon={FileText} tint={KIND.read.tint} title={item.title} state={item.state} nested={!!item.agent}>
+      <Row name="Read" view={view} Icon={k.icon} tint={k.tint} nested={!!item.agent}>
         <Pre>{clip(item.files.join('\n'))}</Pre>
       </Row>
     )
   }
-  const k = KIND[item.kind]
   const canOpen = item.kind === 'edit' && item.state === 'ok' && !!item.file && OPENABLE_EDIT.test(item.file) && inBase(item.file, base)
+  // same text as view.meta, coloured per side
   const diff = item.diff && (
     <span className="shrink-0 font-mono text-[11px]">
-      <span className="text-emerald-400">+{item.diff.add}</span> <span className="text-red-400">-{item.diff.del}</span>
+      <span className="text-emerald-400">+{item.diff.add}</span> <span className="text-red-400">{'\u2212'}{item.diff.del}</span>
     </span>
   )
   return (
-    <Row icon={k.icon} tint={k.tint} title={item.title} state={item.state} right={diff} nested={!!item.agent}>
+    <Row name={item.name} view={view} Icon={k.icon} tint={k.tint} right={diff} nested={!!item.agent}>
       <ToolDetail t={item} />
       {canOpen && (
         <button type="button" onClick={() => onOpenFile?.(absPath(item.file!, base))}

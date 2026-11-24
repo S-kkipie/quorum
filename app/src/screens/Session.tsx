@@ -9,6 +9,8 @@ import { launchIn, loadPrefs } from '../lib/launch'
 import type { AppState } from '../lib/store'
 import { sessionTitle } from '../lib/title'
 import type { Event } from '../proto.gen'
+import { Button } from '@/components/ui/button'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 
 const PAGE = 50
 
@@ -30,8 +32,6 @@ export default function Session({ state, id, onBack, onEvents, onGuard, busy = f
   const [dismissed, setDismissed] = useState<Record<string, true>>({})
   const [failed, setFailed] = useState(false)
   const [error, setError] = useState('')
-  const [menu, setMenu] = useState(false)
-  const menuRef = useRef<HTMLDivElement>(null)
   const loading = useRef(false)
   const oldest = useRef<number | undefined>(undefined)
   oldest.current = events[0]?.seq
@@ -58,24 +58,26 @@ export default function Session({ state, id, onBack, onEvents, onGuard, busy = f
     load(0)
   }, [id]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => {
-    if (!menu) return
-    const down = (e: MouseEvent) => { if (!menuRef.current?.contains(e.target as Node)) setMenu(false) }
-    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenu(false) }
-    document.addEventListener('mousedown', down)
-    document.addEventListener('keydown', key)
-    return () => { document.removeEventListener('mousedown', down); document.removeEventListener('keydown', key) }
-  }, [menu])
-
   const act = async (f: () => Promise<unknown>) => {
     setError('')
     try { await f() } catch (e) { setError(e instanceof Error ? e.message : 'error') }
   }
 
-  if (!s) return <div className="p-6 text-sm text-zinc-500">Session not found.</div>
+  if (!s) {
+    return (
+      <div className="flex h-full flex-col">
+        {onBack && (
+          <div className="border-b border-zinc-800 px-1.5 py-1">
+            <Button variant="ghost" size="icon" onClick={onBack} aria-label="Back" className="size-11 shrink-0 text-zinc-400 hover:text-zinc-200"><ChevronLeft size={22} aria-hidden /></Button>
+          </div>
+        )}
+        <div className="p-6 text-sm text-zinc-500">Session not found.</div>
+      </div>
+    )
+  }
   const asks = Object.values(state.asks).filter((a) => a.session === id && !dismissed[a.askId])
   const closed = s.state === 'closed'
-  const item = 'flex min-h-11 w-full items-center gap-2.5 px-3 text-left hover:bg-zinc-800 disabled:opacity-40'
+  const item = 'min-h-11 gap-2.5 px-3'
   const sub = [s.machine, s.model, s.branch].filter(Boolean).join(' · ')
 
   return (
@@ -83,42 +85,38 @@ export default function Session({ state, id, onBack, onEvents, onGuard, busy = f
       <header className="border-b border-zinc-800 bg-zinc-950 px-1.5 py-1">
         <div className="flex min-h-11 items-center gap-1.5">
           {onBack && (
-            <button onClick={onBack} aria-label="Back" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-zinc-400 hover:text-zinc-200">
+            <Button variant="ghost" size="icon" onClick={onBack} aria-label="Back" className="size-11 shrink-0 text-zinc-400 hover:text-zinc-200">
               <ChevronLeft size={22} aria-hidden />
-            </button>
+            </Button>
           )}
           <div className={`min-w-0 flex-1 truncate text-[15px] font-semibold ${onBack ? '' : 'pl-1.5'}`}>{sessionTitle(s).title}</div>
           <StatePill state={s.state} />
           {s.state === 'working' && (
-            <button onClick={() => act(() => abortSession(id))}
-              className="flex min-h-11 shrink-0 items-center gap-1 rounded-lg bg-zinc-800 px-2.5 text-xs text-zinc-200 hover:bg-zinc-700">
+            <Button variant="secondary" onClick={() => act(() => abortSession(id))} className="min-h-11 shrink-0 gap-1 px-2.5 text-xs">
               <Square size={11} aria-hidden className="fill-current" />Interrupt
-            </button>
+            </Button>
           )}
-          <div ref={menuRef} className="relative shrink-0">
-            <button aria-label="More actions" aria-haspopup="menu" aria-expanded={menu} onClick={() => setMenu((v) => !v)}
-              className="flex h-11 w-11 items-center justify-center rounded-lg text-zinc-400 hover:text-zinc-200">
-              <MoreHorizontal size={20} aria-hidden />
-            </button>
-            {menu && (
-              <div role="menu" className="absolute right-0 z-20 mt-1 w-56 overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 py-1 text-sm shadow-xl">
-                <button role="menuitem" disabled={busy} onClick={() => { setMenu(false); act(async () => {
-                  const dir = s.root || s.cwd
-                  await onGuard?.(() => launchIn({ machine: s.machine, dir, bypass: loadPrefs(s.projectId || '_').bypass, root: !!state.machines[s.machine]?.caps?.root, projectId: s.projectId }))
-                }) }} className={item}><Plus size={16} aria-hidden className="text-zinc-400" />New session here</button>
-                {!closed && s.herdrPane && state.machines[s.machine]?.caps?.terminal && (
-                  <button role="menuitem" onClick={() => { setMenu(false); onViewTerminal?.(s.machine, s.herdrPane) }} className={item}>
-                    <MonitorPlay size={16} aria-hidden className="text-zinc-400" />View in terminal
-                  </button>
-                )}
-                {!closed && (
-                  <button role="menuitem" onClick={() => { setMenu(false); if (confirm('Close this session?')) act(() => closeSession(id)) }} className={`${item} text-red-400`}>
-                    <XCircle size={16} aria-hidden />Close session
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon" aria-label="More actions" className="size-11 shrink-0 text-zinc-400 hover:text-zinc-200"><MoreHorizontal size={20} aria-hidden /></Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuItem className={item} disabled={busy} onSelect={() => { act(async () => {
+                const dir = s.root || s.cwd
+                await onGuard?.(() => launchIn({ machine: s.machine, dir, bypass: loadPrefs(s.projectId || '_').bypass, root: !!state.machines[s.machine]?.caps?.root, projectId: s.projectId }))
+              }) }}><Plus size={16} aria-hidden className="text-zinc-400" />New session here</DropdownMenuItem>
+              {!closed && s.herdrPane && state.machines[s.machine]?.caps?.terminal && (
+                <DropdownMenuItem className={item} onSelect={() => onViewTerminal?.(s.machine, s.herdrPane)}>
+                  <MonitorPlay size={16} aria-hidden className="text-zinc-400" />View in terminal
+                </DropdownMenuItem>
+              )}
+              {!closed && (
+                <DropdownMenuItem variant="destructive" className={item} onSelect={() => { if (confirm('Close this session?')) act(() => closeSession(id)) }}>
+                  <XCircle size={16} aria-hidden />Close session
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
         {sub && <div className="truncate pb-1 pl-2.5 text-xs text-zinc-500">{sub}</div>}
       </header>
@@ -129,6 +127,7 @@ export default function Session({ state, id, onBack, onEvents, onGuard, busy = f
         machine={s.machine}
         live={state.live[id]}
         liveAgent={state.liveAgent[id]}
+        working={s.state === 'working'}
         hasMore={hasMore}
         autoLoad={!failed}
         onLoadMore={() => oldest.current !== undefined && load(oldest.current)}

@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import { defaultDeviceName, hubUrl, pair } from '../lib/api'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 
 export default function Pair({ onPaired }: { onPaired: () => void }) {
   // When served by the hub (same origin) the address can stay empty.
@@ -23,7 +25,7 @@ export default function Pair({ onPaired }: { onPaired: () => void }) {
     }
   }
 
-  const input = 'w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm outline-none focus:border-blue-500'
+  const input = 'min-h-11 border-zinc-700 bg-zinc-900 px-3 py-2 text-sm'
   return (
     <main className="flex min-h-full items-center justify-center p-4">
       <form onSubmit={submit} className="w-full max-w-sm space-y-4">
@@ -31,20 +33,20 @@ export default function Pair({ onPaired }: { onPaired: () => void }) {
         <p className="text-sm text-zinc-400">Pair this device with your hub. Generate a code on the hub with <code className="text-zinc-300">quorum-hub pair</code>.</p>
         <label className="block space-y-1 text-sm">
           <span className="text-zinc-400">Hub address</span>
-          <input className={input} value={hub} onChange={(e) => setHub(e.target.value)} placeholder="http://my-hub:7420" autoCapitalize="none" autoCorrect="off" />
+          <Input className={input} value={hub} onChange={(e) => setHub(e.target.value)} placeholder="http://my-hub:7420" autoCapitalize="none" autoCorrect="off" />
         </label>
         <label className="block space-y-1 text-sm">
           <span className="text-zinc-400">Code</span>
-          <input className={input + ' font-mono tracking-widest'} value={code} onChange={(e) => setCode(e.target.value)} autoComplete="one-time-code" required />
+          <Input className={input + ' font-mono tracking-widest'} value={code} onChange={(e) => setCode(e.target.value)} autoComplete="one-time-code" required />
         </label>
         <label className="block space-y-1 text-sm">
           <span className="text-zinc-400">Device name</span>
-          <input className={input} value={name} onChange={(e) => setName(e.target.value)} required />
+          <Input className={input} value={name} onChange={(e) => setName(e.target.value)} required />
         </label>
         {err && <p role="alert" className="text-sm text-red-400">{err}</p>}
-        <button disabled={busy || !code.trim()} className="w-full rounded-md bg-blue-600 px-3 py-2 text-sm font-medium hover:bg-blue-500 disabled:opacity-50">
+        <Button type="submit" disabled={busy || !code.trim()} className="min-h-11 w-full">
           {busy ? 'Pairing…' : 'Pair'}
-        </button>
+        </Button>
       </form>
     </main>
   )

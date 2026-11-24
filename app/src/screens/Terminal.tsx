@@ -2,6 +2,9 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import { closeTerminal, openTerminal, readTerminal, sendTerminal, watchTerminal } from '../lib/api'
 import { parseAnsi, type Span } from '../lib/ansi'
 import { frames } from '../lib/frames'
+import { Button } from '@/components/ui/button'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { Input } from '@/components/ui/input'
 
 const KEYS: [string, string][] = [
   ['Esc', 'esc'], ['Tab', 'tab'], ['Ctrl-C', 'ctrl+c'], ['↑', 'up'], ['↓', 'down'], ['←', 'left'], ['→', 'right'], ['Ctrl-D', 'ctrl+d'], ['Ctrl-L', 'ctrl+l'],
@@ -47,7 +50,6 @@ export default function Terminal({ machine, pane, root, label, onBack, onReopen 
   const [watchErr, setWatchErr] = useState('')
   const [now, setNow] = useState(() => Date.now())
   const [history, setHistory] = useState<string | null>(null)
-  const [menu, setMenu] = useState(false)
   const [text, setText] = useState('')
   const [err, setErr] = useState('')
   const [waited, setWaited] = useState(false)
@@ -109,7 +111,6 @@ export default function Terminal({ machine, pane, root, label, onBack, onReopen 
     try { setHistory((await readTerminal(machine, pane, 400)).ansi) } catch (e) { fail(e) }
   }
   const close = async () => {
-    setMenu(false)
     if (!confirm('Close this terminal?')) return
     try { await closeTerminal(machine, pane); onBack() } catch (e) { fail(e) }
   }
@@ -120,24 +121,26 @@ export default function Terminal({ machine, pane, root, label, onBack, onReopen 
   const zoom = (d: number) => { setAuto(false); setSize((s) => clamp(6, 24, s + d)) }
 
   const noBlur = { onPointerDown: (e: React.PointerEvent) => e.preventDefault() }
-  const btn = 'shrink-0 rounded bg-zinc-800 px-2.5 py-1.5 text-xs text-zinc-200 active:bg-zinc-700'
+  const btn = 'min-h-11 shrink-0 px-2.5 text-xs'
   return (
     <div className="flex h-full min-h-0 flex-col bg-zinc-950">
       <header className="flex shrink-0 items-center gap-2 border-b border-zinc-800 px-3 py-2">
-        <button onClick={onBack} aria-label="Back" className="rounded bg-zinc-800 px-2 py-1 text-sm">←</button>
+        <Button variant="secondary" onClick={onBack} aria-label="Back" className="min-h-11 px-2">←</Button>
         <span className="min-w-0 flex-1 truncate text-sm">{label || 'Terminal'} <span className="text-xs text-zinc-500">{machine}</span></span>
-        <button onClick={() => zoom(-1)} className={btn}>A−</button>
-        <button onClick={() => zoom(1)} className={btn}>A+</button>
-        <button onClick={() => (history === null ? showHistory() : setHistory(null))} className={btn}>{history === null ? 'History' : 'Live'}</button>
+        <Button variant="secondary" onClick={() => zoom(-1)} className={btn}>A−</Button>
+        <Button variant="secondary" onClick={() => zoom(1)} className={btn}>A+</Button>
+        <Button variant="secondary" onClick={() => (history === null ? showHistory() : setHistory(null))} className={btn}>{history === null ? 'History' : 'Live'}</Button>
         {/* only terminals opened by Quorum (with root) can be closed */}
-        {root && <span className="relative">
-          <button onClick={() => setMenu((m) => !m)} aria-label="⋯" className={btn}>⋯</button>
-          {menu && (
-            <div className="absolute right-0 top-full z-10 mt-1 rounded border border-zinc-700 bg-zinc-900 p-1 shadow">
-              <button onClick={close} className="whitespace-nowrap rounded px-3 py-1.5 text-sm text-red-400 hover:bg-zinc-800">Close terminal</button>
-            </div>
-          )}
-        </span>}
+        {root && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="secondary" aria-label="⋯" className={btn}>⋯</Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem variant="destructive" className="min-h-11" onSelect={close}>Close terminal</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
       </header>
       <div ref={box} className="min-h-0 flex-1 overflow-auto bg-zinc-950 p-2">
         {history !== null ? (
@@ -145,7 +148,7 @@ export default function Terminal({ machine, pane, root, label, onBack, onReopen 
         ) : closed ? (
           <div className="flex flex-col items-center gap-3 p-6 text-center">
             <p className="text-sm text-zinc-300">Terminal closed</p>
-            {root && <button onClick={reopen} className="rounded bg-blue-600 px-3 py-1.5 text-sm text-white">Open another</button>}
+            {root && <Button className="min-h-11" onClick={reopen}>Open another</Button>}
           </div>
         ) : frame ? (
           <pre className="m-0 w-max font-mono text-zinc-200" style={{ fontSize: size, lineHeight: 1.25 }}><Screen ansi={frame.ansi} /></pre>
@@ -158,13 +161,13 @@ export default function Terminal({ machine, pane, root, label, onBack, onReopen 
       {!closed && history === null && (
         <footer className="shrink-0 border-t border-zinc-800 bg-zinc-950 pb-[env(safe-area-inset-bottom)]">
           <div className="flex gap-1.5 overflow-x-auto px-2 pt-2">
-            {KEYS.map(([name, k]) => <button key={k} {...noBlur} onClick={() => key1(k)} className={btn}>{name}</button>)}
+            {KEYS.map(([name, k]) => <Button key={k} variant="secondary" {...noBlur} onClick={() => key1(k)} className={btn}>{name}</Button>)}
           </div>
           <form className="flex gap-2 p-2" onSubmit={(e) => { e.preventDefault(); submit() }}>
-            <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Type…" enterKeyHint="send"
+            <Input value={text} onChange={(e) => setText(e.target.value)} placeholder="Type…" enterKeyHint="send"
               autoCapitalize="off" autoCorrect="off" autoComplete="off" spellCheck={false}
-              className="min-w-0 flex-1 rounded bg-zinc-900 px-3 py-2 text-base text-zinc-100 outline-none" />
-            <button type="submit" aria-label="⏎" className="shrink-0 rounded bg-blue-600 px-4 py-2 text-sm text-white">⏎</button>
+              className="min-h-11 min-w-0 flex-1 border-0 bg-zinc-900 px-3 py-2 text-base text-zinc-100" />
+            <Button type="submit" aria-label="⏎" className="min-h-11 shrink-0 px-4">⏎</Button>
           </form>
         </footer>
       )}

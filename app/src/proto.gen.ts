@@ -138,7 +138,8 @@ export interface Command {
 }
 /**
  * Envelope is the WS wrapper daemon<->hub and hub<->app.
- * Type: hello|session_upsert|session_gone|event|events|command|launch|launch_result|machine_status|backfill|backfill_result|ack|project_upsert|tickets|session_ticket|proposal_upsert|workspace_upsert|workspace_gone|project_gone
+ * Type: hello|session_upsert|session_gone|session_removed|event|events|command|launch|launch_result|machine_status|backfill|backfill_result|ack|project_upsert|tickets|session_ticket|proposal_upsert|workspace_upsert|workspace_gone|project_gone
+ * session_gone (hub->app): the session was closed (state closed). session_removed (hub->app): the session closed without ever receiving a user prompt and was deleted; Envelope.Session is the id.
  * workspace_upsert|workspace_gone (hub->app): Payload Workspace (for gone only the id matters); the initial snapshot carries one workspace_upsert per workspace.
  * project_gone (hub->app): Payload {id}.
  * proposal_upsert (hub->app): Payload Proposal, on every creation or change.

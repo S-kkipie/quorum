@@ -3,6 +3,7 @@ import { loadPrefs, launchIn, savePrefs } from '../lib/launch'
 import { projectCheckouts } from '../lib/projects'
 import type { AppState } from '../lib/store'
 import LaunchDialog, { BypassToggle } from './LaunchDialog'
+import { Button } from '@/components/ui/button'
 
 const sep = '\u0000'
 
@@ -64,7 +65,7 @@ export default function NewSessionCard({ state, projectId, pending, onLaunched, 
     return (
       <div className="px-3 pt-3">
         <p className="text-sm text-zinc-500">This project has no folder on any machine yet</p>
-        <button onClick={() => setOther(true)} className="mt-1 text-sm text-blue-400 underline">Another folder…</button>
+        <Button variant="link" onClick={() => setOther(true)} className="mt-1 min-h-11 px-0 text-blue-400">Another folder…</Button>
         {other && <LaunchDialog state={state} projectId={projectId} onClose={() => setOther(false)} onLaunched={(p) => { setOther(false); onLaunched(p) }} />}
       </div>
     )
@@ -72,9 +73,9 @@ export default function NewSessionCard({ state, projectId, pending, onLaunched, 
   const multi = new Set(cos.map((c) => c.machine)).size < cos.length
   return (
     <div className="px-3 pt-3">
-      <button disabled={busy || pending || !chosen} onClick={go} className="min-h-14 w-full rounded-lg bg-blue-600 px-4 text-base font-semibold text-white disabled:opacity-40">
+      <Button size="lg" disabled={busy || pending || !chosen} onClick={go} className="min-h-14 w-full rounded-lg px-4 text-base font-semibold">
         {busy || pending ? 'Launching…' : 'New session'}
-      </button>
+      </Button>
       {!chosen && <p className="mt-2 text-xs text-amber-400">No machine of this project is online.</p>}
       <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2">
         <label className="flex items-center gap-1 rounded-full bg-zinc-800 px-3 py-1 text-xs text-zinc-300">
@@ -90,7 +91,7 @@ export default function NewSessionCard({ state, projectId, pending, onLaunched, 
         </label>
         <BypassToggle checked={bypass} root={isRoot} onChange={(v) => { setBypass(v); savePrefs(projectId, { ...(machine ? { machine } : {}), bypass: v }) }} />
         {caps?.terminal ? (
-          <button disabled={!chosen || termBusy} onClick={term} className="ml-auto min-h-10 rounded bg-zinc-800 px-4 text-sm disabled:opacity-40">Terminal</button>
+          <Button variant="secondary" disabled={!chosen || termBusy} onClick={term} className="ml-auto min-h-11 px-4">Terminal</Button>
         ) : (
           chosen && <span className="text-xs text-zinc-500">Terminal not available on this machine (herdr missing)</span>
         )}

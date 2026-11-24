@@ -22,6 +22,10 @@ func TestExpirePublishesSessionGone(t *testing.T) {
 	c := f.dial(t)
 	sendHello(t, c, "m1", "s1", "s2")
 	eventually(t, func() bool { return online(f, "m1") })
+	for _, id := range []string{"s1", "s2"} {
+		_, err := f.st.AppendEvent(proto.Event{Session: id, Kind: proto.KindUser, Data: mustJSON(map[string]string{"text": "hi"})})
+		require.NoError(t, err)
+	}
 	c.Close(websocket.StatusNormalClosure, "")
 	eventually(t, func() bool { f.clock.mu.Lock(); defer f.clock.mu.Unlock(); return len(f.clock.timers) == 1 })
 	f.cap.mu.Lock()
@@ -81,6 +85,8 @@ func TestAsksSurviveDaemonRestart(t *testing.T) {
 	f := newAppFx(t, "s1")
 	f.machineSend(t, askEnv("s1", "a1"))
 	eventually(t, func() bool { f.srv.asks.mu.Lock(); defer f.srv.asks.mu.Unlock(); return len(f.srv.asks.open) == 1 })
+	_, err := f.st.AppendEvent(proto.Event{Session: "s1", Kind: proto.KindUser, Data: mustJSON(map[string]string{"text": "hi"})})
+	require.NoError(t, err)
 	f.mach.CloseNow()
 	f.connectMachine(t) // new daemon: hello without sessions → s1 closed
 	eventually(t, func() bool { si, _ := f.st.Session("s1"); return si.State == proto.StateClosed })

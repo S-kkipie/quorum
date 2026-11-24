@@ -1,4 +1,6 @@
 import { ExternalLink, FileCode, FileText, Image } from 'lucide-react'
+import { Artifact, ArtifactActions, ArtifactDescription, ArtifactHeader, ArtifactTitle } from '@/components/ai-elements/artifact'
+import { Button } from '@/components/ui/button'
 import type { ArtifactItem } from '../../lib/timeline'
 
 const IMAGE = /\.(png|jpe?g|gif|webp|svg)$/i
@@ -25,20 +27,23 @@ export default function ArtifactCard({ item, machine = '', base = '', onOpen }: 
   const Icon = IMAGE.test(item.name) ? Image : /\.html?$/i.test(item.name) ? FileCode : FileText
   const where = item.inBase ? [machine, folderOf(item.path, base)].filter(Boolean).join(' · ') : 'outside the project folder'
   return (
-    <div className="my-2 flex items-center gap-3 rounded-xl border border-zinc-800 bg-zinc-900/60 p-3">
-      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-blue-500/15 text-blue-300">
-        <Icon size={20} aria-hidden />
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-sm font-medium text-zinc-100">{item.name}</div>
-        <div className="truncate text-xs text-zinc-500">{where}</div>
-      </div>
-      {item.inBase && (
-        <button type="button" onClick={() => onOpen?.(item.path)}
-          className="flex min-h-11 shrink-0 items-center gap-1.5 rounded-lg bg-blue-600 px-3 text-sm font-medium text-white hover:bg-blue-500">
-          <ExternalLink size={14} aria-hidden />Open
-        </button>
-      )}
-    </div>
+    <Artifact className="my-2 border-zinc-800 bg-zinc-900/60 shadow-none">
+      <ArtifactHeader className="gap-3 border-b-0 bg-transparent p-3">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-blue-500/15 text-blue-300">
+          <Icon size={20} aria-hidden />
+        </span>
+        <div className="min-w-0 flex-1">
+          <ArtifactTitle className="truncate text-zinc-100">{item.name}</ArtifactTitle>
+          <ArtifactDescription className="truncate text-xs text-zinc-500">{where}</ArtifactDescription>
+        </div>
+        {item.inBase && (
+          <ArtifactActions className="shrink-0">
+            <Button type="button" onClick={() => onOpen?.(item.path)} className="min-h-11 bg-blue-600 px-3 text-white hover:bg-blue-500">
+              <ExternalLink size={14} aria-hidden />Open
+            </Button>
+          </ArtifactActions>
+        )}
+      </ArtifactHeader>
+    </Artifact>
   )
 }

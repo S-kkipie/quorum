@@ -7,10 +7,12 @@ import { sessionTitle } from '../lib/title'
 import { BypassToggle } from './LaunchDialog'
 import { loadPrefs, savePrefs } from '../lib/launch'
 import ProposalCard from './ProposalCard'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 
 type OnLaunched = (p: { reqId: string; machine: string; label: string }) => void
 
-const field = 'mt-1 w-full rounded border border-zinc-800 bg-zinc-900 p-2 text-sm'
+const field = 'mt-1 min-h-11 w-full rounded border border-zinc-800 bg-zinc-900 p-2 text-sm md:text-sm'
 const h3 = 'mb-1 mt-5 text-xs font-semibold uppercase tracking-wide text-zinc-400'
 
 export default function TicketDetail({ state, ticketId, onBack, onOpenSession, onLoaded, onCheckouts, onLaunched }: {
@@ -45,7 +47,7 @@ export default function TicketDetail({ state, ticketId, onBack, onOpenSession, o
   if (!t) {
     return (
       <div className="p-4 text-sm text-zinc-500">
-        {onBack && <button onClick={onBack} className="mb-3 text-zinc-400">← Back</button>}
+        {onBack && <Button variant="ghost" onClick={onBack} className="mb-3 min-h-11 text-zinc-400">← Back</Button>}
         <p>{error || (loaded ? 'Ticket not found.' : 'Loading…')}</p>
       </div>
     )
@@ -61,10 +63,10 @@ export default function TicketDetail({ state, ticketId, onBack, onOpenSession, o
   return (
     <div className="pb-10">
       <header className="sticky top-0 z-10 flex items-center gap-2 border-b border-zinc-800 bg-zinc-950/90 px-3 py-2 backdrop-blur">
-        {onBack && <button onClick={onBack} aria-label="Back" className="text-zinc-400">←</button>}
+        {onBack && <Button variant="ghost" onClick={onBack} aria-label="Back" className="min-h-11 min-w-11 text-zinc-400">←</Button>}
         <span className="font-mono text-xs text-zinc-500">{t.externalId}</span>
         <h2 className="min-w-0 flex-1 truncate text-sm font-semibold">{t.title}</h2>
-        {t.url && <a href={t.url} target="_blank" rel="noreferrer" className="shrink-0 text-xs text-blue-400">View in the ticket source</a>}
+        {t.url && <a href={t.url} target="_blank" rel="noopener noreferrer" className="shrink-0 text-xs text-blue-400">View in the ticket source</a>}
       </header>
       <div className="px-3">
         <p className={`mt-3 text-sm ${TONE_TEXT[line.tone]}`}>{line.text}</p>
@@ -85,7 +87,7 @@ export default function TicketDetail({ state, ticketId, onBack, onOpenSession, o
           {working ? (
             <div className="flex items-center gap-2 text-sm">
               <span className="min-w-0 flex-1 truncate text-zinc-300">A session is already working on this ticket on {working.session!.machine}.</span>
-              <button onClick={() => onOpenSession?.(working.id)} className="shrink-0 rounded bg-blue-600 px-3 py-1 text-xs text-white">Go to session</button>
+              <Button size="sm" onClick={() => onOpenSession?.(working.id)} className="min-h-11 text-xs">Go to session</Button>
             </div>
           ) : (
             <OpenSession state={state} ticketId={t.id} projectId={t.projectId} onLaunched={onLaunched} onOpenSession={onOpenSession} />
@@ -151,11 +153,11 @@ function LinkRow({ id, session, confirmed, ticketId, onOpenSession }: { id: stri
       </button>
       {error && <span role="alert" className="text-xs text-red-400">{error}</span>}
       {confirmed ? (
-        <button disabled={busy} onClick={() => run(() => unlinkTicket(id, ticketId))} className="shrink-0 text-xs text-zinc-400 underline">Unlink</button>
+        <Button variant="link" size="sm" disabled={busy} onClick={() => run(() => unlinkTicket(id, ticketId))} className="min-h-11 text-xs text-zinc-400">Unlink</Button>
       ) : (
         <>
-          <button disabled={busy} onClick={() => run(() => unlinkTicket(id, ticketId))} className="shrink-0 text-xs text-zinc-400">Dismiss</button>
-          <button disabled={busy} onClick={() => run(() => confirmTicketLink(id, ticketId))} className="shrink-0 rounded bg-blue-600 px-2 py-0.5 text-xs text-white">Confirm</button>
+          <Button variant="ghost" size="sm" disabled={busy} onClick={() => run(() => unlinkTicket(id, ticketId))} className="min-h-11 text-xs text-zinc-400">Dismiss</Button>
+          <Button size="sm" disabled={busy} onClick={() => run(() => confirmTicketLink(id, ticketId))} className="min-h-11 text-xs">Confirm</Button>
         </>
       )}
     </li>
@@ -212,18 +214,18 @@ function OpenSession({ state, ticketId, projectId, onLaunched, onOpenSession }: 
         <BypassToggle checked={bypass} root={!!state.machines[machine]?.caps?.root} onChange={setBypass} />
       </div>
       <label className="mt-2 block text-xs text-zinc-400">Checkout
-        <input list={`co-${ticketId}`} value={root} onChange={(e) => setRoot(e.target.value)} placeholder="/path/to/repo" className={field} />
+        <Input list={`co-${ticketId}`} value={root} onChange={(e) => setRoot(e.target.value)} placeholder="/path/to/repo" className={field} />
         <datalist id={`co-${ticketId}`}>{roots.map((r) => <option key={r} value={r} />)}</datalist>
         {roots.length === 0 && <span className="mt-1 block text-[11px] text-zinc-600">This machine has no known checkouts of the project: type the path.</span>}
       </label>
       {error && (
         <p role="alert" className="mt-2 flex items-center gap-2 text-xs text-red-400">
           {error}
-          {other && <button onClick={() => onOpenSession?.(other)} className="rounded bg-blue-600 px-2 py-0.5 text-white">Go to session</button>}
+          {other && <Button size="sm" onClick={() => onOpenSession?.(other)} className="min-h-11 text-xs">Go to session</Button>}
         </p>
       )}
       <div className="mt-2 flex justify-end">
-        <button disabled={busy || !machine || !root.trim()} onClick={go} className="rounded bg-blue-600 px-3 py-1.5 text-sm text-white disabled:opacity-40">Open session</button>
+        <Button className="min-h-11" disabled={busy || !machine || !root.trim()} onClick={go}>Open session</Button>
       </div>
     </div>
   )
@@ -250,10 +252,10 @@ function ProposeStatus({ ticketId, current }: { ticketId: string; current: strin
     <section>
       <h3 className={h3}>Change status</h3>
       <div className="flex items-center gap-2">
-        <select aria-label="New status" value={to} onChange={(e) => setTo(e.target.value)} className="min-w-0 flex-1 rounded border border-zinc-800 bg-zinc-900 p-1.5 text-sm">
+        <select aria-label="New status" value={to} onChange={(e) => setTo(e.target.value)} className="min-h-11 min-w-0 flex-1 rounded border border-zinc-800 bg-zinc-900 p-1.5 text-sm">
           {options.map((s) => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
         </select>
-        <button disabled={busy} onClick={go} className="shrink-0 rounded bg-zinc-800 px-3 py-1.5 text-xs disabled:opacity-40">Propose</button>
+        <Button variant="secondary" disabled={busy} onClick={go} className="min-h-11 text-xs">Propose</Button>
       </div>
       <p className="mt-1 text-[11px] text-zinc-600">Quorum never writes to the ticket source on its own: it stays a proposal until you approve it.</p>
       {msg && <p className="mt-1 text-xs text-zinc-400">{msg}</p>}

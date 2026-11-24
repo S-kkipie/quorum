@@ -1,5 +1,6 @@
 import type { Project, SessionInfo, Ticket } from '../proto.gen'
 import type { AppState } from './store'
+import { ATTENTION } from './sessions'
 
 /** Normalized statuses in display order (done is folded at the end). */
 export const STATUSES = ['todo', 'in_progress', 'in_review', 'blocked', 'done'] as const
@@ -16,7 +17,7 @@ export const SESSION_STATE: Record<string, { label: string; dot: string; text: s
   closed: { label: 'closed', dot: 'bg-zinc-700', text: 'text-zinc-600' },
 }
 
-const toMs = (ts: number) => (ts > 1e12 ? ts : ts * 1000)
+export const toMs = (ts: number) => (ts > 1e12 ? ts : ts * 1000)
 
 /** "12 min ago", "2h ago", "3d ago". */
 export function since(ts: number, now = Date.now()): string {
@@ -29,6 +30,13 @@ export function since(ts: number, now = Date.now()): string {
 /** Live sessions (not closed, work role) of the project, in the stable list order. */
 export function projectSessions(s: AppState, projectId: string): SessionInfo[] {
   return s.order.map((id) => s.sessions[id]).filter((x) => x && x.projectId === projectId && x.role !== 'service' && x.state !== 'closed')
+}
+
+/** Lowest ATTENTION rank among the project's live sessions (99 when it has none). */
+export function projectAttention(s: AppState, projectId: string): number {
+  let best = 99
+  for (const x of projectSessions(s, projectId)) best = Math.min(best, ATTENTION[x.state] ?? 3)
+  return best
 }
 
 /** Pending proposals per project (via the ticket they belong to). */
