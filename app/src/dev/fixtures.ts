@@ -204,6 +204,12 @@ function worst(): AppState {
   sessions.push(session('s6-unassigned', { state: 'working', projectId: '', root: '/work/scratch', cwd: '/work/scratch', name: 'scratch' }))
   const events: Record<string, Event[]> = {}
   for (const x of sessions.slice(0, 2)) events[x.id] = [...worstEvents(x.id, x.root), ...commandEvents(x.id)]
+  // a pending permission with a long script: the card clamps it and keeps Allow / Deny in reach
+  const first = sessions[0]!
+  events[first.id] = [...events[first.id]!, ev(first.id, 'ask', {
+    askId: 'ask-long-bash', kind: 'permission', tool: 'Bash', detail: '',
+    summary: Array.from({ length: 40 }, (_, i) => `node scripts/migrate-step-${i}.mjs --batch ${i * 250} --dry-run=false && echo "step ${i} done"`).join('\n'),
+  })]
   return withCommands(finish({ machines, workspaces, projects, checkouts, sessions, proposals: [proposal('pr1', 't1'), proposal('pr2', 't2'), proposal('pr3', 't3')], convs: () => conversations(40, true), events,
     usage: [usage('a'.repeat(16), 'work', 97, 41, 1, 25, 30), usage('b'.repeat(16), 'personal-test', 58, 22, 2, 260, 150), usage('c'.repeat(16), padTo('an-extremely-long-account-alias-', 60), 12, 85, 180)] }),
   sessions.filter((x) => x.state !== 'closed' && x.id !== 's6-unassigned').map((x) => x.id), () => COMMANDS)
