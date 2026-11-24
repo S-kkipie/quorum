@@ -1,4 +1,4 @@
-import type { AccountUsage, Ask, Attention, Checkout, Conversation, Envelope, Event, Project, Proposal, SessionInfo, SessionTicket, Ticket, Workspace } from '../proto.gen'
+import type { AccountUsage, Ask, Attention, Checkout, Conversation, Envelope, Event, Project, Proposal, SessionCommands, SessionInfo, SessionTicket, Ticket, Workspace } from '../proto.gen'
 import type { Machine, TicketView } from './api'
 
 export interface AppState {
@@ -32,6 +32,10 @@ export interface AppState {
   conversations: Record<string, Conversation[]>
   /** Subscription usage per account key (accountKey, or machine/alias). */
   usage: Record<string, AccountUsage>
+  /** Slash commands per session, as its mod reported them (absent: never reported, an older mod). */
+  commands: Record<string, SessionCommands>
+  /** Bumped by every live session_commands envelope: a GET that started before one must not overwrite it. */
+  commandsRev: Record<string, number>
   /** Last attention the hub announced per session (needs_you or done), kept for native notifications. */
   lastAttention: Record<string, LastAttention>
 }
@@ -43,7 +47,7 @@ export type AskEntry = Ask & { session: string }
 
 export const initialState = (): AppState => ({
   machines: {}, sessions: {}, order: [], events: {}, live: {}, liveAgent: {}, asks: {}, replaced: {}, replacedBy: {},
-  workspaces: {}, projects: {}, tickets: {}, links: {}, proposals: {}, checkouts: {}, worked: {}, conversations: {}, usage: {}, lastAttention: {},
+  workspaces: {}, projects: {}, tickets: {}, links: {}, proposals: {}, checkouts: {}, worked: {}, conversations: {}, usage: {}, commands: {}, commandsRev: {}, lastAttention: {},
 })
 
 /** Inserts ev into the seq-sorted list, discarding duplicates. */
@@ -104,6 +108,28 @@ export function setUsage(s: AppState, list: AccountUsage[], replace = false): Ap
   return { ...s, usage }
 }
 
+/** Stores a session's command list from a live envelope; an unchanged hash keeps the state. */
+export function setCommands(s: AppState, sc: SessionCommands | null | undefined): AppState {
+  if (!sc?.session || !Array.isArray(sc.commands)) return s
+  const rev = { ...s.commandsRev, [sc.session]: (s.commandsRev[sc.session] ?? 0) + 1 }
+  const cur = s.commands[sc.session]
+  if (cur && cur.hash === sc.hash) return { ...s, commandsRev: rev }
+  return { ...s, commands: { ...s.commands, [sc.session]: sc }, commandsRev: rev }
+}
+
+/**
+ * Stores the list a GET /commands returned. `rev` is `state.commandsRev[session]` read before the
+ * request started: when a live envelope arrived meanwhile (the revision moved) the response is older
+ * and dropped.
+ */
+export function loadCommands(s: AppState, sc: SessionCommands | null | undefined, rev: number | undefined): AppState {
+  if (!sc?.session || !Array.isArray(sc.commands)) return s
+  if ((s.commandsRev[sc.session] ?? 0) !== (rev ?? 0)) return s
+  const cur = s.commands[sc.session]
+  if (cur && cur.hash === sc.hash) return s
+  return { ...s, commands: { ...s.commands, [sc.session]: sc } }
+}
+
 export function reduce(s: AppState, env: Envelope): AppState {
   switch (env.type) {
     case 'usage_gone': {
@@ -114,6 +140,8 @@ export function reduce(s: AppState, env: Envelope): AppState {
       const u = env.payload as AccountUsage
       return u?.key ? setUsage(s, [u]) : s
     }
+    case 'session_commands':
+      return setCommands(s, env.payload as SessionCommands)
     case 'machine_status': {
       const m = env.payload as Machine
       return m?.name ? { ...s, machines: { ...s.machines, [m.name]: m } } : s
@@ -187,6 +215,8 @@ export function reduce(s: AppState, env: Envelope): AppState {
         asks: Object.fromEntries(Object.entries(s.asks).filter(([, a]) => a.session !== id)),
         worked: omit(s.worked, id),
         lastAttention: omit(s.lastAttention, id),
+        commands: omit(s.commands, id),
+        commandsRev: omit(s.commandsRev, id),
         replaced: omit(s.replaced, id),
         replacedBy: omit(s.replacedBy, id),
       }

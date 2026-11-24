@@ -532,6 +532,9 @@ func (h *Hub) onMessage(c *machineConn, env proto.Envelope) {
 			h.publish(proto.Envelope{Type: "session_removed", Machine: name, Session: env.Session})
 			return
 		}
+	case "session_commands":
+		h.saveSessionCommands(name, env)
+		return // published by saveSessionCommands, and only when the list changed
 	case "session_seen":
 		// the owner focused this session's herdr pane: it was looked at up to its latest event
 		if !h.owns(name, env.Session) {

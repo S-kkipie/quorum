@@ -1,12 +1,12 @@
-import { useRef, useState } from 'react'
+import { useRef, useState, type KeyboardEvent } from 'react'
 import { clearDraft, loadDraft, saveDraft, useDraft } from '../lib/drafts'
-import { ArrowUp, Brain, ChevronUp, ListPlus, Zap } from 'lucide-react'
+import { ArrowUp, ChevronUp, ListPlus, Zap } from 'lucide-react'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { PromptInput, PromptInputButton, PromptInputFooter, PromptInputSubmit, PromptInputTextarea } from '@/components/ai-elements/prompt-input'
-import { pluginCommand, sendPrompt, type PromptMode } from '../lib/api'
-import { addArgs, taskTextError } from '../lib/afterQueue'
-import { pluginStateChanged } from '../lib/pluginBus'
-import type { SessionInfo } from '../proto.gen'
+import { runCommand, sendPrompt, type PromptMode } from '../lib/api'
+import { blockReason, commandsReported, filterCommands, parseSlash, selectable, slashQuery } from '../lib/slash'
+import SlashMenu, { optionId } from './SlashMenu'
+import type { SessionCommand, SessionCommands, SessionInfo } from '../proto.gen'
 
 export function composerBlock(s: SessionInfo): string {
   if (s.role === 'service') return 'Service session'
@@ -14,16 +14,11 @@ export function composerBlock(s: SessionInfo): string {
   return ''
 }
 
-// use-haiku reads a leading `_`, think-hard a leading `+`. Each strips only its own mark and which
-// plugin sees the text first is not under our control, so combining marks is unreliable: the chips are
-// mutually exclusive and at most one prefix is added. Text already carrying the mark is left alone.
-export function applyPrefixes(text: string, o: { haiku: boolean; think: boolean }): string {
-  if (o.haiku) return text.startsWith('_') ? text : '_' + text
-  if (o.think) return text.startsWith('+') ? text : '+' + text
-  return text
-}
-
-export default function Composer({ session }: { session: SessionInfo }) {
+export default function Composer({ session, commands }: {
+  session: SessionInfo
+  /** the session's slash commands (undefined: never reported, an older mod) */
+  commands?: SessionCommands
+}) {
   // A replaced session (new id, previousId = old id) keeps the same draft.
   const draftRef = useRef(session.id)
   if (draftRef.current !== session.id && session.previousId !== draftRef.current) draftRef.current = session.id
@@ -41,41 +36,72 @@ export default function Composer({ session }: { session: SessionInfo }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const block = composerBlock(session)
-  const [haiku, setHaiku] = useState(false)
-  const [think, setThink] = useState(false)
-  const working = session.state === 'working'
-  // The Haiku chip is disabled while working: un-press it instead of keeping a pressed, disabled chip.
-  const [wasWorking, setWasWorking] = useState(working)
-  if (working !== wasWorking) {
-    setWasWorking(working)
-    if (working) setHaiku(false)
-  }
-  const hasHaiku = (session.plugins ?? []).includes('use-haiku')
-  const hasThink = (session.plugins ?? []).includes('think-hard')
-  // use-haiku ignores `_` mid-turn, so no Haiku prefix is sent while Claude is working.
-  const prefixes = { haiku: hasHaiku && haiku && !working, think: hasThink && think }
+  const box = useRef<HTMLTextAreaElement>(null)
 
-  // `viaAfter` is only for the explicit Queue menu item: Send on an idle session also uses mode
-  // 'queue' but must stay a normal prompt (with its chip prefix).
-  async function go(mode: PromptMode, queueItem = false) {
+  // "/" typeahead: open while the text starts with "/" and the caret is in the command name
+  const [caret, setCaret] = useState(text.length)
+  const [escaped, setEscaped] = useState<string | null>(null)
+  const [hint, setHint] = useState('')
+  const [activeName, setActiveName] = useState<string | null>(null)
+  const reported = commandsReported(commands)
+  const query = block ? null : slashQuery(text, caret)
+  const menuOpen = query !== null && escaped !== text
+  const groups = menuOpen && reported ? filterCommands(commands.commands, query) : []
+  const rows = groups.flatMap((g) => g.items)
+  const runnable = rows.filter(selectable)
+  // the highlighted row: the one moved to, else the first name that starts with the query (any group)
+  const active = runnable.find((c) => c.name === activeName)
+    ?? runnable.find((c) => c.name.toLowerCase().startsWith((query ?? '').toLowerCase())) ?? runnable[0]
+
+  function edit(v: string, at = v.length) {
+    setText(v)
+    setCaret(at)
+    setHint('')
+  }
+
+  function complete(c: SessionCommand) {
+    if (!selectable(c)) { setHint('Only in the terminal'); return }
+    const v = '/' + c.name + ' '
+    edit(v)
+    setActiveName(null)
+    requestAnimationFrame(() => { box.current?.focus(); box.current?.setSelectionRange(v.length, v.length) })
+  }
+
+  function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
+    if (!menuOpen) return
+    if (e.key === 'Escape') { e.preventDefault(); setEscaped(text); return }
+    if (!runnable.length) return
+    const i = active ? runnable.indexOf(active) : 0
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault()
+      const n = runnable.length
+      setActiveName(runnable[(i + (e.key === 'ArrowDown' ? 1 : n - 1)) % n].name)
+    } else if (e.key === 'Tab' || (e.key === 'Enter' && !e.ctrlKey && !e.metaKey && !e.shiftKey)) {
+      e.preventDefault()
+      if (active) complete(active)
+    }
+  }
+
+  async function go(mode: PromptMode) {
     const t = text.trim()
     if (!t || busy || block) return
-    const viaAfter = queueItem && (session.plugins ?? []).includes('after')
-    if (viaAfter) {
-      const bad = taskTextError(t)
-      if (bad) { setError(bad); return }
+    const slash = parseSlash(text)
+    let run: { name: string; args: string } | null = null
+    if (slash) {
+      const c = reported ? commands.commands.find((x) => x.name === slash.name) : undefined
+      if (!c) { setError(`Unknown command /${slash.name.slice(0, 60)}. Start with a space to send it as text.`); return }
+      const why = blockReason(c, slash.args)
+      if (why) { setError(`/${c.name}: ${why}`); return }
+      run = slash
     }
     setBusy(true)
     setError('')
     try {
-      if (viaAfter) {
-        await pluginCommand(session.id, 'after', addArgs(t))
-        pluginStateChanged(session.id, 'after') // the queue section reads the new task
-      }
-      else await sendPrompt(session.id, applyPrefixes(t, prefixes), mode)
+      if (run) await runCommand(session.id, run.name, run.args)
+      // a leading space keeps text that starts with "/" a plain prompt (it is not a command)
+      else await sendPrompt(session.id, /^\s+\//.test(text) ? ' ' + t : t, mode)
       clearText()
-      setHaiku(false)
-      setThink(false)
+      setCaret(0)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'could not send')
     } finally {
@@ -87,30 +113,29 @@ export default function Composer({ session }: { session: SessionInfo }) {
   // 'now' joins a running turn; with no turn running (idle, background, waiting) Send is a normal prompt
   const send: PromptMode = session.state === 'working' || session.state === 'needs_you' ? 'now' : 'queue'
   const btn = 'min-h-11 gap-1.5 rounded-lg px-3 text-sm disabled:opacity-40'
-  const chipCls = (on: boolean) => `inline-flex min-h-11 items-center gap-1.5 rounded-full border px-4 text-sm disabled:opacity-40 ${on ? 'border-blue-500 bg-blue-600/20 text-blue-200' : 'border-zinc-700 bg-zinc-900 text-zinc-300'}`
   return (
-    <div className="border-t border-zinc-800 bg-zinc-950 p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+    <div className="relative border-t border-zinc-800 bg-zinc-950 p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+      {menuOpen && <SlashMenu groups={groups} reported={reported} active={active?.name} hint={hint} onPick={complete} />}
       {block && <p className="px-1 pb-1 text-xs text-zinc-500">{block}</p>}
       {error && <p role="alert" className="px-1 pb-1 text-xs text-red-400">{error}</p>}
-      {(hasHaiku || hasThink) && (
-        <div className="flex flex-wrap gap-2 px-1 pb-2">
-          {hasHaiku && (
-            <button type="button" aria-pressed={haiku} disabled={!!block || working} title={working ? 'Haiku applies when Claude is idle' : 'Send this prompt to Haiku'} className={chipCls(haiku)} onClick={() => { setHaiku(!haiku); setThink(false) }}><Zap size={14} aria-hidden />Haiku</button>
-          )}
-          {hasThink && (
-            <button type="button" aria-pressed={think} disabled={!!block} title="Ask for maximum effort" className={chipCls(think)} onClick={() => { setThink(!think); setHaiku(false) }}><Brain size={14} aria-hidden />Think hard</button>
-          )}
-        </div>
-      )}
       {/* Send is the submit button; the draft lives in useDraft, not in the form */}
       <PromptInput onSubmit={() => go(send)} className="[&_[data-slot=input-group]]:rounded-xl [&_[data-slot=input-group]]:border-zinc-800 [&_[data-slot=input-group]]:bg-zinc-900">
         <PromptInputTextarea
+          ref={box}
           value={text}
           disabled={!!block}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => edit(e.target.value, e.target.selectionStart ?? e.target.value.length)}
+          onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
+          onKeyDown={onKeyDown}
+          role="combobox"
+          aria-autocomplete="list"
+          aria-haspopup="listbox"
+          aria-expanded={menuOpen}
+          aria-controls={menuOpen ? 'slash-menu' : undefined}
+          aria-activedescendant={menuOpen && active ? optionId(rows.indexOf(active)) : undefined}
           submitOn="mod-enter"
           rows={2}
-          placeholder="Type a message…"
+          placeholder="Type a message or / for commands"
           className="min-h-14 px-3 py-2 text-sm placeholder:text-zinc-600 disabled:opacity-40"
         />
         <PromptInputFooter className="justify-end gap-2 px-2 pb-2">
@@ -120,7 +145,7 @@ export default function Composer({ session }: { session: SessionInfo }) {
               <PromptInputButton variant="secondary" size="sm" aria-label="More send options" title="More send options" className={`${btn} size-11 shrink-0 bg-zinc-800 px-0 text-zinc-200 hover:bg-zinc-700`}><ChevronUp size={16} aria-hidden /></PromptInputButton>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" side="top">
-              <DropdownMenuItem className="min-h-11 gap-2.5 px-3" disabled={off} onSelect={() => go('queue', true)}><ListPlus size={14} aria-hidden className="text-zinc-400" />Queue</DropdownMenuItem>
+              <DropdownMenuItem className="min-h-11 gap-2.5 px-3" disabled={off} onSelect={() => go('queue')}><ListPlus size={14} aria-hidden className="text-zinc-400" />Queue</DropdownMenuItem>
               <DropdownMenuItem className="min-h-11 gap-2.5 px-3 text-amber-300" disabled={off} onSelect={() => go('interrupt')}><Zap size={14} aria-hidden />Interrupt and send</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>

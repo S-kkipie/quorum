@@ -6,11 +6,35 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/S-kkipie/quorum/internal/proto"
 )
 
 const maxBody = 4 << 20
+
+// maxSessionCommands bounds a session's reported command list; the strings are capped like the
+// mod caps them (mod/src/commands.ts): name and plugin 200, description 300, source/group 20, hash 64.
+const maxSessionCommands = 2000
+
+func capRunes(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	return string([]rune(s)[:n])
+}
+
+func capCommands(sc *proto.SessionCommands) {
+	sc.Hash = capRunes(sc.Hash, 64)
+	for i := range sc.Commands {
+		c := &sc.Commands[i]
+		c.Name = capRunes(c.Name, 200)
+		c.Plugin = capRunes(c.Plugin, 200)
+		c.Description = capRunes(c.Description, 300)
+		c.Source = capRunes(c.Source, 20)
+		c.Group = capRunes(c.Group, 20)
+	}
+}
 
 // NewLocalAPI builds the loopback HTTP handler used by the mod.
 func NewLocalAPI(reg *Registry, token, version string) http.Handler {
@@ -54,6 +78,22 @@ func NewLocalAPIWithReload(reg *Registry, token, version string, reload func() e
 		}
 		id := r.PathValue("id")
 		reg.EmitBatch(id, evs)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	mux.HandleFunc("POST /v1/sessions/{id}/commands", auth(token, func(w http.ResponseWriter, r *http.Request) {
+		var sc proto.SessionCommands
+		if !decode(w, r, &sc) {
+			return
+		}
+		if len(sc.Commands) > maxSessionCommands {
+			http.Error(w, "too many commands", http.StatusBadRequest)
+			return
+		}
+		capCommands(&sc)
+		if !reg.SetCommands(r.PathValue("id"), sc) {
+			http.Error(w, "unknown session", http.StatusNotFound)
+			return
+		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	mux.HandleFunc("POST /v1/sessions/{id}/gone", auth(token, func(w http.ResponseWriter, r *http.Request) {

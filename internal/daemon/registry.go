@@ -26,6 +26,8 @@ type Registry struct {
 	sessions map[string]proto.SessionInfo
 	subs     map[string]*sub
 	onGone   func(id string) // under mu; see SetOnGone
+	// commands holds each live session's last command list (re-sent after every hello)
+	commands map[string]proto.SessionCommands
 }
 
 type sub struct{ ch chan proto.Command }
@@ -36,6 +38,7 @@ func NewRegistry(machine string) *Registry {
 		out:      make(chan proto.Envelope, outBuffer),
 		sessions: map[string]proto.SessionInfo{},
 		subs:     map[string]*sub{},
+		commands: map[string]proto.SessionCommands{},
 	}
 }
 
@@ -87,6 +90,7 @@ func (r *Registry) Upsert(si proto.SessionInfo) {
 		case prevLive:
 			renamed = prev
 			delete(r.sessions, prev)
+			delete(r.commands, prev)
 			if s, ok := r.subs[prev]; ok {
 				close(s.ch)
 				delete(r.subs, prev)
@@ -140,6 +144,7 @@ func (r *Registry) Gone(id string) {
 	defer r.emu.Unlock()
 	r.mu.Lock()
 	delete(r.sessions, id)
+	delete(r.commands, id)
 	if s, ok := r.subs[id]; ok {
 		close(s.ch)
 		delete(r.subs, id)
@@ -150,6 +155,35 @@ func (r *Registry) Gone(id string) {
 	if hook != nil {
 		hook(id)
 	}
+}
+
+// SetCommands stores a live session's command list and queues its session_commands envelope;
+// false when the session is not registered here.
+func (r *Registry) SetCommands(id string, sc proto.SessionCommands) bool {
+	sc.Session = id
+	r.emu.Lock()
+	defer r.emu.Unlock()
+	r.mu.Lock()
+	if _, ok := r.sessions[id]; !ok {
+		r.mu.Unlock()
+		return false
+	}
+	r.commands[id] = sc
+	r.mu.Unlock()
+	p, _ := json.Marshal(sc)
+	r.emit(proto.Envelope{Type: "session_commands", Machine: r.machine, Session: id, Payload: p}, false, time.Now().Add(outBlockMax))
+	return true
+}
+
+// AllCommands returns the stored command lists of the live sessions.
+func (r *Registry) AllCommands() []proto.SessionCommands {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]proto.SessionCommands, 0, len(r.commands))
+	for _, c := range r.commands {
+		out = append(out, c)
+	}
+	return out
 }
 
 // SetOnGone registers the (fast, non-blocking) function called after each

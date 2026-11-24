@@ -16,8 +16,26 @@ export default [
  {
   "command": "after",
   "args": "",
+  "ok": false,
+  "note": "bare /after opens a pane: terminal only"
+ },
+ {
+  "command": "after",
+  "args": "   ",
+  "ok": false,
+  "note": "blank /after: terminal only"
+ },
+ {
+  "command": "timeline",
+  "args": " ",
+  "ok": false,
+  "note": "blank /timeline: terminal only"
+ },
+ {
+  "command": "before",
+  "args": "",
   "ok": true,
-  "note": "empty args"
+  "note": "bare /before is fine"
  },
  {
   "command": "rm",

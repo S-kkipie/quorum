@@ -2,8 +2,9 @@ import { type BackgroundInfo, nextCron, stateOf, taskEnds } from './background'
 import { summarize } from './events'
 import type { Link } from './link'
 import { permissionRace } from './permission'
+import { COMMAND_TEXT_MAX, COMMAND_WAIT_ERROR, COMMAND_WAIT_MS, commandWaitMs, validateCommand } from './commands'
 import { validatePluginCommand } from './plugincmd'
-import type { Ask, Command } from './proto.gen'
+import type { Ask, Command, CommandEvent, ModelOption, SessionCommand } from './proto.gen'
 
 // the permission race lives in permission.ts; its caps are re-exported here
 export { BUDGET_MARGIN_MS, HOLD_MAX_MS } from './permission'
@@ -118,8 +119,25 @@ export type ControlDeps = {
   exit: () => Promise<unknown>
   /** `$.clock.sleep(ms)` */
   sleep: (ms: number) => Promise<void>
-  /** `runPluginCommand` (plugincmd.ts) over `$`: an allow-listed plugin slash command. */
-  runPlugin?: (command: string, args: string) => Promise<{ ok: boolean; error?: string }>
+  /**
+   * `$.command.run({ command, args })`: runs a slash command as if typed; queued until the
+   * session is idle; resolves with its output (`{ text }`) or rejects (unknown name, ...).
+   */
+  commandRun?: (command: string, args: string) => Promise<unknown>
+  /** The session's current command list (commands.ts reporter); undefined until read. */
+  commands?: () => readonly SessionCommand[] | undefined
+  /**
+   * `$.config.set({ key: 'model', value })`: the /config Model row switches the session's model at
+   * once, with no confirm dialog (a PreModelSwitch hook that asks makes it a deny); it also saves
+   * the model as the default for new sessions, as /model does.
+   */
+  setModel?: (value: string) => Promise<{ value?: unknown; deny?: string } | undefined>
+  /** The session's reported model options (commands.ts reporter). */
+  modelOptions?: () => readonly ModelOption[] | undefined
+  /** Re-reads the command list (the reporter's check): once, for a name the last list lacks. */
+  refreshCommands?: () => Promise<void>
+  /** A device command settled (ok or not): the reporter re-checks and notes a new effort. */
+  commandSettled?: (command: string, args: string, ok: boolean) => void
   newId?: () => string
   /** `$.clock.now()` (ms); Date.now when absent. */
   now?: () => number
@@ -204,6 +222,113 @@ export function makeControl(deps: ControlDeps) {
       info(`Could not send the prompt: ${String((err as Error)?.message ?? err)}`)
       return false
     })
+  }
+
+  /**
+   * Runs a slash command from a device and reports it as `command` events: `queued` when a
+   * turn is running (it runs when the turn ends), then `done` (with its output) or `failed`.
+   * Past its wait budget a `failed` (waiting for the terminal) shows first; the final status
+   * still follows with the same id (the devices merge by id).
+   * `listed`: it must be in the session's list and not terminal-only (the `command` type); the
+   * Plan 6 `plugin` alias has already passed its own allow-list.
+   */
+  async function runCommand(name: string, args: string, listed: boolean): Promise<void> {
+    const base = { id: (deps.newId ?? randomId)(), name: String(name).slice(0, 200), args: String(args ?? '').slice(0, 2000), origin: 'device' }
+    const send = (ev: Omit<CommandEvent, keyof typeof base>) => emit('command', { ...base, ...ev })
+    if (!deps.commandRun) { send({ status: 'failed', error: 'Commands are not available in this session' }); return }
+    if (listed) {
+      const check = (): string | null => {
+        try { return validateCommand(deps.commands?.(), name, args) } catch { return 'The command list of this session is not available yet' }
+      }
+      const known = () => { try { return !!deps.commands?.()?.some(c => c.name === name) } catch { return false } }
+      // a name the last list lacks (a plugin reloaded since, or no list yet): one re-check first
+      if (!known() && deps.refreshCommands) await deps.refreshCommands().catch(() => undefined)
+      const bad = check()
+      if (bad) { send({ status: 'failed', error: bad }); return }
+    }
+    await settle(send, () => deps.commandRun!(name, args), r => {
+      if ('err' in r) {
+        send({ status: 'failed', error: `Could not run /${base.name}: ${errText(r.err)}` })
+        settled(name, args, false)
+        return
+      }
+      const text = (r.value as { text?: unknown } | undefined)?.text
+      send(typeof text === 'string' && text ? { status: 'done', text: text.slice(0, COMMAND_TEXT_MAX) } : { status: 'done' })
+      settled(name, args, true)
+    }, { waitMs: commandWaitMs(name), queue: true })
+  }
+
+  const errText = (err: unknown) => String((err as Error)?.message ?? err)
+  const settled = (name: string, args: string, ok: boolean) => {
+    try { deps.commandSettled?.(name, args, ok) } catch { /* never toward Claude Code */ }
+  }
+
+  /** Resolved by the next main-turn end. */
+  const turnEnders: Array<() => void> = []
+  /** Counts main-turn starts (a wait restarts when a turn ran during it). */
+  let turnSeq = 0
+
+  /**
+   * Resolves once `ms` have passed with no main turn starting: when a turn is running it first
+   * waits for that turn's end; when a turn starts during the sleep (another queued prompt, or the
+   * command's own turn), it waits for that turn's end and sleeps `ms` again. Stops (never
+   * resolves, arms nothing more) once `done()` is true, i.e. the command already settled; also
+   * never resolves if the sleep fails.
+   */
+  async function idleDeadline(ms: number, done: () => boolean): Promise<void> {
+    for (;;) {
+      if (done()) return new Promise<never>(() => {})
+      if (turnId !== undefined) await new Promise<void>(r => { turnEnders.push(r) })
+      if (done()) return new Promise<never>(() => {})
+      const seq = turnSeq
+      await deps.sleep(ms)
+      if (turnSeq === seq && turnId === undefined) return
+    }
+  }
+
+  type Outcome = { value: unknown } | { err: unknown }
+
+  /**
+   * Runs `start` for a device command and hands its outcome to `finish`. With `queue`, `queued`
+   * first when a turn is running, and the wait counts from when no turn runs any more
+   * (`idleDeadline`); without, it counts from now (applied at once, like set_model). Past the
+   * wait, `failed` (waiting for the terminal) and this resolves; the command is not cancelled
+   * and `finish` still runs when it settles (the final status, same id).
+   */
+  async function settle(send: (ev: Pick<CommandEvent, 'status' | 'text' | 'error'>) => void, start: () => Promise<unknown>,
+    finish: (r: Outcome) => void, opts: { waitMs: number; queue: boolean }): Promise<void> {
+    if (opts.queue && turnId !== undefined) send({ status: 'queued' })
+    let over = false
+    const run: Promise<Outcome> = Promise.resolve().then(start).then(value => ({ value }), err => ({ err }))
+      .finally(() => { over = true })
+    const clock = opts.queue ? idleDeadline(opts.waitMs, () => over) : deps.sleep(opts.waitMs)
+    const timeout = clock.then(() => undefined, () => new Promise<never>(() => {}))
+    const r = await Promise.race([run, timeout])
+    const done = (o: Outcome) => { try { finish(o) } catch { /* never toward Claude Code */ } }
+    if (r) { done(r); return }
+    send({ status: 'failed', error: COMMAND_WAIT_ERROR })
+    void run.then(done)
+  }
+
+  /**
+   * set_model: one of the reported model options, through the /config Model row (no dialog).
+   * Applied at once (never `queued`). Options not read yet: one refresh first.
+   */
+  async function setModel(value: string): Promise<void> {
+    const base = { id: (deps.newId ?? randomId)(), name: 'model', args: String(value ?? '').slice(0, 200), origin: 'device' }
+    const send = (ev: Pick<CommandEvent, 'status' | 'text' | 'error'>) => emit('command', { ...base, ...ev })
+    if (!deps.setModel) { send({ status: 'failed', error: 'Switching the model is not available in this session' }); return }
+    const options = (): readonly ModelOption[] | undefined => { try { return deps.modelOptions?.() } catch { return undefined } }
+    if (!options() && deps.refreshCommands) await deps.refreshCommands().catch(() => undefined)
+    const opt = options()?.find(o => o.value === value)
+    if (!opt) { send({ status: 'failed', error: `Unknown model: ${base.args.slice(0, 60)}` }); return }
+    await settle(send, () => deps.setModel!(value), r => {
+      const deny = 'value' in r ? (r.value as { deny?: unknown } | undefined)?.deny : undefined
+      if ('err' in r) send({ status: 'failed', error: `Could not set the model: ${errText(r.err)}` })
+      else if (deny !== undefined) send({ status: 'failed', error: String(deny).slice(0, 500) })
+      else send({ status: 'done', text: `Set model to ${opt.label}` })
+      settled('model', value, 'value' in r && deny === undefined)
+    }, { waitMs: COMMAND_WAIT_MS, queue: false })
   }
 
   async function close(): Promise<void> {
@@ -382,14 +507,19 @@ export function makeControl(deps: ControlDeps) {
         case 'decide':
           asks.resolve(c.askId, { decision: c.decision, reason: c.reason, answers: c.answers ?? null })
           return
+        case 'command':
+          await runCommand(c.command ?? '', c.args ?? '', true)
+          return
+        case 'set_model':
+          await setModel(c.value ?? '')
+          return
         case 'plugin': {
+          // Plan 6 alias of `command`: limited to after/before/timeline, no list needed
           const command = c.command ?? ''
           const args = c.args ?? ''
           const bad = validatePluginCommand(command, args)
           if (bad) { info(bad); return }
-          if (!deps.runPlugin) { info('Plugin commands are not available in this session'); return }
-          const r = await deps.runPlugin(command, args).catch(err => ({ ok: false, error: String((err as Error)?.message ?? err) }))
-          if (!r.ok) info(r.error ?? `Could not run /${command}`)
+          await runCommand(command, args, false)
           return
         }
       }
@@ -399,6 +529,7 @@ export function makeControl(deps: ControlDeps) {
     turnStart(e: { turnId?: string; agentId?: string }): void {
       if (e.agentId !== undefined) return
       turnId = e.turnId
+      turnSeq++
       published = ''
       // a wake-up due now fired: this is its turn
       expire(now())
@@ -413,6 +544,8 @@ export function makeControl(deps: ControlDeps) {
         return
       }
       turnId = undefined
+      // device commands waiting for this turn's end: their wait for an answer (re)starts
+      for (const r of turnEnders.splice(0)) r()
       // what turn.complete published (events.ts reads background() for it)
       const bg = background()
       published = `${stateOf(bg)}:${bg.tasks}:${bg.wakeAt}`

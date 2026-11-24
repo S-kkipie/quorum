@@ -1,4 +1,4 @@
-import type { Command, Event, SessionInfo } from './proto.gen'
+import type { Command, Event, SessionCommand, SessionInfo } from './proto.gen'
 import { Version } from './proto.gen'
 
 export type LinkIO = {
@@ -87,6 +87,28 @@ export class Link {
       const ok = await this.connect(epoch)
       void this.loop(epoch, ok)
     })()
+  }
+
+  // the last command list (commands.ts): re-sent after every (re)connect, so a restarted daemon
+  // or a new session id (/clear) gets it too
+  private commands?: { commands: SessionCommand[]; hash: string }
+
+  /**
+   * The session's command list changed: POSTed to the daemon (session_commands toward the hub).
+   * Resolves true when the daemon took it (2xx); false offline (the next connect sends it) or
+   * when the POST failed, so the caller retries.
+   */
+  async setCommands(c: { commands: SessionCommand[]; hash: string }): Promise<boolean> {
+    this.commands = c
+    if (!this.conn || this.state !== 'connected' || !this.info) return false // the next connect sends it
+    const status = await this.postCommands()
+    return status >= 200 && status < 300
+  }
+
+  private postCommands(): Promise<number> {
+    if (!this.commands || !this.info) return Promise.resolve(0)
+    const id = this.info.id
+    return this.post(`/v1/sessions/${id}/commands`, { session: id, ...this.commands })
   }
 
   /** Merges fields into the session info and re-registers it (without waiting; skipped when offline). */
@@ -199,6 +221,7 @@ export class Link {
     this.lastLog = ''
     this.state = 'connected'
     if (this.infoRev !== rev) void this.pushRegister()
+    if (this.commands) void this.postCommands()
     this.daemonVersion = conn.version
     this.versionWarning = this.daemonVersion && this.daemonVersion !== Version
       ? `quorumd ${this.daemonVersion} does not match the mod version (${Version}): restart quorumd or update`

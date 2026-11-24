@@ -5,3 +5,4 @@ mod/node_modules
 .superpowers/
 internal/hub/web/dist/*
 !internal/hub/web/dist/.keep
+*.tsbuildinfo

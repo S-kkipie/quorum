@@ -29,7 +29,7 @@ func TestValidatePluginCommandSharedCases(t *testing.T) {
 
 func TestPluginCommandRoute(t *testing.T) {
 	f := newAppFx(t, "s1")
-	for _, body := range []string{`{"command":"rm","args":""}`, `{"command":"after","args":"a\nb"}`, `{"command":"timeline","args":"x"}`, `nope`} {
+	for _, body := range []string{`{"command":"rm","args":""}`, `{"command":"after","args":""}`, `{"command":"timeline"}`, `{"command":"after","args":"a\nb"}`, `{"command":"timeline","args":"x"}`, `nope`} {
 		code, _ := f.postBody("/api/sessions/s1/plugin", body)
 		require.Equal(t, 400, code, body)
 	}

@@ -6,7 +6,7 @@ vi.stubGlobal('localStorage', {
   setItem: (k: string, v: string) => { mem[k] = v },
   removeItem: (k: string) => { delete mem[k] },
 })
-import { apiFetch, setHub, getToken, pluginState, pluginCommand, seen } from './api'
+import { apiFetch, setHub, getToken, seen, listCommands, runCommand, setModel } from './api'
 
 beforeEach(() => { for (const k in mem) delete mem[k]; setHub('http://h:1/', 'tok') })
 
@@ -107,30 +107,6 @@ describe('createView', () => {
   })
 })
 
-describe('plugin helpers', () => {
-  it('pluginState GETs the plugin path and returns the raw value', async () => {
-    const f = vi.fn(async () => new Response('[{"text":"a"}]', { status: 200 }))
-    vi.stubGlobal('fetch', f)
-    await expect(pluginState('s 1', 'time-machine')).resolves.toEqual([{ text: 'a' }])
-    expect((f.mock.calls[0] as any)[0]).toBe('http://h:1/api/sessions/s%201/plugins/time-machine')
-  })
-  it('pluginState resolves null', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('null', { status: 200 })))
-    await expect(pluginState('s1', 'after')).resolves.toBe(null)
-  })
-  it('pluginCommand POSTs command and args; 204 resolves; errors carry the hub message', async () => {
-    const f = vi.fn(async () => new Response(null, { status: 204 }))
-    vi.stubGlobal('fetch', f)
-    await expect(pluginCommand('s1', 'after', 'fix it')).resolves.toBe(undefined)
-    const [u, init] = f.mock.calls[0] as any
-    expect(u).toBe('http://h:1/api/sessions/s1/plugin')
-    expect(init.method).toBe('POST')
-    expect(JSON.parse(init.body)).toEqual({ command: 'after', args: 'fix it' })
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('{"error":"/timeline takes undo, redo or a state number"}', { status: 400 })))
-    await expect(pluginCommand('s1', 'timeline', 'x')).rejects.toThrow('/timeline takes')
-  })
-})
-
 describe('seen', () => {
   it('posts the seen mark of the session', async () => {
     const f = vi.fn(async () => new Response(null, { status: 204 }))
@@ -140,5 +116,38 @@ describe('seen', () => {
     expect(u).toBe('http://h:1/api/sessions/a%20b/seen')
     expect(init.method).toBe('POST')
     expect(JSON.parse(init.body)).toEqual({ seq: 42 })
+  })
+})
+
+describe('slash commands', () => {
+  const sent = () => {
+    const f = vi.fn(async () => new Response(null, { status: 202 }))
+    vi.stubGlobal('fetch', f)
+    return f
+  }
+  it('listCommands reads the session list', async () => {
+    const f = vi.fn(async () => new Response(JSON.stringify({ session: 's/1', commands: [], hash: '' }), { status: 200 }))
+    vi.stubGlobal('fetch', f)
+    await expect(listCommands('s/1')).resolves.toEqual({ session: 's/1', commands: [], hash: '' })
+    expect((f.mock.calls[0] as any)[0]).toBe('http://h:1/api/sessions/s%2F1/commands')
+  })
+  it('runCommand posts command and args', async () => {
+    const f = sent()
+    await runCommand('s1', 'review', 'the diff')
+    const [u, init] = f.mock.calls[0] as any
+    expect(u).toBe('http://h:1/api/sessions/s1/command')
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(init.body)).toEqual({ command: 'review', args: 'the diff' })
+  })
+  it('runCommand surfaces the hub error', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'This command only works in the terminal.' }), { status: 400 })))
+    await expect(runCommand('s1', 'config', '')).rejects.toThrow('only works in the terminal')
+  })
+  it('setModel posts the value', async () => {
+    const f = sent()
+    await setModel('s1', 'opus')
+    const [u, init] = f.mock.calls[0] as any
+    expect(u).toBe('http://h:1/api/sessions/s1/model')
+    expect(JSON.parse(init.body)).toEqual({ value: 'opus' })
   })
 })

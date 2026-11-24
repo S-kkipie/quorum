@@ -12,6 +12,8 @@ export type ToolItem = {
 export type ReadsItem = { t: 'reads'; seq: number; files: string[]; title: string; state: ToolState; agent?: string; tools: ToolItem[] }
 export type AgentItem = { t: 'agent'; seq: number; id: string; type: string; description: string; status: string; answer?: string }
 export type ArtifactItem = { t: 'artifact'; seq: number; path: string; name: string; inBase: boolean }
+/** A slash command a device ran: one item per command id, with its latest status. */
+export type CommandItem = { t: 'command'; seq: number; id: string; name: string; args: string; origin: string; status: 'queued' | 'done' | 'failed'; text?: string; error?: string }
 export type TurnItem = { t: 'turn'; seq: number; tokens?: { in: number; out: number; cache: number }; model: string }
 /** How the Viewer asks for a file's link: an image pasted in the terminal, or an image Claude read. */
 export type OpenOpts = { images: true } | { read: true }
@@ -36,6 +38,7 @@ export type Item =
   | ReadsItem
   | AgentItem
   | ArtifactItem
+  | CommandItem
 
 const VIEWABLE = new Set(['html', 'htm', 'md', 'svg', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'pdf'])
 const EDIT_VIEWABLE = new Set(['html', 'htm', 'svg'])
@@ -222,6 +225,7 @@ export function buildTimeline(events: Event[], base: string): Item[] {
   const flat: Item[] = []
   const tools = new Map<string, ToolItem>()
   const agents = new Map<string, AgentItem>()
+  const commands = new Map<string, CommandItem>()
   const settle = (t: ToolItem) => { const a = artifactFor(t, base); if (a) flat.push(a) }
 
   for (const e of events) {
@@ -265,6 +269,17 @@ export function buildTimeline(events: Event[], base: string): Item[] {
         const a: AgentItem = { t: 'agent', seq: e.seq, id: d.id, type: d.type ?? '', description: d.description ?? '', status: 'running' }
         agents.set(d.id, a)
         flat.push(a)
+        break
+      }
+      case 'command': {
+        if (typeof d.id !== 'string' || !d.id || typeof d.name !== 'string') break
+        const status: CommandItem['status'] = d.status === 'done' || d.status === 'failed' ? d.status : 'queued'
+        const patch = { status, text: str(d.text), error: str(d.error) }
+        const cur = commands.get(d.id)
+        if (cur) { Object.assign(cur, patch); break }
+        const c: CommandItem = { t: 'command', seq: e.seq, id: d.id, name: d.name, args: typeof d.args === 'string' ? d.args : '', origin: str(d.origin) ?? 'device', ...patch }
+        commands.set(d.id, c)
+        flat.push(c)
         break
       }
       case 'agent_end': {

@@ -77,9 +77,58 @@ type SessionInfo struct {
 	ImagesDir string `json:"imagesDir"`
 	// Background is what was left pending when the last main turn ended (zero when nothing).
 	Background BackgroundInfo `json:"background"`
+	// Effort is the reasoning effort of the last main turn (the Stop hook's effort.level), or the one a
+	// device just set with /effort; empty until known or on a model without effort.
+	Effort string `json:"effort"`
+	// ModelOptions are the models /model takes in this session (the /config Model row's options, labelled
+	// by the mod), EffortOptions the effort levels /effort takes. Both empty with an older mod.
+	ModelOptions  []ModelOption `json:"modelOptions"`
+	EffortOptions []string      `json:"effortOptions"`
 	// Unread is computed by the hub (whatever the mod sends is ignored): the session is idle and its
 	// last turn_end is newer than its seen mark ("done, unread"). background/working/needs_you/closed never are.
 	Unread bool `json:"unread"`
+}
+
+// ModelOption is one model /model takes: Value is what is sent (`/model <value>`).
+type ModelOption struct {
+	Value       string `json:"value"`
+	Label       string `json:"label"`
+	Description string `json:"description"`
+}
+
+// SessionCommand is one slash command a session can run, as its mod reports it ($.command.list()).
+// Source is Claude Code's (builtin|plugin|user|mcp); Group is how the app lists it
+// (session|skill|plugin|mcp). TerminalOnly: an interactive built-in (picker, dialog, pane) a
+// device may not run. Some commands are terminal-only only without arguments (bare /model,
+// /after, /timeline): that is decided when one runs, not by this flag.
+type SessionCommand struct {
+	Name         string `json:"name"`
+	Description  string `json:"description"`
+	Source       string `json:"source"`
+	Plugin       string `json:"plugin"`
+	Group        string `json:"group"`
+	TerminalOnly bool   `json:"terminalOnly"`
+}
+
+// SessionCommands is the payload of session_commands (daemon->hub) and of the mod's
+// POST /v1/sessions/{id}/commands. Hash identifies the list: the mod re-sends it only when it changes.
+type SessionCommands struct {
+	Session  string           `json:"session"`
+	Commands []SessionCommand `json:"commands"`
+	Hash     string           `json:"hash"`
+}
+
+// CommandEvent is the data of a `command` event: a slash command a device ran in the session.
+// Status queued (a turn was running: it runs when the turn ends), then done or failed. Text is the
+// command's output (at most 8,000 chars), Error the English reason it failed.
+type CommandEvent struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Args   string `json:"args"`
+	Origin string `json:"origin"` // device
+	Status string `json:"status"` // queued|done|failed
+	Text   string `json:"text,omitempty"`
+	Error  string `json:"error,omitempty"`
 }
 
 // BackgroundInfo is a session's pending background work: Tasks live background tasks and
@@ -150,6 +199,8 @@ const (
 	KindInfo       EventKind = "info"
 	// KindTicket is emitted by the mod with /quorum ticket <id>: data {ticket:"<externalId>"}; empty = unlink.
 	KindTicket EventKind = "ticket"
+	// KindCommand data: CommandEvent; one per status change of a slash command run from a device.
+	KindCommand EventKind = "command"
 )
 
 type Event struct {
@@ -214,18 +265,25 @@ type AgentEnd struct {
 
 // Command is an order addressed to a session.
 type Command struct {
-	Type     string            `json:"type"` // prompt|decide|abort|close|plugin
+	// command: run the slash command Command with Args (it must be in the session's reported list and
+	// not terminal-only); plugin: the Plan 6 alias, limited to after|before|timeline; set_model: switch
+	// the session's model to Value (one of its ModelOptions) through the /config Model row, which asks
+	// no question (/model may open a confirm dialog). Effort has no such path: it is read-only from devices.
+	Type     string            `json:"type"` // prompt|decide|abort|close|command|plugin|set_model
 	Text     string            `json:"text"`
 	Mode     string            `json:"mode"` // now|queue|interrupt
 	AskID    string            `json:"askId"`
 	Decision string            `json:"decision"` // allow|deny
 	Reason   string            `json:"reason"`
 	Answers  map[string]string `json:"answers"`
-	Command  string            `json:"command"` // plugin: after|before|timeline
-	Args     string            `json:"args"`    // plugin: everything after the command name
+	Command  string            `json:"command"` // command/plugin: the name without the slash
+	Args     string            `json:"args"`    // command/plugin: everything after the command name
+	Value    string            `json:"value"`   // set_model: the model option's value
 }
 
 // Envelope is the WS wrapper daemon<->hub and hub<->app.
+// session_commands (daemon->hub): Payload SessionCommands; sent when a session's command list changes and
+// again for every known session after each hello.
 // Type: hello|session_upsert|session_gone|session_removed|event|events|command|launch|launch_result|machine_status|backfill|backfill_result|ack|project_upsert|tickets|session_ticket|proposal_upsert|workspace_upsert|workspace_gone|project_gone|usage_upsert|usage_gone|attention|session_seen
 // usage_upsert (hub->app): Payload AccountUsage, when an account's usage changes; GET /api/usage lists them.
 // usage_gone (hub->app): Payload {key}; a machine/alias fallback row was superseded by the account's real key.

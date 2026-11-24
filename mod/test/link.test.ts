@@ -413,3 +413,38 @@ test('update() during the first register in flight causes exactly one follow-up 
   expect(f.posts.filter(p => p.url.endsWith('/register'))).toHaveLength(2)
   link.stop()
 })
+
+// Plan 8: the command list goes to the daemon at once and again after every (re)connect.
+test('setCommands posts the list; a new id (adoptId) gets it again', async () => {
+  const f = fake()
+  const link = new Link(f.io)
+  const cmds = { commands: [{ name: 'compact', description: '', source: 'builtin', plugin: '', group: 'session', terminalOnly: false }], hash: 'h1' }
+  link.setCommands(cmds) // before start: kept for the connect
+  await link.start(INFO)
+  await tick()
+  const sent = () => f.posts.filter(p => p.url.endsWith('/commands'))
+  expect(sent().map(p => p.url)).toEqual(['http://127.0.0.1:4444/v1/sessions/s1/commands'])
+  expect(sent()[0]!.body).toEqual({ session: 's1', ...cmds })
+  link.setCommands({ ...cmds, hash: 'h2' })
+  await tick()
+  expect(sent().length).toBe(2)
+  expect(sent()[1]!.body.hash).toBe('h2')
+  link.adoptId('s2')
+  await tick()
+  expect(sent().map(p => p.url).at(-1)).toBe('http://127.0.0.1:4444/v1/sessions/s2/commands')
+  expect(sent().at(-1)!.body.session).toBe('s2')
+  link.stop()
+})
+
+test('setCommands resolves true only when the daemon took the list (2xx); false offline or on a failed POST', async () => {
+  const f = fake()
+  const link = new Link(f.io)
+  const cmds = { commands: [], hash: 'h1' }
+  expect(await link.setCommands(cmds)).toBe(false) // not connected yet
+  await link.start(INFO)
+  await tick()
+  expect(await link.setCommands({ ...cmds, hash: 'h2' })).toBe(true)
+  f.setFetch(async () => ({ status: 500 }))
+  expect(await link.setCommands({ ...cmds, hash: 'h3' })).toBe(false)
+  link.stop()
+})

@@ -66,6 +66,12 @@ CREATE TABLE IF NOT EXISTS terminal_audit (
 CREATE TABLE IF NOT EXISTS away (
 	session TEXT PRIMARY KEY
 );
+CREATE TABLE IF NOT EXISTS session_commands (
+	session_id TEXT PRIMARY KEY,
+	hash TEXT NOT NULL DEFAULT '',
+	commands TEXT NOT NULL DEFAULT '[]',
+	at INTEGER NOT NULL DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS account_usage (
 	account_key TEXT PRIMARY KEY,
 	alias TEXT NOT NULL DEFAULT '',
@@ -152,7 +158,9 @@ func migrate(s *Store) error {
 		// sessions start with every mark at 0: nothing becomes unread on upgrade.
 		{"background", "TEXT NOT NULL DEFAULT '{}'"}, {"seen_seq", "INTEGER NOT NULL DEFAULT 0"},
 		{"end_seq", "INTEGER NOT NULL DEFAULT 0"}, {"attention_end_seq", "INTEGER NOT NULL DEFAULT 0"},
-		{"needs_you_announced", "INTEGER NOT NULL DEFAULT 0"}} {
+		{"needs_you_announced", "INTEGER NOT NULL DEFAULT 0"},
+		{"model_cfg", "TEXT NOT NULL DEFAULT '{}'"}, // Plan 8: effort, model options, effort options
+	} {
 		if err := s.db.QueryRow(`SELECT count(*) FROM pragma_table_info('sessions') WHERE name=?`, c[0]).Scan(&n); err != nil {
 			return err
 		}

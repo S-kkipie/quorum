@@ -1,4 +1,4 @@
-import type { AccountUsage, Checkout, Conversation, Event, Project, Proposal, SessionInfo, SessionState, Workspace } from '../proto.gen'
+import type { AccountUsage, Checkout, Conversation, Event, ModelOption, Project, Proposal, SessionCommand, SessionCommands, SessionInfo, SessionState, Workspace } from '../proto.gen'
 import { addEvents, initialState, setConversations, setProjectsData, setUsage, type AppState } from '../lib/store'
 import type { Machine } from '../lib/api'
 
@@ -25,7 +25,7 @@ const checkout = (id: string, projectId: string, m: string, root: string): Check
 const session = (id: string, o: Partial<SessionInfo> = {}): SessionInfo => ({
   id, previousId: '', machine: 'vps-1', name: '', cwd: '/work/app', root: '/work/app', model: 'claude-opus-4', role: 'work', state: 'idle',
   contextPct: 40, startedAt: NOW - 60 * MIN, updatedAt: NOW - MIN, transcriptPath: '', recap: '', repoUrl: '', branch: 'main', projectId: '',
-  launchReq: '', herdrPane: '', herdrWorkspace: '', account: '', accountKey: '', configDir: '', plugins: [], contextEstimate: false, tokens: { in: 0, out: 0, cache: 0 }, rateLimits: [], usageAt: 0, imagesDir: '', background: { tasks: 0, wakeAt: 0 }, unread: false, ...o,
+  launchReq: '', herdrPane: '', herdrWorkspace: '', account: '', accountKey: '', configDir: '', plugins: [], contextEstimate: false, tokens: { in: 0, out: 0, cache: 0 }, rateLimits: [], usageAt: 0, imagesDir: '', background: { tasks: 0, wakeAt: 0 }, unread: false, effort: '', modelOptions: [], effortOptions: [], ...o,
 })
 // Usage windows are relative to the real clock at fixture build (the strip compares them with
 // Date.now()): five_hour resets within 0-5 h, seven_day within 0-7 d; ageMin > 60 is a stale report.
@@ -93,6 +93,55 @@ function worstEvents(id: string, root: string): Event[] {
   ]
 }
 
+// --- slash commands, models and effort (Plan 8) ---
+
+const cmd = (name: string, group: string, description: string, o: Partial<SessionCommand> = {}): SessionCommand => ({
+  name, description, source: group === 'session' ? 'builtin' : group === 'mcp' ? 'mcp' : group === 'skill' ? 'user' : 'plugin', plugin: '', group, terminalOnly: false, ...o,
+})
+/** Every group, terminal-only rows, bare-only after/timeline, long names and descriptions. */
+const COMMANDS: SessionCommand[] = [
+  cmd('clear', 'session', 'Clear the conversation history and free up context'),
+  cmd('compact', 'session', 'Summarize the conversation and free context'),
+  cmd('recap', 'session', 'Summarize what happened in this session'),
+  cmd('model', 'session', 'Switch the model', { terminalOnly: true }),
+  cmd('effort', 'session', 'Set the reasoning effort', { terminalOnly: true }),
+  cmd('config', 'session', 'Open the settings', { terminalOnly: true }),
+  cmd('resume', 'session', 'Resume a previous conversation', { terminalOnly: true }),
+  cmd('init', 'session', 'Initialize a CLAUDE.md file with codebase documentation'),
+  cmd('brainstorming', 'skill', 'You MUST use this before any creative work', { source: 'plugin', plugin: 'superpowers' }),
+  cmd('superpowers:systematic-debugging', 'skill', 'Use when encountering any bug, test failure, or unexpected behavior', { source: 'plugin', plugin: 'superpowers' }),
+  cmd('agent-browser', 'skill', 'Drive a real, visible browser for end-to-end checks'),
+  cmd('an-extraordinarily-long-skill-name-that-keeps-going-and-going-for-the-layout', 'skill', padTo('Stress test: a description that is far longer than one line of a phone screen and keeps going so the row must truncate it cleanly ', 260)),
+  cmd('after', 'plugin', 'Queue a task to run after the current turn', { plugin: 'after' }),
+  cmd('timeline', 'plugin', 'Jump to a saved state of this session', { plugin: 'time-machine' }),
+  cmd('Überprüfung-日本語', 'plugin', 'Non-Latin command name', { plugin: 'i18n-tools' }),
+  cmd('mcp__database__run_query_against_the_reporting_replica', 'mcp', 'Run a read-only SQL query'),
+  cmd('mcp__github__create_issue', 'mcp', ''),
+]
+const hugeCommands = (): SessionCommand[] => [
+  ...COMMANDS,
+  ...Array.from({ length: 120 }, (_, i) => cmd(`plugin-${String(i).padStart(3, '0')}:command-${i}`, (['skill', 'plugin', 'mcp'] as const)[i % 3], `Generated command number ${i + 1}`, { plugin: `plugin-${String(i).padStart(3, '0')}` })),
+]
+const MODELS: ModelOption[] = [
+  { value: 'default', label: 'Default', description: 'The recommended model for this account' },
+  { value: 'opus', label: 'Opus', description: 'Most capable, for complex work' },
+  { value: 'opus[1m]', label: 'Opus (1M context)', description: 'Most capable, for complex work, 1M-token context' },
+  { value: 'sonnet', label: 'Sonnet', description: 'Fast and capable, for everyday work' },
+  { value: 'haiku', label: 'Haiku', description: 'Fastest, for quick answers' },
+  { value: 'a-custom-model-alias-with-an-unusually-long-name', label: padTo('A custom model alias with an unusually long label ', 80), description: padTo('Long description of a custom model that does not fit ', 140) },
+]
+const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
+const withCommands = (s: AppState, ids: string[], list: () => SessionCommand[]): AppState => ({
+  ...s, commands: { ...s.commands, ...Object.fromEntries(ids.map((id) => [id, { session: id, commands: list(), hash: 'h-' + id }])) },
+})
+/** Command cards in every status: queued, done (short and long output), failed. */
+const commandEvents = (id: string): Event[] => [
+  ev(id, 'command', { id: 'c1', name: 'model', args: 'sonnet', origin: 'device', status: 'done', text: 'Set model to Sonnet' }),
+  ev(id, 'command', { id: 'c2', name: 'insights', args: '', origin: 'device', status: 'done', text: Array.from({ length: 14 }, (_, i) => `Insight ${i + 1}: ${padTo('a long observation about the session ', 90)}`).join('\n') }),
+  ev(id, 'command', { id: 'c3', name: 'init', args: '', origin: 'device', status: 'failed', error: 'Waiting for an answer in the terminal.' }),
+  ev(id, 'command', { id: 'c4', name: 'an-extraordinarily-long-skill-name-that-keeps-going-and-going-for-the-layout', args: padTo('with arguments that are also long enough to wrap ', 160), origin: 'device', status: 'queued' }),
+]
+
 const conversations = (n: number, open = false, tag = 'c'): Conversation[] =>
   Array.from({ length: n }, (_, i) => ({
     id: `${tag}-${String(i).padStart(4, '0')}`,
@@ -144,12 +193,20 @@ function worst(): AppState {
   sessions[2].background = { tasks: 3, wakeAt: NOW + 30 * MIN }
   sessions[5].background = { tasks: 0, wakeAt: NOW + 90 * MIN }
   sessions[6].unread = true
-  sessions.forEach((x) => { if (x.state !== 'closed') x.plugins = ['after', 'time-machine'] })
+  sessions.forEach((x, i) => {
+    if (x.state === 'closed') return
+    x.plugins = ['after', 'time-machine']
+    x.model = i === 1 ? 'claude-opus-4-6[1m]' : 'claude-opus-5-5'
+    x.modelOptions = MODELS
+    x.effortOptions = EFFORTS
+    x.effort = i === 1 ? 'xhigh' : 'high'
+  })
   sessions.push(session('s6-unassigned', { state: 'working', projectId: '', root: '/work/scratch', cwd: '/work/scratch', name: 'scratch' }))
   const events: Record<string, Event[]> = {}
-  for (const x of sessions.slice(0, 2)) events[x.id] = worstEvents(x.id, x.root)
-  return finish({ machines, workspaces, projects, checkouts, sessions, proposals: [proposal('pr1', 't1'), proposal('pr2', 't2'), proposal('pr3', 't3')], convs: () => conversations(40, true), events,
-    usage: [usage('a'.repeat(16), 'work', 97, 41, 1, 25, 30), usage('b'.repeat(16), 'personal-test', 58, 22, 2, 260, 150), usage('c'.repeat(16), padTo('an-extremely-long-account-alias-', 60), 12, 85, 180)] })
+  for (const x of sessions.slice(0, 2)) events[x.id] = [...worstEvents(x.id, x.root), ...commandEvents(x.id)]
+  return withCommands(finish({ machines, workspaces, projects, checkouts, sessions, proposals: [proposal('pr1', 't1'), proposal('pr2', 't2'), proposal('pr3', 't3')], convs: () => conversations(40, true), events,
+    usage: [usage('a'.repeat(16), 'work', 97, 41, 1, 25, 30), usage('b'.repeat(16), 'personal-test', 58, 22, 2, 260, 150), usage('c'.repeat(16), padTo('an-extremely-long-account-alias-', 60), 12, 85, 180)] }),
+  sessions.filter((x) => x.state !== 'closed' && x.id !== 's6-unassigned').map((x) => x.id), () => COMMANDS)
 }
 
 function empty(): AppState {
@@ -175,10 +232,11 @@ function huge(): AppState {
   const sessions = Array.from({ length: 200 }, (_, i) => session(`h${String(i).padStart(3, '0')}-live`, {
     machine: names[i % 5], projectId: 'p1', state: (['working', 'needs_you', 'background', 'idle'] as SessionState[])[i % 4], unread: i % 8 === 3, background: i % 4 === 2 ? { tasks: (i % 3) + 1, wakeAt: i % 8 === 2 ? NOW + 20 * MIN : 0 } : { tasks: 0, wakeAt: 0 }, recap: `Live session ${i + 1}`, updatedAt: NOW - i * MIN,
   }))
-  return finish({
+  for (const x of sessions) Object.assign(x, { model: 'claude-sonnet-5-5', modelOptions: MODELS, effortOptions: EFFORTS, effort: 'medium' })
+  return withCommands(finish({
     machines, workspaces: [workspace('w1', 'Platform', '#2563eb')], projects: [project('p1', 'w1', 'Busy project')], checkouts, sessions,
     convs: (m) => (m === 'vps-1' ? conversations(1000, false, 'big') : []),
-  })
+  }), sessions.map((x) => x.id), hugeCommands)
 }
 
 export function fixtureState(mode: FixtureMode): AppState {
@@ -192,25 +250,8 @@ export function fixtureConversations(mode: FixtureMode): (machine: string, root:
   return async (m, root) => s.conversations[m + '\u0000' + root] ?? []
 }
 
-/** Replacement for pluginState: an after queue for the sessions that list the plugin. */
-export function fixturePluginState(mode: FixtureMode, id: string, plugin: string): unknown {
-  if (plugin === 'time-machine') return timelineFixture(mode)
-  if (plugin !== 'after') return null
-  const items = (n: number, long: boolean) => Array.from({ length: n }, (_, i) => ({
-    id: i + 2, createdAt: NOW - (n - i) * MIN,
-    text: long ? padTo(`Task ${i + 1}: refactor the reconciliation layer and ${LONG_PATH} `, 40 + i * 40) : `Task ${i + 1}`,
-  }))
-  if (mode === 'worst') return { items: items(12, true), running: { id: 1, text: padTo('Running now: migrate every call site of the legacy client ', 160) }, paused: false, done: [] }
-  if (mode === 'one') return { items: [{ id: 2, text: 'Run the tests', createdAt: NOW }], running: null, paused: false, done: [] }
-  return null
-}
-
-/** A time-machine `session:<sid>` state: 30 states with long labels and paths in worst, a single start state in one. */
-function timelineFixture(mode: string): unknown {
-  const st = (id: number, label: string, files: object[], parent: number | null) => ({ id, kind: id === 1 ? 'start' : 'turn', label, at: NOW - (31 - id) * 20 * MIN, commit: 'c' + id, tree: 't' + id, head: null, parent, files, prompt: label })
-  if (mode === 'one') return { at: NOW, cursor: 1, states: [st(1, 'start of the session', [], null)] }
-  if (mode !== 'worst') return null
-  const states = Array.from({ length: 30 }, (_, i) => st(i + 1, i === 0 ? 'start of the session' : padTo(`Turn ${i}: rework the reconciliation layer `, 30 + i * 8),
-    i === 0 ? [] : Array.from({ length: 1 + (i % 6) }, (_, j) => ({ path: j === 0 ? LONG_PATH + '/file.ts' : `src/part${j}.ts`, status: 'MAD'[j % 3], added: i * 7 + j, removed: i + j })), i === 0 ? null : i))
-  return { at: NOW, cursor: 15, states }
+/** Replacement for listCommands: the fixture's own list, or an empty one with no hash (an older mod). */
+export function fixtureCommands(mode: FixtureMode): (id: string) => Promise<SessionCommands> {
+  const s = fixtureState(mode)
+  return async (id) => s.commands[id] ?? { session: id, commands: [], hash: '' }
 }

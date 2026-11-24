@@ -122,6 +122,13 @@ func linkOnce(ctx context.Context, cfg Config, reg *Registry, host *Host) error 
 	if err := writeEnv(ctx, ws, proto.Envelope{Type: "hello", Machine: cfg.Machine, Payload: p}); err != nil {
 		return err
 	}
+	// what was sent while disconnected was dropped: the sessions' command lists go again
+	for _, sc := range reg.AllCommands() {
+		cp, _ := json.Marshal(sc)
+		if err := writeEnv(ctx, ws, proto.Envelope{Type: "session_commands", Machine: cfg.Machine, Session: sc.Session, Payload: cp}); err != nil {
+			return err
+		}
+	}
 
 	cctx, cancelConn := context.WithCancel(ctx)
 	defer cancelConn()

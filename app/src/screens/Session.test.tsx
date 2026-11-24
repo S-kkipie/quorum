@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import Session from './Session'
 import { initialState } from '../lib/store'
 import { sess } from '../lib/fixtures.test-util'
@@ -176,27 +176,182 @@ describe('Session: account usage', () => {
   })
 })
 
-describe('Session: plugin bar', () => {
-  it('Timeline and Queue share one row; the queue panel opens below it', async () => {
-    const f = vi.fn(async (u: string) => {
-      if (String(u).includes('/plugins/after')) return new Response(JSON.stringify({ items: [{ id: 1, text: 'task one' }, { id: 2, text: 'task two' }] }))
-      if (String(u).includes('/plugins/time-machine')) return new Response(JSON.stringify({ cursor: 1, states: [{ id: 1, label: 'start', at: 1, files: [] }] }))
-      return new Response('[]')
-    })
+describe('Session: no plugin bar', () => {
+  it('the Timeline / Queue row is gone', () => {
+    const s = { ...st(), sessions: { a: sess('a', { plugins: ['after', 'time-machine'] }) } }
+    render(<Session state={s} id="a" onEvents={vi.fn()} />)
+    expect(screen.queryByTestId('plugin-bar')).toBeNull()
+    expect(screen.queryByRole('button', { name: /^Timeline/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^Queue/ })).toBeNull()
+  })
+})
+
+const OPTS = [
+  { value: 'default', label: 'Default', description: 'The recommended model' },
+  { value: 'opus', label: 'Opus', description: 'Most capable, for complex work' },
+  { value: 'sonnet', label: 'Sonnet', description: 'Fast and capable' },
+]
+const withModel = (o: Partial<ReturnType<typeof sess>> = {}) => {
+  const s = st()
+  s.sessions.a = sess('a', { account: 'work', model: 'claude-opus-5-5', effort: 'high', modelOptions: OPTS, effortOptions: ['low', 'medium', 'high', 'xhigh', 'max'], ...o })
+  return s
+}
+const cmdEv = (seq: number, d: any) => ({ seq, session: 'a', ts: Date.now(), kind: 'command', data: { origin: 'device', args: '', ...d } })
+
+describe('Session: model and effort', () => {
+  it('chips after the account chip follow the session model and effort', () => {
+    render(<Session state={withModel()} id="a" onEvents={vi.fn()} />)
+    const m = screen.getByRole('button', { name: 'Model: Opus 5.5' })
+    const e = screen.getByRole('button', { name: 'Effort: high' })
+    expect(m.textContent).toContain('Opus 5.5')
+    expect(e.textContent).toContain('effort: high')
+    const acct = screen.getByText('work')
+    expect(acct.compareDocumentPosition(m) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+  it('hidden when the session has no options (older mod)', () => {
+    render(<Session state={withModel({ modelOptions: [], effortOptions: [] })} id="a" onEvents={vi.fn()} />)
+    expect(screen.queryByRole('button', { name: /^Model:/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^Effort:/ })).toBeNull()
+  })
+  it('the sheet lists the models with the current one checked; picking one sets it', async () => {
+    const f = vi.fn(async (_u: string, _i?: RequestInit) => new Response('', { status: 202 }))
     vi.stubGlobal('fetch', f)
     try {
-      const s = { ...st(), sessions: { a: sess('a', { plugins: ['after', 'time-machine'] }) } }
+      render(<Session state={withModel()} id="a" onEvents={vi.fn()} />)
+      fireEvent.click(screen.getByRole('button', { name: 'Model: Opus 5.5' }))
+      const radios = await screen.findAllByRole('radio')
+      expect(radios.map((r) => r.getAttribute('aria-checked'))).toEqual(['false', 'true', 'false'])
+      expect(screen.getByText('Most capable, for complex work')).toBeTruthy()
+      fireEvent.click(screen.getByRole('radio', { name: /Sonnet/ }))
+      await waitFor(() => expect(f.mock.calls.some(([u]) => String(u).endsWith('/api/sessions/a/model'))).toBe(true))
+      const call = f.mock.calls.find(([u]) => String(u).endsWith('/model'))!
+      expect(JSON.parse(String(call[1]?.body))).toEqual({ value: 'sonnet' })
+      await waitFor(() => expect(screen.queryByRole('radio')).toBeNull())
+    } finally {
+      vi.stubGlobal('fetch', vi.fn(async () => new Response('[]')))
+    }
+  })
+  it('effort is read-only from the phone: the sheet says to use the terminal', async () => {
+    render(<Session state={withModel()} id="a" onEvents={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Effort: high' }))
+    expect(await screen.findByText('Change effort in the terminal (/effort).')).toBeTruthy()
+    const levels = screen.getAllByRole('button', { name: /^(low|medium|high|xhigh|max)$/ })
+    expect(levels).toHaveLength(5)
+    for (const l of levels) expect((l as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.getByRole('button', { name: 'high' }).getAttribute('aria-pressed')).toBe('true')
+  })
+  it('a queued model command shows a spinner on the chip; the chip text waits for the mod', () => {
+    const s = withModel()
+    s.events = { a: [cmdEv(1, { id: 'm1', name: 'model', args: 'sonnet', status: 'queued' })] }
+    const r = render(<Session state={s} id="a" onEvents={vi.fn()} />)
+    const chip = screen.getByRole('button', { name: 'Model: Opus 5.5' })
+    expect(chip.getAttribute('aria-busy')).toBe('true')
+    const done = { ...s, events: { a: [...s.events.a, cmdEv(2, { id: 'm1', name: 'model', args: 'sonnet', status: 'done', text: 'Set model to Sonnet' })] } }
+    r.rerender(<Session state={done} id="a" onEvents={vi.fn()} />)
+    expect(screen.getByRole('button', { name: 'Model: Opus 5.5' }).getAttribute('aria-busy')).toBe('false')
+    const moved = { ...done, sessions: { a: { ...done.sessions.a, model: 'claude-sonnet-5-5' } } }
+    r.rerender(<Session state={moved} id="a" onEvents={vi.fn()} />)
+    expect(screen.getByRole('button', { name: 'Model: Sonnet 5.5' })).toBeTruthy()
+  })
+})
+
+describe('Session: model chip', () => {
+  it('shows the exact option label when the model is an option value', () => {
+    render(<Session state={withModel({ model: 'opus', modelOptions: [...OPTS, { value: 'opus[1m]', label: 'Opus (1M context)', description: '' }] })} id="a" onEvents={vi.fn()} />)
+    expect(screen.getByRole('button', { name: 'Model: Opus' })).toBeTruthy()
+    cleanup()
+    render(<Session state={withModel({ model: 'opus[1m]', modelOptions: [...OPTS, { value: 'opus[1m]', label: 'Opus (1M context)', description: '' }] })} id="a" onEvents={vi.fn()} />)
+    expect(screen.getByRole('button', { name: 'Model: Opus (1M context)' })).toBeTruthy()
+  })
+  it('a full model id still reads as its short name (not the family option label)', () => {
+    render(<Session state={withModel({ model: 'claude-sonnet-5-5' })} id="a" onEvents={vi.fn()} />)
+    expect(screen.getByRole('button', { name: 'Model: Sonnet 5.5' })).toBeTruthy()
+  })
+  it('an old queued model command (over 2 min) does not keep the chip spinning', () => {
+    const s = withModel()
+    s.events = { a: [{ ...cmdEv(1, { id: 'm1', name: 'model', args: 'sonnet', status: 'queued' }), ts: Date.now() - 3 * 60_000 }] }
+    render(<Session state={s} id="a" onEvents={vi.fn()} />)
+    expect(screen.getByRole('button', { name: 'Model: Opus 5.5' }).getAttribute('aria-busy')).toBe('false')
+  })
+  it('a fresh queued model command spins until it is 2 min old', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    try {
+      const s = withModel()
+      s.events = { a: [{ ...cmdEv(1, { id: 'm1', name: 'model', args: 'sonnet', status: 'queued' }), ts: Date.now() }] }
       render(<Session state={s} id="a" onEvents={vi.fn()} />)
-      const tl = await screen.findByRole('button', { name: 'Timeline (1)' })
-      const q = await screen.findByRole('button', { name: 'Queue (2)' })
-      expect(tl.textContent).toBe('Timeline1')
-      expect(q.textContent).toBe('Queue2')
-      const row = screen.getByTestId('plugin-bar')
-      expect(row.contains(tl) && row.contains(q)).toBe(true)
-      expect(tl.className).toMatch(/\bmin-h-11\b/)
-      expect(q.className).toMatch(/\bmin-h-11\b/)
-      fireEvent.click(q)
-      expect(await screen.findByText('task one')).toBeTruthy()
+      const chip = () => screen.getByRole('button', { name: 'Model: Opus 5.5' })
+      expect(chip().getAttribute('aria-busy')).toBe('true')
+      act(() => { vi.advanceTimersByTime(2 * 60_000 + 10) })
+      expect(chip().getAttribute('aria-busy')).toBe('false')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+  it('a pick with no answer from the mod stops spinning after 20 s', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const f = vi.fn(async (_u: string, _i?: RequestInit) => new Response('', { status: 202 }))
+    vi.stubGlobal('fetch', f)
+    try {
+      render(<Session state={withModel()} id="a" onEvents={vi.fn()} />)
+      fireEvent.click(screen.getByRole('button', { name: 'Model: Opus 5.5' }))
+      fireEvent.click(screen.getByRole('radio', { name: /Sonnet/ }))
+      const chip = () => screen.getByRole('button', { name: 'Model: Opus 5.5' })
+      expect(chip().getAttribute('aria-busy')).toBe('true')
+      act(() => { vi.advanceTimersByTime(19_000) })
+      expect(chip().getAttribute('aria-busy')).toBe('true')
+      act(() => { vi.advanceTimersByTime(1_100) })
+      expect(chip().getAttribute('aria-busy')).toBe('false')
+    } finally {
+      vi.useRealTimers()
+      vi.stubGlobal('fetch', vi.fn(async () => new Response('[]')))
+    }
+  })
+  it('a failed set_model request stops the spinner and shows the error', async () => {
+    const f = vi.fn(async (u: string, _i?: RequestInit) =>
+      String(u).endsWith('/model') ? new Response('model switch failed', { status: 500 }) : new Response('[]'))
+    vi.stubGlobal('fetch', f)
+    try {
+      render(<Session state={withModel()} id="a" onEvents={vi.fn()} />)
+      fireEvent.click(screen.getByRole('button', { name: 'Model: Opus 5.5' }))
+      fireEvent.click(await screen.findByRole('radio', { name: /Sonnet/ }))
+      expect(await screen.findByRole('alert')).toBeTruthy()
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Model: Opus 5.5' }).getAttribute('aria-busy')).toBe('false'))
+    } finally {
+      vi.stubGlobal('fetch', vi.fn(async () => new Response('[]')))
+    }
+  })
+})
+
+describe('Session: commands', () => {
+  it('re-reads the command list after the live feed reconnects', async () => {
+    const list = { session: 'a', commands: [], hash: 'h' }
+    const f = vi.fn(async (u: string) => new Response(String(u).endsWith('/commands') ? JSON.stringify(list) : '[]'))
+    vi.stubGlobal('fetch', f)
+    try {
+      const onCommands = vi.fn()
+      const s = { ...st(), commandsRev: { a: 2 } }
+      const r = render(<Session state={s} id="a" onEvents={vi.fn()} onCommands={onCommands} reconnects={0} />)
+      await waitFor(() => expect(onCommands).toHaveBeenCalledTimes(1))
+      const reads = () => f.mock.calls.filter(([u]) => String(u).endsWith('/commands')).length
+      expect(reads()).toBe(1)
+      const s2 = { ...s, commandsRev: { a: 3 } }
+      r.rerender(<Session state={s2} id="a" onEvents={vi.fn()} onCommands={onCommands} reconnects={1} />)
+      await waitFor(() => expect(onCommands).toHaveBeenCalledTimes(2))
+      expect(reads()).toBe(2)
+      // the revision is the one read before that request
+      expect(onCommands.mock.calls[1][1]).toBe(3)
+    } finally {
+      vi.stubGlobal('fetch', vi.fn(async () => new Response('[]')))
+    }
+  })
+  it('reads the command list on open with the revision taken before the request', async () => {
+    const list = { session: 'a', commands: [{ name: 'compact', description: '', source: 'builtin', plugin: '', group: 'session', terminalOnly: false }], hash: 'h' }
+    vi.stubGlobal('fetch', vi.fn(async (u: string) => new Response(String(u).endsWith('/commands') ? JSON.stringify(list) : '[]')))
+    try {
+      const s = { ...st(), commandsRev: { a: 4 } }
+      const onCommands = vi.fn()
+      render(<Session state={s} id="a" onEvents={vi.fn()} onCommands={onCommands} />)
+      await waitFor(() => expect(onCommands).toHaveBeenCalledWith(list, 4))
     } finally {
       vi.stubGlobal('fetch', vi.fn(async () => new Response('[]')))
     }

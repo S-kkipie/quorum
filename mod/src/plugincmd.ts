@@ -1,10 +1,19 @@
 /**
- * Running another plugin's slash command (better-claude's /after, /before,
- * /timeline) from a device. Only the allow-listed commands run, with bounded
- * arguments: the device never gets a general way to type slash commands.
+ * Arguments of slash commands run from a device. Plan 6 allowed only better-claude's
+ * /after, /before and /timeline (the `plugin` command, kept as an alias); Plan 8 runs any
+ * command the session lists (commands.ts) with the same args rules (`validateArgs`).
  */
 
-/** Commands a device may run in its session. */
+export const TERMINAL_ONLY_ERROR = 'This command only works in the terminal.'
+
+/**
+ * better-claude's /after and /timeline open a pane when run bare: terminal-only without args.
+ * Applies to the `command` type (commands.ts validateCommand) and the Plan 6 `plugin` alias.
+ * Mirrored by the hub (internal/hub/commands.go terminalWhenBare) and the app (lib/slash.ts).
+ */
+export const TERMINAL_WHEN_BARE = new Set(['after', 'timeline'])
+
+/** The Plan 6 `plugin` command's allow-list. */
 export const PLUGIN_COMMANDS = new Set(['after', 'before', 'timeline'])
 export const PLUGIN_ARGS_MAX = 2000
 const TIMELINE_ARGS = /^(undo|redo|\d{1,4})$/
@@ -12,9 +21,12 @@ const TIMELINE_ARGS = /^(undo|redo|\d{1,4})$/
 // C0, DEL, C1 and the Unicode line/paragraph separators
 const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/
 
-/** null when the command may run, else an English error for the device. */
-export function validatePluginCommand(command: string, args: string): string | null {
-  if (!PLUGIN_COMMANDS.has(command)) return `Unsupported plugin command: ${String(command).slice(0, 40)}`
+/**
+ * The args rules every device-run slash command shares (Plan 8 generalised Plan 6's): a
+ * string of at most PLUGIN_ARGS_MAX UTF-16 units, one line without control characters, and
+ * `/timeline` takes only undo, redo or a state number. null when fine, else an English error.
+ */
+export function validateArgs(command: string, args: string): string | null {
   if (typeof args !== 'string') return `Invalid arguments for /${command}`
   if (args.length > PLUGIN_ARGS_MAX) return `Arguments for /${command} exceed ${PLUGIN_ARGS_MAX} characters`
   if (CONTROL_CHARS.test(args)) return `Arguments for /${command} must be a single line without control characters`
@@ -22,28 +34,12 @@ export function validatePluginCommand(command: string, args: string): string | n
   return null
 }
 
-export type PluginCommandDeps = {
-  /**
-   * `$.command.run({ command, args })`: reaches the plugin's own command.run hook.
-   * Sent mid-turn it is queued until the turn ends, even for an `immediate` command.
-   * (`$.prompt.submit` refuses text starting with `/`, so it is not an alternative.)
-   */
-  commandRun: (command: string, args: string) => Promise<unknown>
-}
-
 /**
- * Runs an allow-listed plugin command in this session.
- * Mechanism: `$.command.run` (docs/superpowers/specs/2026-11-23-plugin-command-spike.md).
+ * The Plan 6 `plugin` command: the allow-list, a bare /after or /timeline is terminal-only
+ * (TERMINAL_WHEN_BARE), then the shared args rules. null when it may run.
  */
-export async function runPluginCommand(
-  deps: PluginCommandDeps, command: string, args: string,
-): Promise<{ ok: boolean; error?: string }> {
-  const bad = validatePluginCommand(command, args)
-  if (bad) return { ok: false, error: bad }
-  try {
-    await deps.commandRun(command, args)
-    return { ok: true }
-  } catch (err) {
-    return { ok: false, error: `Could not run /${command}: ${String((err as Error)?.message ?? err)}` }
-  }
+export function validatePluginCommand(command: string, args: string): string | null {
+  if (!PLUGIN_COMMANDS.has(command)) return `Unsupported plugin command: ${String(command).slice(0, 40)}`
+  if (TERMINAL_WHEN_BARE.has(command) && typeof args === 'string' && !args.trim()) return TERMINAL_ONLY_ERROR
+  return validateArgs(command, args)
 }

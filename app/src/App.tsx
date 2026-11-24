@@ -3,10 +3,10 @@ import { Plus, Settings } from 'lucide-react'
 import { UNAUTH_EVENT, getToken, listMachines, listUsage, openTerminal, listProjects, loadProposals, listSessions, listTickets, listWorkspaces, setDevApi, type TicketView } from './lib/api'
 import { connectLive, type Live } from './lib/live'
 import { EarlyLaunches, pendingReducer, type Pending } from './lib/launch'
-import { addEvents, initialState, markSeen, reduce, replaceSessions, seed, setCheckouts, setConversations, setProjectsData, setTicketDetail, setTickets, setUsage } from './lib/store'
+import { addEvents, initialState, loadCommands, markSeen, reduce, replaceSessions, seed, setCheckouts, setConversations, setProjectsData, setTicketDetail, setTickets, setUsage } from './lib/store'
 import LaunchDialog from './components/LaunchDialog'
 import TicketDetail from './components/TicketDetail'
-import type { Checkout, Conversation, Envelope, Event, TermFrame } from './proto.gen'
+import type { Checkout, Conversation, Envelope, Event, SessionCommands, TermFrame } from './proto.gen'
 import Config from './screens/Config'
 import Project from './screens/Project'
 import ProjectTickets from './screens/ProjectTickets'
@@ -100,6 +100,7 @@ function Main() {
   }, [])
   const onEvents = useCallback((id: string, evs: Event[]) => setState((s) => addEvents(s, id, evs)), [])
   const onSeen = useCallback((id: string) => setState((s) => markSeen(s, id)), [])
+  const onCommands = useCallback((sc: SessionCommands, rev: number | undefined) => setState((s) => loadCommands(s, sc, rev)), [])
   const onTickets = useCallback((pid: string, v: TicketView[]) => setState((s) => setTickets(s, pid, v)), [])
   const onCheckouts = useCallback((pid: string, cos: Checkout[]) => setState((s) => setCheckouts(s, pid, cos)), [])
   const onConversations = useCallback((m: string, root: string, l: Conversation[]) => setState((s) => setConversations(s, m, root, l)), [])
@@ -201,6 +202,8 @@ function Main() {
   const attention = attentionCount(Object.values(shown.sessions).filter((x) => x.role !== 'service'))
 
   const [connected, setConnected] = useState(false)
+  // bumped on every reconnect of the live feed: the open session re-reads its command list
+  const [reconnects, setReconnects] = useState(0)
   const live = useRef<Live | null>(null)
 
   const load = useCallback(async (replace: boolean) => {
@@ -227,7 +230,7 @@ function Main() {
     let off = false
     Promise.all([import('./dev/fixtures'), import('./dev/DataToggle')]).then(([f, t]) => {
       if (off) return
-      setDevApi({ listConversations: f.fixtureConversations(mode), listEvents: async () => [], pluginState: async (id, plugin) => f.fixturePluginState(mode, id, plugin) })
+      setDevApi({ listConversations: f.fixtureConversations(mode), listEvents: async () => [], listCommands: f.fixtureCommands(mode) })
       setState(f.fixtureState(mode))
       setConnected(true)
       setDev({ Toggle: t.default })
@@ -241,7 +244,7 @@ function Main() {
     let wasConnected = false
     const l = connectLive(dispatch, (c) => {
       setConnected(c)
-      if (c && wasConnected) load(true)
+      if (c && wasConnected) { load(true); setReconnects((n) => n + 1) }
       if (c) wasConnected = true
     })
     live.current = l
@@ -289,7 +292,7 @@ function Main() {
       base={state.sessions[viewer.sessionId]?.root || state.sessions[viewer.sessionId]?.cwd || ''} onBack={back} />
   )
   const startingView = starting && <Starting pending={pending} terminal={!!(pending && state.machines[pending.machine]?.caps?.terminal)} onBack={back} onViewTerminal={onViewTerminal} />
-  const sessionView = current && vanished.current !== current ? <LazyBoundary><Session key={viewKey} state={shown} id={current} onBack={wide ? undefined : back} onEvents={onEvents} onSeen={onSeen} onGuard={guardLaunch} busy={launchBusy} onViewTerminal={onViewTerminal} onOpenFile={(machine, path, o) => current && go({ viewer: { machine, sessionId: current, path, ...(o && 'images' in o ? { images: true } : o && 'read' in o ? { read: true } : {}) } })} /></LazyBoundary> : null
+  const sessionView = current && vanished.current !== current ? <LazyBoundary><Session key={viewKey} state={shown} id={current} onBack={wide ? undefined : back} onEvents={onEvents} onSeen={onSeen} onCommands={onCommands} reconnects={reconnects} onGuard={guardLaunch} busy={launchBusy} onViewTerminal={onViewTerminal} onOpenFile={(machine, path, o) => current && go({ viewer: { machine, sessionId: current, path, ...(o && 'images' in o ? { images: true } : o && 'read' in o ? { read: true } : {}) } })} /></LazyBoundary> : null
   const sessionsList = <Sessions state={shown} onOpen={openSession} selected={current} />
   const projectsView = <Projects state={shown} wide={wide} selected={project} onOpen={(id) => go({ project: id, projectTickets: null, checkouts: false, ticket: null })} onOpenSession={openSession} onConfig={() => openConfig('')} />
   const configView = config !== null && <Config key={config} state={shown} editProject={config || null} onBack={back} />

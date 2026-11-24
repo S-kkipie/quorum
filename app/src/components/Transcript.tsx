@@ -8,6 +8,7 @@ import type { Event } from '../proto.gen'
 import { formatTokens } from '../lib/meters'
 import { buildTimeline, type OpenOpts } from '../lib/timeline'
 import ArtifactCard from './timeline/ArtifactCard'
+import CommandCard from './timeline/CommandCard'
 import PastedImages from './timeline/PastedImages'
 import ToolItem from './timeline/ToolItem'
 
@@ -104,6 +105,7 @@ export default function Transcript({ events, base = '', machine = '', sessionId 
             case 'tool': case 'reads': return <ToolItem key={`t${r.seq}`} item={r} base={base} machine={machine} sessionId={sessionId} onOpenFile={onOpenFile} />
             case 'agent': return <ToolItem key={`a${r.seq}`} item={r} live={liveAgent?.[r.id]} />
             case 'artifact': return <ArtifactCard key={`f${r.seq}`} item={r} machine={machine} base={base} onOpen={onOpenFile} />
+            case 'command': return <CommandCard key={`c${r.id}`} item={r} />
           }
         })}
         {live && (

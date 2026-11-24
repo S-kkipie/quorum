@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"strings"
 	"unicode/utf16"
 
 	"github.com/S-kkipie/quorum/internal/proto"
@@ -23,15 +24,10 @@ func isControlRune(r rune) bool {
 	return r <= 0x1f || (r >= 0x7f && r <= 0x9f) || r == 0x2028 || r == 0x2029
 }
 
-// validatePluginCommand returns "" when the command may run, else an English error.
-func validatePluginCommand(command, args string) string {
-	if !pluginCommands[command] {
-		short := []rune(command)
-		if len(short) > 40 {
-			short = short[:40]
-		}
-		return "Unsupported plugin command: " + string(short)
-	}
+// validateArgs is the args rule every device-run slash command shares (mod/src/plugincmd.ts
+// validateArgs): at most 2,000 UTF-16 units, one line without control characters, and /timeline
+// takes only undo, redo or a state number. "" when fine, else an English error.
+func validateArgs(command, args string) string {
 	// length counted in UTF-16 units, like the mod's String.length
 	if len(utf16.Encode([]rune(args))) > pluginArgsMax {
 		return fmt.Sprintf("Arguments for /%s exceed %d characters", command, pluginArgsMax)
@@ -45,6 +41,26 @@ func validatePluginCommand(command, args string) string {
 		return "/timeline takes undo, redo or a state number"
 	}
 	return ""
+}
+
+// validatePluginCommand returns "" when the Plan 6 plugin command may run, else an English error:
+// the allow-list, a bare /after or /timeline is terminal-only, then the shared args rules.
+func validatePluginCommand(command, args string) string {
+	if !pluginCommands[command] {
+		return "Unsupported plugin command: " + clip(command, 40)
+	}
+	if terminalWhenBare[command] && strings.TrimSpace(args) == "" {
+		return terminalOnlyError // a bare /after or /timeline opens a pane in the terminal
+	}
+	return validateArgs(command, args)
+}
+
+func clip(s string, n int) string {
+	r := []rune(s)
+	if len(r) > n {
+		r = r[:n]
+	}
+	return string(r)
 }
 
 // handlePluginState returns the session's state of a better-claude plugin (read by the

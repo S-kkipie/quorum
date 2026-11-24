@@ -85,3 +85,35 @@ describe('privacy', () => {
     for (const m of ['worst', 'empty', 'one', 'huge'] as const) expect(JSON.stringify(fixtureState(m))).not.toMatch(/\d+\.\d+\.\d+\.\d+/)
   })
 })
+
+describe('slash commands, model and effort', () => {
+  it('worst: commands of every group, terminal-only rows, long names and descriptions', () => {
+    const s = fixtureState('worst')
+    const open = Object.values(s.sessions).filter((x) => x.state !== 'closed')
+    const sc = s.commands[open[0].id]
+    expect(sc?.hash).toBeTruthy()
+    const groups = new Set(sc.commands.map((c) => c.group))
+    for (const g of ['session', 'skill', 'plugin', 'mcp']) expect(groups.has(g)).toBe(true)
+    expect(sc.commands.some((c) => c.terminalOnly)).toBe(true)
+    expect(sc.commands.some((c) => c.name.length >= 60)).toBe(true)
+    expect(sc.commands.some((c) => c.description.length >= 200)).toBe(true)
+    expect(open[0].modelOptions.length).toBeGreaterThanOrEqual(3)
+    expect(open[0].effortOptions.length).toBe(5)
+    expect(open[0].effort).toBeTruthy()
+  })
+  it('worst: command cards in every status', () => {
+    const s = fixtureState('worst')
+    const evs = Object.values(s.events).flat().filter((e) => e.kind === 'command')
+    for (const st of ['queued', 'done', 'failed']) expect(evs.some((e) => e.data.status === st)).toBe(true)
+    expect(evs.some((e) => typeof e.data.text === 'string' && e.data.text.split('\n').length > 6)).toBe(true)
+  })
+  it('huge: 120+ commands; one: an older mod with no list and no options', () => {
+    const h = fixtureState('huge')
+    const first = h.order[0]
+    expect(h.commands[first].commands.length).toBeGreaterThanOrEqual(120)
+    const one = fixtureState('one')
+    const x = Object.values(one.sessions)[0]
+    expect(one.commands[x.id]).toBeUndefined()
+    expect(x.modelOptions).toEqual([])
+  })
+})

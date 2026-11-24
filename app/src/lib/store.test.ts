@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import { markSeen, reduce, replaceSessions, setUsage, seed, initialState, setConversations, type AppState } from './store'
-import type { AccountUsage, Envelope, SessionInfo, Event } from '../proto.gen'
+import { markSeen, reduce, replaceSessions, setUsage, setCommands, loadCommands, seed, initialState, setConversations, type AppState } from './store'
+import type { AccountUsage, Envelope, SessionCommands, SessionInfo, Event } from '../proto.gen'
 
 const sess = (id: string, o: Partial<SessionInfo> = {}): SessionInfo => ({
   id, recap: '', previousId: '', machine: 'm1', name: id, cwd: '/x', root: '/x', model: '', role: 'work',
-  state: 'idle', contextPct: 0, startedAt: 1, updatedAt: 1, transcriptPath: '', repoUrl: '', branch: '', projectId: '', launchReq: '', herdrPane: '', herdrWorkspace: '', account: '', accountKey: '', configDir: '', plugins: [], contextEstimate: false, tokens: { in: 0, out: 0, cache: 0 }, rateLimits: [], usageAt: 0, imagesDir: '', background: { tasks: 0, wakeAt: 0 }, unread: false, ...o,
+  state: 'idle', contextPct: 0, startedAt: 1, updatedAt: 1, transcriptPath: '', repoUrl: '', branch: '', projectId: '', launchReq: '', herdrPane: '', herdrWorkspace: '', account: '', accountKey: '', configDir: '', plugins: [], contextEstimate: false, tokens: { in: 0, out: 0, cache: 0 }, rateLimits: [], usageAt: 0, imagesDir: '', background: { tasks: 0, wakeAt: 0 }, unread: false, effort: '', modelOptions: [], effortOptions: [], ...o,
 })
 const up = (s: SessionInfo): Envelope => ({ type: 'session_upsert', machine: s.machine, session: s.id, payload: s })
 const ev = (session: string, seq: number, kind: string, data: any = {}): Envelope => {
@@ -280,5 +280,43 @@ describe('markSeen', () => {
     expect(s1.sessions.a.unread).toBe(false)
     expect(markSeen(s1, 'a')).toBe(s1)
     expect(markSeen(s1, 'zz')).toBe(s1)
+  })
+})
+
+describe('session commands', () => {
+  const sc = (hash: string, names: string[] = ['clear']): SessionCommands => ({
+    session: 's1', hash, commands: names.map((name) => ({ name, description: '', source: 'builtin', plugin: '', group: 'session', terminalOnly: false })),
+  })
+  const env = (p: SessionCommands): Envelope => ({ type: 'session_commands', machine: 'vps-1', session: p.session, payload: p })
+  it('session_commands stores the list per session', () => {
+    const s = run([env(sc('h1', ['clear', 'compact']))])
+    expect(s.commands.s1.commands.map((c) => c.name)).toEqual(['clear', 'compact'])
+  })
+  it('a new hash replaces the list, the same hash keeps the state object', () => {
+    const a = run([env(sc('h1'))])
+    expect(run([env(sc("h1"))], a).commands).toBe(a.commands)
+    expect(run([env(sc('h2', ['a', 'b']))], a).commands.s1.commands).toHaveLength(2)
+  })
+  it('a GET that started before a live envelope does not overwrite it', () => {
+    const rev = initialState().commandsRev.s1 // read before the request
+    let s = run([env(sc('h2', ['new']))])
+    s = loadCommands(s, sc('h1', ['old']), rev)
+    expect(s.commands.s1.hash).toBe('h2')
+    // with no live envelope meanwhile the GET result is stored
+    const s2 = loadCommands(initialState(), sc('h1', ['old']), undefined)
+    expect(s2.commands.s1.hash).toBe('h1')
+    // a revision read after the envelope is current
+    expect(loadCommands(s, sc('h3'), s.commandsRev.s1).commands.s1.hash).toBe('h3')
+  })
+  it('ignores malformed payloads; an empty list is kept', () => {
+    const s0 = initialState()
+    expect(reduce(s0, { type: 'session_commands', machine: 'm', session: 's1', payload: null as any })).toBe(s0)
+    expect(setCommands(s0, { session: 's1', hash: '', commands: null as any })).toBe(s0)
+    expect(setCommands(s0, sc('', [])).commands.s1.commands).toEqual([])
+  })
+  it('session_removed drops it', () => {
+    let s = run([env(sc('h1'))])
+    s = run([{ type: 'session_removed', machine: 'vps-1', session: 's1', payload: null as any }], s)
+    expect(s.commands.s1).toBeUndefined()
   })
 })

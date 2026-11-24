@@ -387,3 +387,42 @@ test('classic.Stop with work in flight → register background; a task-notificat
   await m.until(() => m.registers[m.registers.length - 1]?.state === 'idle')
   expect(m.registers[m.registers.length - 1]!.background).toEqual({ tasks: 0, wakeAt: 0 })
 })
+
+// Plan 8 Task 1: the command list and model/effort options are reported at session start.
+test('session start reports the command list (with skills) and the model/effort options', async ($, on) => {
+  const o = on as unknown as (...a: unknown[]) => void
+  mock.env(on as never, { CLAUDE_CONFIG_DIR: '/cfg' })
+  mock.clock(on as never)
+  o('command.register', async () => ({ value: undefined }))
+  o('session.start', async () => ({ cwd: '/x' }))
+  o('session.id', async () => ({ value: 's-cmds' }))
+  o('session.cwd', async () => ({ value: '/x' }))
+  o('command.list', async () => ({ value: [
+    { name: 'compact', description: 'Free up context', source: 'builtin' },
+    { name: 'config', description: 'Set a setting', source: 'builtin' },
+    { name: 'humanizer', description: 'Rewrite', source: 'user' },
+  ] }))
+  o('config.list', async () => ({ value: [{ key: 'model', label: 'Model', kind: 'choice', value: 'opus', options: ['opus', 'haiku'] }] }))
+  o('session.usage', async () => ({ value: { startedAt: 0, rateLimits: [], context: { window: 1, breakdown: { skills: { skillFrontmatter: [{ name: 'humanizer', source: 'userSettings' }] } } } } }))
+  o('process.run', async () => ({ value: { exitCode: 0, stdout: JSON.stringify({ ok: true, port: 1, token: 't', machine: 'vps-1' }), stderr: '' } }))
+  const posts: Array<{ url: string; body: any }> = []
+  o('http.fetch', async (_$: unknown, e: { url?: string; init?: { body?: string } }) => {
+    posts.push({ url: String(e.url), body: e.init?.body ? JSON.parse(String(e.init.body)) : undefined })
+    return { value: { status: 204 } }
+  })
+  await ($ as never as { session: { start(x: unknown): Promise<unknown> } }).session.start({ cwd: '/x', surface: null })
+  const cmds = () => posts.filter(p => p.url.endsWith('/v1/sessions/s-cmds/commands'))
+  for (let i = 0; i < 50 && !cmds().length; i++) await new Promise(r => setTimeout(r, 5))
+  expect(cmds().length).toBe(1)
+  const b = cmds()[0]!.body
+  expect(b.session).toBe('s-cmds')
+  expect(typeof b.hash).toBe('string')
+  expect(b.commands.map((c: any) => [c.name, c.group, c.terminalOnly])).toEqual([
+    ['compact', 'session', false], ['config', 'session', true], ['humanizer', 'skill', false],
+  ])
+  const regs = () => posts.filter(p => p.url.endsWith('/v1/sessions/register')).map(p => p.body)
+  for (let i = 0; i < 50 && !regs().some(r => r.modelOptions?.length); i++) await new Promise(r => setTimeout(r, 5))
+  const r = regs().find(x => x.modelOptions?.length)!
+  expect(r.modelOptions.map((m: any) => m.value)).toEqual(['opus', 'haiku'])
+  expect(r.effortOptions).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
+})

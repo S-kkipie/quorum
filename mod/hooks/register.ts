@@ -1,11 +1,11 @@
 import type { Register } from 'claude-code'
 
 import { configDirFrom, enabledPlugins, makeAccountLookup, accountKey } from '../src/account'
+import { type CommandsReporter, effortFromStop, makeCommandsReporter } from '../src/commands'
 import { optional } from '../src/compat'
 import { type Control, makeControl } from '../src/control'
 import { type Hold, makeHold } from '../src/hold'
 import { TERM_ALLOW, TERM_DENY } from '../src/permission'
-import { runPluginCommand } from '../src/plugincmd'
 import { fromPlugin, makeHandlers, stepHook, toolHook } from '../src/events'
 import { imageIds, makeImageFinder } from '../src/images'
 import { makeIO } from '../src/io'
@@ -19,7 +19,9 @@ import { detectRole } from '../src/role'
 // via `quorum.link`.
 // `control` (Task 10) also lives here: it is built in session.start with closures over `$`
 // (the mod compiler does not allow storing `$` in a module variable).
-export const quorum: { link?: Link; control?: Control; recap?: Recap; images?: ReturnType<typeof makeImageFinder> } = {}
+export const quorum: {
+  link?: Link; control?: Control; recap?: Recap; images?: ReturnType<typeof makeImageFinder>; commands?: CommandsReporter
+} = {}
 
 // once per session (warns only once if hold fails): session.start creates a new one
 let hold: Hold | undefined
@@ -63,6 +65,7 @@ export const register: Register = on => {
       quorum.control = undefined
       quorum.recap = undefined
       quorum.images = undefined
+      quorum.commands = undefined
       hold = undefined
       branchRefresh = undefined
       meters = undefined
@@ -81,6 +84,9 @@ export const register: Register = on => {
     quorum.link = link
     const m = new Meters({ now: () => Date.now(), update: p => link.update(p) })
     meters = m
+    // slash commands, model/effort options, model and effort (commands.ts): built once the
+    // registered model is known (below); the control reads it through this variable
+    let reporter: CommandsReporter | undefined
     const control = makeControl({
       getLink: () => link,
       submit: text => $.prompt.submit({ text, asUser: true }),
@@ -89,9 +95,14 @@ export const register: Register = on => {
       exit: () => $.command.run({ command: 'exit', args: '' } as never),
       sleep: ms => $.clock.sleep(ms),
       now: () => Date.now(),
-      runPlugin: (command, args) => runPluginCommand({
-        commandRun: (c, a) => $.command.run({ command: c, args: a }),
-      }, command, args),
+      commandRun: (command, args) => $.command.run({ command, args }),
+      commands: () => reporter?.current(),
+      refreshCommands: () => reporter?.check() ?? Promise.resolve(),
+      // the /config Model row: no confirm dialog, unlike /model (commands.ts)
+      setModel: value => $.config.set({ key: 'model', value }) as Promise<{ value?: unknown; deny?: string }>,
+      modelOptions: () => reporter?.modelOptions(),
+      // the model, list and options are re-read once a device command settled
+      commandSettled: () => { void reporter?.check().catch(() => {}) },
     })
     quorum.control = control
     // recap (session name) with Haiku, only in work sessions; without $.model.complete there is no recap
@@ -113,6 +124,22 @@ export const register: Register = on => {
       optional(() => $.env.get('HOME'), ''),
     ])
     const configDir = configDirFrom(envDir, home)
+    // every call optional, checked without awaiting (session start, turn end, after a device
+    // command or a plugin reload)
+    reporter = makeCommandsReporter({
+      list: () => $.command.list(),
+      skills: async () => {
+        const u = await optional(() => $.session.usage({ breakdown: 'summary' }), undefined)
+        const s = (u?.context as { breakdown?: { skills?: { skillFrontmatter?: unknown[] } } } | undefined)?.breakdown?.skills
+        return Array.isArray(s?.skillFrontmatter) ? s.skillFrontmatter : undefined
+      },
+      config: () => $.config.list(),
+      model: () => $.session.model(),
+      send: p => link.setCommands(p),
+      update: p => link.update(p),
+      initialModel: String(model ?? ''),
+    })
+    quorum.commands = reporter
     const plugins = configDir
       ? enabledPlugins(await optional(() => $.fs.read(`${configDir}/settings.json`) as Promise<string>, ''))
       : []
@@ -145,7 +172,10 @@ export const register: Register = on => {
       account: '', accountKey: '', configDir, plugins, contextEstimate: false,
       tokens: { in: 0, out: 0, cache: 0 }, rateLimits: [], usageAt: 0, imagesDir: '',
       background: { tasks: 0, wakeAt: 0 }, unread: false,
+      effort: '', modelOptions: [], effortOptions: [],
     }).catch(() => {})
+    // the command list and model/effort options: after link.start (whose info the updates apply to)
+    void reporter.check().catch(() => {})
     // the account's usage as Claude Code knows it at start (after link.start, which holds the info
     // updates apply to): reported right away, without the 30 s throttle, so the account shows on the
     // board before the first turn ends; nothing when it has no rate limits yet
@@ -219,8 +249,25 @@ export const register: Register = on => {
   on('classic.Stop', async ($, e, next) => {
     const r = await next(e)
     try { quorum.control?.stopHook(e as never) } catch { /* never toward Claude Code */ }
+    try { quorum.commands?.effort(effortFromStop(e)) } catch { /* same */ }
     return r
   })
+
+  // /model (typed, picked or sent from a device) switched the model: report it
+  on('classic.PostModelSwitch', async ($, e, next) => {
+    const r = await next(e)
+    try { quorum.commands?.model((e as { to_model?: string }).to_model) } catch { /* never toward Claude Code */ }
+    return r
+  })
+
+  // a plugin or skill reload changes the command list: re-checked once it ran
+  for (const command of ['reload-plugins', 'reload-skills']) {
+    on('command.run', { command }, async ($, e, next) => {
+      const r = await next(e)
+      void quorum.commands?.check().catch(() => {})
+      return r
+    })
+  }
 
   // Stop pressed in Claude Code: noted before any await (it is raised before the abort settles)
   on('session.stop', ($, e, next) => {
@@ -316,6 +363,8 @@ export const register: Register = on => {
     }
     quorum.control?.turnEnd(e)
     if ((e as { agentId?: string }).agentId === undefined) void branchRefresh?.refresh().catch(() => {})
+    // a skill or plugin may have come or gone during the turn: fire-and-forget, never awaited here
+    if ((e as { agentId?: string }).agentId === undefined) void quorum.commands?.check().catch(() => {})
     if ((e as { agentId?: string }).agentId === undefined) quorum.recap?.onTurnEnd(lastPrompt, String((e as { answer?: string }).answer ?? ''))
     return r
   })

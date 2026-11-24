@@ -244,3 +244,26 @@ describe('inBase', () => {
     expect(inBase('/Home/u/proj/a.html', '/home/u/proj')).toBe(false)
   })
 })
+
+describe('buildTimeline: command events', () => {
+  it('one item per id, at its first position, with the latest status', () => {
+    const items = buildTimeline([
+      ev('command', { id: 'c1', name: 'compact', args: '', origin: 'device', status: 'queued' }, 1),
+      ev('assistant', { text: 'still working' }, 2),
+      ev('command', { id: 'c2', name: 'model', args: 'sonnet', origin: 'device', status: 'done', text: 'Set model to Sonnet' }, 3),
+      ev('command', { id: 'c1', name: 'compact', args: '', origin: 'device', status: 'done', text: 'Compacted' }, 4),
+    ], BASE)
+    expect(items.map((i) => i.t)).toEqual(['command', 'assistant', 'command'])
+    expect(items[0]).toMatchObject({ t: 'command', seq: 1, id: 'c1', name: 'compact', status: 'done', text: 'Compacted' })
+    expect(items[2]).toMatchObject({ id: 'c2', name: 'model', args: 'sonnet', status: 'done' })
+  })
+  it('a failed status keeps its error; malformed events are dropped', () => {
+    const items = buildTimeline([
+      ev('command', { id: 'c1', name: 'init', args: '', origin: 'device', status: 'queued' }, 1),
+      ev('command', { id: 'c1', name: 'init', args: '', origin: 'device', status: 'failed', error: 'Waiting for an answer in the terminal.' }, 2),
+      ev('command', { name: 'x' }, 3),
+    ], BASE)
+    expect(items).toHaveLength(1)
+    expect(items[0]).toMatchObject({ status: 'failed', error: 'Waiting for an answer in the terminal.' })
+  })
+})

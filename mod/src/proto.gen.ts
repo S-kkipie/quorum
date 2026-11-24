@@ -100,10 +100,67 @@ export interface SessionInfo {
    */
   background: BackgroundInfo;
   /**
+   * Effort is the reasoning effort of the last main turn (the Stop hook's effort.level), or the one a
+   * device just set with /effort; empty until known or on a model without effort.
+   */
+  effort: string;
+  /**
+   * ModelOptions are the models /model takes in this session (the /config Model row's options, labelled
+   * by the mod), EffortOptions the effort levels /effort takes. Both empty with an older mod.
+   */
+  modelOptions: ModelOption[];
+  effortOptions: string[];
+  /**
    * Unread is computed by the hub (whatever the mod sends is ignored): the session is idle and its
    * last turn_end is newer than its seen mark ("done, unread"). background/working/needs_you/closed never are.
    */
   unread: boolean;
+}
+/**
+ * ModelOption is one model /model takes: Value is what is sent (`/model <value>`).
+ */
+export interface ModelOption {
+  value: string;
+  label: string;
+  description: string;
+}
+/**
+ * SessionCommand is one slash command a session can run, as its mod reports it ($.command.list()).
+ * Source is Claude Code's (builtin|plugin|user|mcp); Group is how the app lists it
+ * (session|skill|plugin|mcp). TerminalOnly: an interactive built-in (picker, dialog, pane) a
+ * device may not run. Some commands are terminal-only only without arguments (bare /model,
+ * /after, /timeline): that is decided when one runs, not by this flag.
+ */
+export interface SessionCommand {
+  name: string;
+  description: string;
+  source: string;
+  plugin: string;
+  group: string;
+  terminalOnly: boolean;
+}
+/**
+ * SessionCommands is the payload of session_commands (daemon->hub) and of the mod's
+ * POST /v1/sessions/{id}/commands. Hash identifies the list: the mod re-sends it only when it changes.
+ */
+export interface SessionCommands {
+  session: string;
+  commands: SessionCommand[];
+  hash: string;
+}
+/**
+ * CommandEvent is the data of a `command` event: a slash command a device ran in the session.
+ * Status queued (a turn was running: it runs when the turn ends), then done or failed. Text is the
+ * command's output (at most 8,000 chars), Error the English reason it failed.
+ */
+export interface CommandEvent {
+  id: string;
+  name: string;
+  args: string;
+  origin: string; // device
+  status: string; // queued|done|failed
+  text?: string;
+  error?: string;
 }
 /**
  * BackgroundInfo is a session's pending background work: Tasks live background tasks and
@@ -183,6 +240,10 @@ export const KindInfo: EventKind = "info";
  * KindTicket is emitted by the mod with /quorum ticket <id>: data {ticket:"<externalId>"}; empty = unlink.
  */
 export const KindTicket: EventKind = "ticket";
+/**
+ * KindCommand data: CommandEvent; one per status change of a slash command run from a device.
+ */
+export const KindCommand: EventKind = "command";
 export interface Event {
   seq: number /* int64 */;
   session: string;
@@ -243,18 +304,27 @@ export interface AgentEnd {
  * Command is an order addressed to a session.
  */
 export interface Command {
-  type: string; // prompt|decide|abort|close|plugin
+  /**
+   * command: run the slash command Command with Args (it must be in the session's reported list and
+   * not terminal-only); plugin: the Plan 6 alias, limited to after|before|timeline; set_model: switch
+   * the session's model to Value (one of its ModelOptions) through the /config Model row, which asks
+   * no question (/model may open a confirm dialog). Effort has no such path: it is read-only from devices.
+   */
+  type: string; // prompt|decide|abort|close|command|plugin|set_model
   text: string;
   mode: string; // now|queue|interrupt
   askId: string;
   decision: string; // allow|deny
   reason: string;
   answers: { [key: string]: string};
-  command: string; // plugin: after|before|timeline
-  args: string; // plugin: everything after the command name
+  command: string; // command/plugin: the name without the slash
+  args: string; // command/plugin: everything after the command name
+  value: string; // set_model: the model option's value
 }
 /**
  * Envelope is the WS wrapper daemon<->hub and hub<->app.
+ * session_commands (daemon->hub): Payload SessionCommands; sent when a session's command list changes and
+ * again for every known session after each hello.
  * Type: hello|session_upsert|session_gone|session_removed|event|events|command|launch|launch_result|machine_status|backfill|backfill_result|ack|project_upsert|tickets|session_ticket|proposal_upsert|workspace_upsert|workspace_gone|project_gone|usage_upsert|usage_gone|attention|session_seen
  * usage_upsert (hub->app): Payload AccountUsage, when an account's usage changes; GET /api/usage lists them.
  * usage_gone (hub->app): Payload {key}; a machine/alias fallback row was superseded by the account's real key.

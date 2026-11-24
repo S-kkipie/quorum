@@ -363,3 +363,27 @@ func nextPrompt(t *testing.T, ch <-chan proto.Command) proto.Command {
 		}
 	}
 }
+
+// Plan 8: every known session's command list follows each hello (the hub may have restarted).
+func TestHelloFollowedBySessionCommands(t *testing.T) {
+	fastBackoff(t)
+	fh := &fakeHub{}
+	srv := httptest.NewServer(http.HandlerFunc(fh.handler))
+	defer srv.Close()
+	reg := NewRegistry("m1")
+	reg.Upsert(proto.SessionInfo{ID: "s1"})
+	reg.SetCommands("s1", proto.SessionCommands{Hash: "h1", Commands: []proto.SessionCommand{{Name: "compact"}}})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go RunHubLink(ctx, Config{Machine: "m1", Hub: srv.URL, MachineToken: "tok"}, reg, noHerdrHost(t))
+	require.Eventually(t, func() bool {
+		fh.mu.Lock()
+		defer fh.mu.Unlock()
+		for _, e := range fh.envs {
+			if e.Type == "session_commands" && e.Session == "s1" {
+				return true
+			}
+		}
+		return false
+	}, 3*time.Second, 10*time.Millisecond)
+}

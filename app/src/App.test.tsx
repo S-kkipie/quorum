@@ -51,9 +51,9 @@ describe('App', () => {
     send({ type: 'session_upsert', payload: info('a') })
     fireEvent.click(screen.getByRole('tab', { name: 'Sessions' }))
     fireEvent.click(await screen.findByText('session-a'))
-    await screen.findByPlaceholderText('Type a message…')
+    await screen.findByPlaceholderText('Type a message or / for commands')
     send({ type: 'session_removed', session: 'a' })
-    await waitFor(() => expect(screen.queryByPlaceholderText('Type a message…')).toBeNull())
+    await waitFor(() => expect(screen.queryByPlaceholderText('Type a message or / for commands')).toBeNull())
     expect(screen.queryByText('Session not found.')).toBeNull()
     expect(screen.getByRole('tab', { name: 'Sessions' })).toBeTruthy()
   })
@@ -67,7 +67,7 @@ describe('App', () => {
     send({ type: 'session_upsert', payload: info('b') })
     fireEvent.click(screen.getByRole('tab', { name: 'Sessions' }))
     fireEvent.click(await screen.findByText('session-a'))
-    await screen.findByPlaceholderText('Type a message…')
+    await screen.findByPlaceholderText('Type a message or / for commands')
     send({ type: 'session_upsert', payload: { ...info('a'), unread: true } })
     send({ type: 'session_upsert', payload: { ...info('b'), unread: true } })
     expect(screen.getAllByRole('img', { name: 'Unread' })).toHaveLength(1) // b only
@@ -84,13 +84,13 @@ describe('App', () => {
     act(() => ws().onmessage({ data: JSON.stringify({ type: 'session_upsert', payload: info('a') }) }))
     fireEvent.click(screen.getByRole('tab', { name: 'Sessions' }))
     fireEvent.click(await screen.findByText('session-a'))
-    const box = (await screen.findByPlaceholderText('Type a message…')) as HTMLTextAreaElement
+    const box = (await screen.findByPlaceholderText('Type a message or / for commands')) as HTMLTextAreaElement
     fireEvent.change(box, { target: { value: 'draft' } })
     act(() => ws().onmessage({ data: JSON.stringify({ type: 'session_upsert', payload: info('b', 'a') }) }))
     await waitFor(() => expect(screen.getAllByText('session-b').length).toBeGreaterThan(0))
     expect(screen.queryByText('Session not found.')).toBeNull()
-    expect((screen.getByPlaceholderText('Type a message…') as HTMLTextAreaElement).value).toBe('draft')
-    expect(screen.getByPlaceholderText('Type a message…')).toBe(box)
+    expect((screen.getByPlaceholderText('Type a message or / for commands') as HTMLTextAreaElement).value).toBe('draft')
+    expect(screen.getByPlaceholderText('Type a message or / for commands')).toBe(box)
   })
 
   it('no modes: there is no "Away" control and the app sends no watch (not even when hidden)', async () => {
@@ -100,7 +100,7 @@ describe('App', () => {
     act(() => ws().onmessage({ data: JSON.stringify({ type: 'session_upsert', payload: info('a') }) }))
     fireEvent.click(screen.getByRole('tab', { name: 'Sessions' }))
     fireEvent.click(await screen.findByText('session-a'))
-    await screen.findByPlaceholderText('Type a message…')
+    await screen.findByPlaceholderText('Type a message or / for commands')
     expect(screen.queryByLabelText('Away')).toBeNull()
     expect(screen.queryByText('Away')).toBeNull()
     setVisibility('hidden')
@@ -148,12 +148,12 @@ describe('App', () => {
     act(() => ws().onmessage({ data: JSON.stringify({ type: 'session_upsert', payload: info('a') }) }))
     fireEvent.click(screen.getByRole('tab', { name: 'Sessions' }))
     fireEvent.click(await screen.findByText('session-a'))
-    const box = (await screen.findByPlaceholderText('Type a message…')) as HTMLTextAreaElement
+    const box = (await screen.findByPlaceholderText('Type a message or / for commands')) as HTMLTextAreaElement
     fireEvent.change(box, { target: { value: 'draft' } })
     act(() => ws().onmessage({ data: JSON.stringify({ type: 'session_upsert', payload: info('b', 'a') }) }))
     await waitFor(() => expect(screen.getAllByText('session-b').length).toBeGreaterThan(0))
     fireEvent.click(screen.getAllByText('session-b')[0])
-    expect(screen.getByPlaceholderText('Type a message…')).toBe(box)
+    expect(screen.getByPlaceholderText('Type a message or / for commands')).toBe(box)
     expect(box.value).toBe('draft')
   })
 
@@ -244,6 +244,6 @@ describe('App', () => {
     send({ type: 'session_upsert', payload: info('new') })
     send({ type: 'launch_session', payload: { reqId: 'r1', sessionId: 'new' } })
     await waitFor(() => expect(screen.queryByText('Starting Claude on vps-1…')).toBeNull())
-    await screen.findByPlaceholderText('Type a message…')
+    await screen.findByPlaceholderText('Type a message or / for commands')
   })
 })

@@ -1,4 +1,4 @@
-import type { AccountUsage, Checkout, Conversation, ConnectorConfig, Event, Project, Proposal, SessionInfo, Ticket, Workspace } from '../proto.gen'
+import type { AccountUsage, Checkout, Conversation, ConnectorConfig, Event, Project, Proposal, SessionCommands, SessionInfo, Ticket, Workspace } from '../proto.gen'
 
 export interface Machine {
   name: string
@@ -113,7 +113,7 @@ export type PromptMode = 'now' | 'queue' | 'interrupt'
 export interface DevApi {
   listConversations: (machine: string, root: string) => Promise<Conversation[]>
   listEvents: (id: string, before: number, limit: number) => Promise<Event[]>
-  pluginState?: (id: string, plugin: PluginName) => Promise<unknown>
+  listCommands?: (id: string) => Promise<SessionCommands>
 }
 let devApi: DevApi | null = null
 export const setDevApi = (d: DevApi | null) => { devApi = d }
@@ -131,6 +131,16 @@ export const abortSession = (id: string) => apiFetch(`/api/sessions/${encodeURIC
 export const closeSession = (id: string) => apiFetch(`/api/sessions/${encodeURIComponent(id)}/close`, { method: 'POST' })
 export const launch = (b: { machine: string; dir: string; permissionMode?: string; resume?: string; label?: string; projectId?: string }) =>
   apiFetch<{ reqId: string }>('/api/launch', { method: 'POST', body: JSON.stringify(b) })
+
+/** The session's slash commands as its mod reported them (empty with an empty hash: an older mod). */
+export const listCommands = (id: string): Promise<SessionCommands> =>
+  devApi?.listCommands ? devApi.listCommands(id) : apiFetch<SessionCommands>(`/api/sessions/${enc(id)}/commands`)
+/** Runs `/command args` in the session; the hub rejects unknown, terminal-only or malformed ones (400). */
+export const runCommand = (id: string, command: string, args: string) =>
+  apiFetch<void>(`/api/sessions/${enc(id)}/command`, json('POST', { command, args }))
+/** Switches the session's model to one of its modelOptions values. */
+export const setModel = (id: string, value: string) =>
+  apiFetch<void>(`/api/sessions/${enc(id)}/model`, json('POST', { value }))
 
 // --- Conversations and terminal ---
 
@@ -204,13 +214,3 @@ export const unlinkTicket = (sessionId: string, ticketId: string) => apiFetch(`/
 export type ViewMode = 'images' | 'read'
 export const createView = (machine: string, sessionId: string, path: string, mode?: ViewMode) =>
   apiFetch<{ url: string }>(`/api/machines/${enc(machine)}/views`, json('POST', mode ? { sessionId, path, [mode]: true } : { sessionId, path }))
-
-// --- better-claude plugins (read from the session's store files, commands via the mod) ---
-
-export type PluginName = 'after' | 'time-machine'
-export type PluginCommandName = 'after' | 'before' | 'timeline'
-/** The plugin's raw state for the session, or null when there is none. */
-export const pluginState = (id: string, plugin: PluginName): Promise<unknown> =>
-  devApi?.pluginState ? devApi.pluginState(id, plugin) : apiFetch<unknown>(`/api/sessions/${encodeURIComponent(id)}/plugins/${encodeURIComponent(plugin)}`)
-export const pluginCommand = (id: string, command: PluginCommandName, args: string) =>
-  apiFetch(`/api/sessions/${encodeURIComponent(id)}/plugin`, { method: 'POST', body: JSON.stringify({ command, args }) })

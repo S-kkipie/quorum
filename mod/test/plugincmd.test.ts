@@ -3,7 +3,7 @@ import cases from './plugin-command-cases'
 
 import { makeControl } from '../src/control'
 import type { Link } from '../src/link'
-import { runPluginCommand, validatePluginCommand } from '../src/plugincmd'
+import { TERMINAL_ONLY_ERROR, validatePluginCommand } from '../src/plugincmd'
 import type { Command } from '../src/proto.gen'
 
 const cmd = (c: Partial<Command>): Command =>
@@ -25,33 +25,6 @@ test('validatePluginCommand: allow-list, length, control chars, timeline args', 
   expect(typeof validatePluginCommand('timeline', '')).toBe('string')
 })
 
-test('runPluginCommand runs the command through $.command.run', async () => {
-  const calls: string[] = []
-  const r = await runPluginCommand({
-    commandRun: async (command, args) => { calls.push(`run:${command}:${args}`) },
-  }, 'after', 'fix the build')
-  expect(r).toEqual({ ok: true })
-  expect(calls).toEqual(['run:after:fix the build'])
-})
-
-test('runPluginCommand refuses an invalid command without running anything', async () => {
-  const calls: string[] = []
-  const r = await runPluginCommand({
-    commandRun: async (command, args) => { calls.push(`run:${command}:${args}`) },
-  }, 'rm', 'x')
-  expect(r.ok).toBe(false)
-  expect(typeof r.error).toBe('string')
-  expect(calls).toEqual([])
-})
-
-test('runPluginCommand reports a rejected run as an English error', async () => {
-  const r = await runPluginCommand({
-    commandRun: async () => { throw new Error('unknown command') },
-  }, 'after', 'x')
-  expect(r.ok).toBe(false)
-  expect(r.error).toContain('unknown command')
-})
-
 function fake() {
   const runs: Array<[string, string]> = []
   const evs: Array<{ kind: string; data: any }> = []
@@ -62,8 +35,8 @@ function fake() {
     abort: async () => {},
     stopTask: async () => {},
     exit: async () => {},
-    sleep: async () => {},
-    runPlugin: async (command, args) => { runs.push([command, args]); return { ok: true } },
+    sleep: () => new Promise(() => {}),
+    commandRun: async (command, args) => { runs.push([command, args]) },
   })
   return { control, runs, evs }
 }
@@ -83,16 +56,28 @@ test('control.handle invalid plugin command → info with the error, nothing run
   expect(infos[0].data.text).toBe(validatePluginCommand('rm', 'x'))
 })
 
-test('control.handle plugin run failure → info', async () => {
+// `plugin` is a thin alias of `command` (Plan 8): the Plan 6 allow-list, then the same run and events.
+test('control.handle plugin run failure → failed command event', async () => {
   const evs: Array<{ kind: string; data: any }> = []
   const link = { role: 'work', emit: (e: any) => evs.push(e), update: () => {} } as unknown as Link
   const control = makeControl({
     getLink: () => link,
-    submit: async () => {}, abort: async () => {}, stopTask: async () => {}, exit: async () => {}, sleep: async () => {},
-    runPlugin: async () => ({ ok: false, error: 'Could not run /after: boom' }),
+    submit: async () => {}, abort: async () => {}, stopTask: async () => {}, exit: async () => {}, sleep: () => new Promise(() => {}),
+    commandRun: async () => { throw new Error('boom') },
   })
   await control.handle(cmd({ type: 'plugin', command: 'after', args: 'x' }))
-  expect(evs.filter(e => e.kind === 'info').map(e => e.data.text)).toEqual(['Could not run /after: boom'])
+  const c = evs.filter(e => e.kind === 'command').map(e => e.data)
+  expect(c.length).toBe(1)
+  expect(c[0].status).toBe('failed')
+  expect(c[0].error).toBe('Could not run /after: boom')
+})
+
+test('control.handle plugin: bare /after is terminal-only (it opens a pane), nothing runs', async () => {
+  const f = fake()
+  await f.control.handle(cmd({ type: 'plugin', command: 'after', args: '  ' }))
+  expect(f.runs).toEqual([])
+  const infos = f.evs.filter(e => e.kind === 'info')
+  expect(infos.map(e => e.data.text)).toEqual([TERMINAL_ONLY_ERROR])
 })
 
 // The same table is read by the hub's Go validator (internal/hub/plugincmd_test.go).

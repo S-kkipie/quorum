@@ -246,3 +246,43 @@ describe('Transcript read images', () => {
     expect(screen.getByText('a.png', { selector: 'button span' })).toBeTruthy()
   })
 })
+
+describe('Transcript: command cards', () => {
+  const cmd = (seq: number, d: any) => ev(seq, 'command', { origin: 'device', args: '', ...d })
+  it('shows /name args, from phone, and each status', () => {
+    render(<Transcript events={[
+      cmd(1, { id: 'a', name: 'brainstorming', status: 'queued' }),
+      cmd(2, { id: 'b', name: 'model', args: 'sonnet', status: 'done', text: 'Set model to Sonnet' }),
+      cmd(3, { id: 'c', name: 'init', status: 'failed', error: 'Waiting for an answer in the terminal.' }),
+      cmd(4, { id: 'd', name: 'compact', status: 'done' }),
+    ]} />)
+    const cards = screen.getAllByRole('article', { name: /^Command/ })
+    expect(cards).toHaveLength(4)
+    expect(cards[0].textContent).toContain('/brainstorming')
+    expect(cards[0].textContent).toContain('from phone')
+    expect(cards[0].textContent).toContain('Runs when Claude finishes this turn')
+    expect(cards[1].textContent).toContain('/model sonnet')
+    expect(cards[1].textContent).toContain('Set model to Sonnet')
+    expect(cards[2].textContent).toContain('Failed: Waiting for an answer in the terminal.')
+    expect(cards[3].textContent).toContain('Done')
+  })
+  it('the latest status of an id replaces the earlier one', () => {
+    render(<Transcript events={[cmd(1, { id: 'a', name: 'compact', status: 'queued' }), cmd(2, { id: 'a', name: 'compact', status: 'done', text: 'ok' })]} />)
+    expect(screen.getAllByRole('article', { name: /^Command/ })).toHaveLength(1)
+    expect(screen.queryByText('Runs when Claude finishes this turn')).toBeNull()
+  })
+  it('long output collapses beyond 6 lines with Show more', () => {
+    const text = Array.from({ length: 10 }, (_, i) => `line ${i + 1}`).join('\n')
+    render(<Transcript events={[cmd(1, { id: 'a', name: 'insights', status: 'done', text })]} />)
+    const out = screen.getByTestId('command-output')
+    expect(out.textContent).toContain('line 6')
+    expect(out.textContent).not.toContain('line 7')
+    fireEvent.click(screen.getByRole('button', { name: 'Show more' }))
+    expect(screen.getByTestId('command-output').textContent).toContain('line 10')
+    expect(screen.getByRole('button', { name: 'Show less' })).toBeTruthy()
+  })
+  it('short output has no Show more', () => {
+    render(<Transcript events={[cmd(1, { id: 'a', name: 'recap', status: 'done', text: 'one\ntwo' })]} />)
+    expect(screen.queryByRole('button', { name: 'Show more' })).toBeNull()
+  })
+})

@@ -199,3 +199,56 @@ func TestHealthReportsDaemonVersion(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "0.0.9", v)
 }
+
+// Plan 8: the mod's command list becomes a session_commands envelope toward the hub.
+func TestSessionCommandsForwarded(t *testing.T) {
+	reg, srv := newTestAPI(t)
+	require.Equal(t, 204, post(t, srv.URL+"/v1/sessions/register", "tok", proto.SessionInfo{ID: "s1"}).StatusCode)
+	next(t, reg) // session_upsert
+	body := proto.SessionCommands{Session: "other", Hash: "h1", Commands: []proto.SessionCommand{
+		{Name: "compact", Source: "builtin", Group: "session"},
+	}}
+	require.Equal(t, 401, post(t, srv.URL+"/v1/sessions/s1/commands", "bad", body).StatusCode)
+	require.Equal(t, 204, post(t, srv.URL+"/v1/sessions/s1/commands", "tok", body).StatusCode)
+	e := next(t, reg)
+	require.Equal(t, "session_commands", e.Type)
+	require.Equal(t, "m1", e.Machine)
+	require.Equal(t, "s1", e.Session)
+	var got proto.SessionCommands
+	require.NoError(t, json.Unmarshal(e.Payload, &got))
+	require.Equal(t, "s1", got.Session) // the path's id wins over the body's
+	require.Equal(t, "h1", got.Hash)
+	require.Equal(t, "compact", got.Commands[0].Name)
+	// unknown session: refused, nothing sent
+	require.Equal(t, 404, post(t, srv.URL+"/v1/sessions/nope/commands", "tok", body).StatusCode)
+	// too many commands
+	many := proto.SessionCommands{Hash: "h", Commands: make([]proto.SessionCommand, maxSessionCommands+1)}
+	require.Equal(t, 400, post(t, srv.URL+"/v1/sessions/s1/commands", "tok", many).StatusCode)
+	require.Equal(t, [][]proto.SessionCommand{body.Commands}, func() (out [][]proto.SessionCommand) {
+		for _, c := range reg.AllCommands() {
+			out = append(out, c.Commands)
+		}
+		return
+	}())
+	reg.Gone("s1")
+	require.Empty(t, reg.AllCommands())
+}
+
+// The daemon bounds each string like the mod does (name/plugin 200, description 300 characters).
+func TestSessionCommandsStringsCapped(t *testing.T) {
+	reg, srv := newTestAPI(t)
+	require.Equal(t, 204, post(t, srv.URL+"/v1/sessions/register", "tok", proto.SessionInfo{ID: "s1"}).StatusCode)
+	next(t, reg)
+	long := strings.Repeat("é", 500)
+	body := proto.SessionCommands{Hash: "h", Commands: []proto.SessionCommand{{Name: long, Description: long, Plugin: long, Source: long, Group: long}}}
+	require.Equal(t, 204, post(t, srv.URL+"/v1/sessions/s1/commands", "tok", body).StatusCode)
+	var got proto.SessionCommands
+	require.NoError(t, json.Unmarshal(next(t, reg).Payload, &got))
+	c := got.Commands[0]
+	require.Equal(t, 200, len([]rune(c.Name)))
+	require.Equal(t, 300, len([]rune(c.Description)))
+	require.Equal(t, 200, len([]rune(c.Plugin)))
+	require.LessOrEqual(t, len([]rune(c.Source)), 20)
+	require.LessOrEqual(t, len([]rune(c.Group)), 20)
+	require.LessOrEqual(t, len(got.Hash), 64)
+}
