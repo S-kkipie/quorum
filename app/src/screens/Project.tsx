@@ -86,7 +86,7 @@ export default function Project({ state, id, onBack, onOpenTickets, onOpenSessio
         <p className="mt-1 text-xs text-zinc-600">
           {ws?.name}{p.repoUrl && ` · ${p.repoUrl}`}{p.syncedAt ? ` · ${p.syncError ? 'last attempt' : 'synced'} ${since(p.syncedAt)}` : ''}
         </p>
-        {p.syncError && <p role="alert" className="mt-2 rounded bg-red-500/10 px-2 py-1 text-xs text-red-300">Sync error: {p.syncError}</p>}
+        {p.syncError && <p role="alert" className="mt-2 rounded bg-red-500/10 px-2 py-1 text-xs [overflow-wrap:anywhere] text-red-300">Sync error: {p.syncError}</p>}
         {error && <p role="alert" className="mt-2 text-xs text-red-400">{error}</p>}
       </div>
 

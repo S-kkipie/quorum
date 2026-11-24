@@ -28,8 +28,8 @@ export default function Projects({ state, wide, selected, onOpen, onOpenSession,
     const list = [...projects].sort((a, b) => projectAttention(state, a.id) - projectAttention(state, b.id) || a.name.localeCompare(b.name))
     return (
     <section key={key} className={wide ? 'flex w-[300px] shrink-0 flex-col' : 'mt-4'}>
-      <h2 className="flex items-center gap-2 px-3 pb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">
-        <span className="h-2.5 w-2.5 rounded-full" style={{ background: color || '#71717a' }} />
+      <h2 className="flex items-start gap-2 px-3 pb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">
+        <span className="mt-0.5 h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: color || '#71717a' }} />
         {title}
         <span className="font-normal text-zinc-600">{list.length}</span>
       </h2>

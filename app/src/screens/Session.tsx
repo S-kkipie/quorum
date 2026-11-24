@@ -14,6 +14,20 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 
 const PAGE = 50
 
+/** True below the Tailwind `sm` breakpoint (640 px). */
+function useNarrow() {
+  const q = '(max-width: 639px)'
+  const [narrow, setNarrow] = useState(() => !!window.matchMedia?.(q).matches)
+  useEffect(() => {
+    const m = window.matchMedia?.(q)
+    if (!m) return
+    const h = () => setNarrow(m.matches)
+    m.addEventListener('change', h)
+    return () => m.removeEventListener('change', h)
+  }, [])
+  return narrow
+}
+
 export default function Session({ state, id, onBack, onEvents, onGuard, busy = false, onViewTerminal, onOpenFile }: {
   state: AppState
   id: string
@@ -27,6 +41,7 @@ export default function Session({ state, id, onBack, onEvents, onGuard, busy = f
   onOpenFile?: (machine: string, path: string) => void
 }) {
   const s = state.sessions[id]
+  const narrow = useNarrow()
   const events = state.events[id] ?? []
   const [hasMore, setHasMore] = useState(true)
   const [dismissed, setDismissed] = useState<Record<string, true>>({})
@@ -90,10 +105,11 @@ export default function Session({ state, id, onBack, onEvents, onGuard, busy = f
             </Button>
           )}
           <div className={`min-w-0 flex-1 truncate text-[15px] font-semibold ${onBack ? '' : 'pl-1.5'}`}>{sessionTitle(s).title}</div>
-          <StatePill state={s.state} />
+          {!narrow && <StatePill state={s.state} />}
           {s.state === 'working' && (
-            <Button variant="secondary" onClick={() => act(() => abortSession(id))} className="min-h-11 shrink-0 gap-1 px-2.5 text-xs">
-              <Square size={11} aria-hidden className="fill-current" />Interrupt
+            <Button variant="secondary" onClick={() => act(() => abortSession(id))} aria-label="Interrupt" title="Interrupt"
+              className={narrow ? 'size-11 shrink-0' : 'min-h-11 shrink-0 gap-1 px-2.5 text-xs'}>
+              <Square size={narrow ? 14 : 11} aria-hidden className="fill-current" />{!narrow && 'Interrupt'}
             </Button>
           )}
           <DropdownMenu>
@@ -118,7 +134,12 @@ export default function Session({ state, id, onBack, onEvents, onGuard, busy = f
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
-        {sub && <div className="truncate pb-1 pl-2.5 text-xs text-zinc-500">{sub}</div>}
+        {(sub || narrow) && (
+          <div className="flex min-w-0 items-center gap-2 pb-1 pl-2.5">
+            {narrow && <StatePill state={s.state} />}
+            {sub && <span className="min-w-0 truncate text-xs text-zinc-500">{sub}</span>}
+          </div>
+        )}
       </header>
       {error && <p role="alert" className="bg-red-950/40 px-3 py-1 text-xs text-red-400">{error}</p>}
       <Transcript

@@ -33,7 +33,7 @@ export default function ProjectCard({ project, sessions, pending, lastActivity =
         {p.summary && <span className="mt-2 line-clamp-2 text-xs leading-snug text-zinc-300">{p.summary}</span>}
         {lastActivity > 0 && <span className="mt-2 block text-xs text-zinc-500">Last activity {since(lastActivity)}</span>}
         {p.syncError && (
-          <span role="alert" title={p.syncError} className="mt-2 line-clamp-3 rounded bg-red-500/10 px-2 py-1 text-xs break-words text-red-300">
+          <span role="alert" title={p.syncError} className="mt-2 line-clamp-3 rounded bg-red-500/10 px-2 py-1 text-xs [overflow-wrap:anywhere] text-red-300">
             Sync error: {p.syncError}
           </span>
         )}

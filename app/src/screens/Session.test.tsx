@@ -101,3 +101,18 @@ describe('Session header', () => {
     expect(container.querySelector('header')!.textContent).not.toContain('/srv/secret-dir')
   })
 })
+
+describe('Session: narrow header', () => {
+  it('Interrupt is icon-only and the state pill moves to the second line', () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener() {}, removeEventListener() {} }))
+    const s = { ...st(), sessions: { a: sess('a', { state: 'working' as any, model: 'opus' }) } }
+    render(<Session state={s} id="a" onEvents={vi.fn()} />)
+    const btn = screen.getByRole('button', { name: 'Interrupt' })
+    expect(btn.textContent).toBe('')
+    const pill = screen.getByText('Working')
+    expect(pill.closest('header')!.querySelectorAll('div')[0].contains(pill)).toBe(false)
+    vi.unstubAllGlobals()
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('[]')))
+    vi.stubGlobal('localStorage', { getItem: () => 'tok', setItem() {}, removeItem() {} })
+  })
+})

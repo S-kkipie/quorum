@@ -1,3 +1,4 @@
+import { middleTruncate } from './truncate'
 import type { Event } from '../proto.gen'
 
 export type ToolKind = 'read' | 'search' | 'edit' | 'write' | 'bash' | 'web_search' | 'web_fetch' | 'skill' | 'agent' | 'todo' | 'mcp' | 'other'
@@ -154,7 +155,7 @@ function describe(name: string, kind: ToolKind, input: any, summary: string): Pi
       }
       return { title: path ? `Edited ${basename(path)}` : summary ? `Edited ${summary}` : name, file: path, diff }
     }
-    case 'write': return { title: path ? `Created ${basename(path)}` : summary ? `Created ${summary}` : name, file: path }
+    case 'write': return { title: path ? `Created ${middleTruncate(basename(path), 24)}` : summary ? `Created ${summary}` : name, file: path }
     case 'bash': {
       const cmd = str(i.command) ?? summary
       const desc = str(i.description)

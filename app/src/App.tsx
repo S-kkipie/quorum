@@ -1,4 +1,5 @@
 import { lazy, useCallback, useEffect, useRef, useState } from 'react'
+import { Plus, Settings } from 'lucide-react'
 import { UNAUTH_EVENT, getToken, listMachines, openTerminal, listProjects, loadProposals, listSessions, listTickets, listWorkspaces, setDevApi, type TicketView } from './lib/api'
 import { connectLive, type Live } from './lib/live'
 import { EarlyLaunches, pendingReducer, type Pending } from './lib/launch'
@@ -180,9 +181,12 @@ function Main() {
 
   // The open session vanished after having been present (closed before its first prompt): leave the dead end.
   const seenSession = useRef<string | null>(null)
+  // Set while going back from a vanished session, so its view is not drawn as "Session not found." meanwhile.
+  const vanished = useRef<string | null>(null)
+  if (current && vanished.current !== current && seenSession.current === current && !state.sessions[current]) vanished.current = current
   useEffect(() => {
-    if (!current) { seenSession.current = null; return }
-    if (state.sessions[current]) seenSession.current = current
+    if (!current) { seenSession.current = null; vanished.current = null; return }
+    if (state.sessions[current]) { seenSession.current = current; vanished.current = null }
     else if (seenSession.current === current) { seenSession.current = null; back() }
   }, [current, state.sessions]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -271,7 +275,7 @@ function Main() {
       base={state.sessions[viewer.sessionId]?.root || state.sessions[viewer.sessionId]?.cwd || ''} onBack={back} />
   )
   const startingView = starting && <Starting pending={pending} terminal={!!(pending && state.machines[pending.machine]?.caps?.terminal)} onBack={back} onViewTerminal={onViewTerminal} />
-  const sessionView = current ? <LazyBoundary><Session key={viewKey} state={state} id={current} onBack={wide ? undefined : back} onEvents={onEvents} onGuard={guardLaunch} busy={launchBusy} onViewTerminal={onViewTerminal} onOpenFile={(machine, path) => current && go({ viewer: { machine, sessionId: current, path } })} /></LazyBoundary> : null
+  const sessionView = current && vanished.current !== current ? <LazyBoundary><Session key={viewKey} state={state} id={current} onBack={wide ? undefined : back} onEvents={onEvents} onGuard={guardLaunch} busy={launchBusy} onViewTerminal={onViewTerminal} onOpenFile={(machine, path) => current && go({ viewer: { machine, sessionId: current, path } })} /></LazyBoundary> : null
   const sessionsList = <Sessions state={state} onOpen={openSession} selected={current} />
   const projectsView = <Projects state={state} wide={wide} selected={project} onOpen={(id) => go({ project: id, projectTickets: null, checkouts: false, ticket: null })} onOpenSession={openSession} onConfig={() => openConfig('')} />
   const configView = config !== null && <Config key={config} state={state} editProject={config || null} onBack={back} />
@@ -339,14 +343,18 @@ function TopBar({ tab, connected, onTab, onLaunch, onConfig }: { tab: Tab; conne
   return (
     <header className="sticky top-0 z-10 flex shrink-0 items-center gap-2 border-b border-zinc-800 bg-zinc-950/90 px-3 py-2 backdrop-blur">
       <h1 className="mr-1 hidden text-base font-semibold sm:block">Quorum</h1>
-      <nav role="tablist" className="flex gap-1">
+      <nav role="tablist" className="flex min-w-0 gap-1">
         <Button variant="ghost" role="tab" aria-selected={tab === 'projects'} onClick={() => onTab('projects')} className={tabCls('projects')}>Projects</Button>
         <Button variant="ghost" role="tab" aria-selected={tab === 'sessions'} onClick={() => onTab('sessions')} className={tabCls('sessions')}>Sessions</Button>
       </nav>
-      <span className="ml-auto flex items-center gap-2">
-        <Button variant="secondary" size="sm" onClick={onConfig} aria-label="Settings" title="Settings" className="min-h-11 text-xs">Settings</Button>
-        <Button size="sm" onClick={onLaunch} className="min-h-11 text-xs">New session</Button>
-        <span className={`h-2 w-2 rounded-full ${connected ? 'bg-emerald-500' : 'bg-amber-500'}`} title={connected ? 'connected' : 'reconnecting…'} />
+      <span className="ml-auto flex shrink-0 items-center gap-2">
+        <Button variant="secondary" size="sm" onClick={onConfig} aria-label="Settings" title="Settings" className="size-11 text-xs min-[380px]:w-auto min-[380px]:px-3">
+          <Settings size={16} aria-hidden className="min-[380px]:hidden" /><span className="hidden min-[380px]:inline">Settings</span>
+        </Button>
+        <Button size="sm" onClick={onLaunch} aria-label="New session" title="New session" className="size-11 text-xs min-[380px]:w-auto min-[380px]:px-3">
+          <Plus size={16} aria-hidden className="min-[380px]:hidden" /><span className="hidden min-[380px]:inline">New session</span>
+        </Button>
+        <span className={`h-2 w-2 shrink-0 rounded-full ${connected ? 'bg-emerald-500' : 'bg-amber-500'}`} title={connected ? 'connected' : 'reconnecting…'} />
         <span className={`hidden text-xs sm:inline ${connected ? 'text-emerald-400' : 'text-amber-400'}`}>{connected ? 'connected' : 'reconnecting…'}</span>
       </span>
     </header>

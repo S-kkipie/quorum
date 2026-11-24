@@ -55,3 +55,18 @@ describe('SessionRowView close action', () => {
     expect(screen.queryByRole('button', { name: 'Session actions' })).toBeNull()
   })
 })
+
+describe('SessionRowView closed row', () => {
+  const closed = (messages: number) => ({ kind: 'closed' as const, id: 'c1', machine: 'm', root: '/r', title: 'Old chat', updatedAt: Date.now(), messages })
+  it('pluralizes the message count', () => {
+    const { unmount } = render(<ul><SessionRowView row={closed(1)} /></ul>)
+    expect(screen.getByText(/· 1 message$/)).toBeTruthy()
+    unmount()
+    render(<ul><SessionRowView row={closed(5)} /></ul>)
+    expect(screen.getByText(/· 5 messages$/)).toBeTruthy()
+  })
+  it('omits the count when unknown', () => {
+    render(<ul><SessionRowView row={closed(0)} /></ul>)
+    expect(screen.queryByText(/message/)).toBeNull()
+  })
+})

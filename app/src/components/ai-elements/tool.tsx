@@ -100,7 +100,7 @@ export const ToolHeader = ({
     >
       <div className="flex min-w-0 flex-1 items-center gap-2">
         {icon ?? <WrenchIcon className="size-4 text-muted-foreground" />}
-        <span className="min-w-0 truncate font-medium text-sm">{title ?? derivedName}</span>
+        <span className="min-w-[12ch] truncate font-medium text-sm">{title ?? derivedName}</span>
         {status === undefined && getStatusBadge(state)}
       </div>
       {meta}

@@ -168,7 +168,7 @@ export default function ToolItem({ item, live, base = '', onOpenFile }: {
     const running = item.status === 'running'
     const view: ToolView = { title: item.description || 'Subagent', icon: 'agent', state: running ? 'running' : /error|fail/i.test(item.status) ? 'error' : 'done' }
     return (
-      <Row name="Agent" view={view} Icon={Bot} tint={KIND.agent.tint} right={item.type ? <span className="shrink-0 truncate text-[13px] text-zinc-600">{item.type}</span> : undefined}>
+      <Row name="Agent" view={view} Icon={Bot} tint={KIND.agent.tint} right={item.type ? <span className="min-w-0 max-w-[35%] shrink truncate text-[13px] text-zinc-600">{item.type}</span> : undefined}>
         <Pre>{clip(item.answer || live || (running ? 'Working…' : '(no answer)'))}</Pre>
       </Row>
     )

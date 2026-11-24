@@ -12,10 +12,15 @@ const sess = (o: Partial<SessionInfo>): SessionInfo => ({
   state: 'idle' as any, contextPct: 0, startedAt: 0, updatedAt: 0, transcriptPath: '', repoUrl: '', branch: '', projectId: '', launchReq: '', herdrPane: '', herdrWorkspace: '', ...o,
 })
 
+function openMenu() {
+  fireEvent.keyDown(screen.getByRole('button', { name: 'More send options' }), { key: 'Enter' })
+}
+
 async function send(s: SessionInfo, label: string) {
   render(<Composer session={s} />)
   fireEvent.change(screen.getByRole('textbox'), { target: { value: 'hello' } })
-  fireEvent.click(screen.getByRole('button', { name: label }))
+  if (label === 'Send') fireEvent.click(screen.getByRole('button', { name: label }))
+  else { openMenu(); fireEvent.click(await screen.findByRole('menuitem', { name: label })) }
   await waitFor(() => expect(fetchMock).toHaveBeenCalled())
   const [url, init] = fetchMock.mock.calls[0]
   return { url, body: JSON.parse(String(init?.body)) }
@@ -42,17 +47,29 @@ describe('Composer', () => {
     const { container } = render(<Composer session={sess({})} />)
     expect(container.querySelector('form [data-slot=input-group] textarea')).toBeTruthy()
   })
-  it('buttons are off without text and while blocked', () => {
+  it('Send and the menu items are off without text and while blocked', async () => {
+    const isOff = (el: HTMLElement) => (el as HTMLButtonElement).disabled || el.getAttribute('aria-disabled') === 'true' || el.hasAttribute('data-disabled')
+    const state = async () => {
+      openMenu()
+      const items = await screen.findAllByRole('menuitem')
+      expect(items.map((i) => i.textContent)).toEqual(['Queue', 'Interrupt and send'])
+      const r = [isOff(screen.getByRole('button', { name: 'Send' })), ...items.map(isOff)]
+      fireEvent.keyDown(items[0], { key: 'Escape' })
+      return r
+    }
     render(<Composer session={sess({ state: 'working' as any })} />)
-    const names = ['Send', 'Queue', 'Interrupt and send']
-    const off = () => names.map((n) => (screen.getByRole('button', { name: n }) as HTMLButtonElement).disabled)
-    expect(off()).toEqual([true, true, true])
+    expect(await state()).toEqual([true, true, true])
     fireEvent.change(screen.getByRole('textbox'), { target: { value: 'hi' } })
-    expect(off()).toEqual([false, false, false])
+    expect(await state()).toEqual([false, false, false])
     cleanup()
     render(<Composer session={sess({ state: 'closed' as any })} />)
-    expect(off()).toEqual([true, true, true])
+    expect(await state()).toEqual([true, true, true])
     expect((screen.getByRole('textbox') as HTMLTextAreaElement).disabled).toBe(true)
+  })
+  it('Queue and Interrupt live in the menu, not as top-level buttons', async () => {
+    render(<Composer session={sess({ state: 'idle' as any })} />)
+    expect(screen.queryByRole('button', { name: 'Queue' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Interrupt and send' })).toBeNull()
   })
   it('Enter adds a new line; Ctrl+Enter sends', async () => {
     render(<Composer session={sess({ state: 'working' as any })} />)
@@ -86,7 +103,8 @@ describe('Composer', () => {
     const s = sess({ state: 'working' as any })
     const a = render(<Composer session={s} />)
     fireEvent.change(screen.getByRole('textbox'), { target: { value: 'hello' } })
-    fireEvent.click(screen.getByRole('button', { name: label }))
+    if (label === 'Send') fireEvent.click(screen.getByRole('button', { name: label }))
+    else { openMenu(); fireEvent.click(await screen.findByRole('menuitem', { name: label })) }
     await waitFor(() => expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe(''))
     a.unmount()
     render(<Composer session={s} />)

@@ -8,6 +8,7 @@ import type { Conversation } from '../proto.gen'
 import SessionRowView from './SessionRow'
 
 const SHOWN = 8
+const PAGE = 100
 type Closed = Extract<SessionRow, { kind: 'closed' }>
 
 /** The project's sessions: live ones first, then the previous conversations of every online checkout. */
@@ -29,6 +30,7 @@ export default function ProjectSessions({ state, projectId, busy = false, onOpen
   const [resumeError, setResumeError] = useState('')
   const [all, setAll] = useState(false)
   const [q, setQ] = useState('')
+  const [limit, setLimit] = useState(PAGE)
   const cb = useRef(onConversations)
   cb.current = onConversations
 
@@ -54,8 +56,13 @@ export default function ProjectSessions({ state, projectId, busy = false, onOpen
   const needle = q.trim().toLowerCase()
   const title = (r: SessionRow) => (r.kind === 'live' ? sessionTitle(r.session).title : r.title)
   let shown = rows
-  if (all) shown = rows.filter((r) => !needle || title(r).toLowerCase().includes(needle))
-  else {
+  let left = 0
+  if (all) {
+    const matches = rows.filter((r) => !needle || title(r).toLowerCase().includes(needle))
+    let n = 0
+    shown = matches.filter((r) => r.kind === 'live' || ++n <= limit)
+    left = matches.filter((r) => r.kind === 'closed').length - limit
+  } else {
     let n = 0
     shown = rows.filter((r) => r.kind === 'live' || ++n <= SHOWN)
   }
@@ -69,12 +76,13 @@ export default function ProjectSessions({ state, projectId, busy = false, onOpen
   return (
     <section>
       <h3 className="mb-1 mt-5 px-3 text-xs font-semibold uppercase tracking-wide text-zinc-400">Sessions</h3>
-      {all && <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by title" aria-label="Search by title" className="mx-3 mb-2 w-[calc(100%-1.5rem)] rounded border border-zinc-800 bg-zinc-900 p-2 text-sm" />}
+      {all && <input value={q} onChange={(e) => { setQ(e.target.value); setLimit(PAGE) }} placeholder="Search by title" aria-label="Search by title" className="mx-3 mb-2 w-[calc(100%-1.5rem)] rounded border border-zinc-800 bg-zinc-900 p-2 text-sm" />}
       {shown.length > 0 && (
         <ul className="divide-y divide-zinc-900 border-y border-zinc-900">
           {shown.map((r) => <SessionRowView key={r.id} row={r} disabled={busy} onOpen={onOpen} onResume={resume} />)}
         </ul>
       )}
+      {all && left > 0 && <button onClick={() => setLimit((l) => l + PAGE)} className="min-h-11 px-3 text-xs text-blue-400">Show more ({left} left)</button>}
       {!all && closedCount > SHOWN && <button onClick={() => setAll(true)} className="min-h-11 px-3 text-xs text-blue-400">See all ({closedCount})</button>}
       {rows.length === 0 && settled && Object.keys(errors).length === 0 && <p className={`${note} text-zinc-500`}>No sessions yet. Start one above.</p>}
       {rows.length === 0 && !settled && fetchable.length > 0 && <p className={`${note} text-zinc-600`}>Loading sessions…</p>}

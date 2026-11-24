@@ -96,7 +96,7 @@ export default function SessionRowView({ row, project, active, disabled, detaile
             {project && <span className="text-zinc-400">{project} · </span>}{row.machine}
           </span>
         </span>
-        <span className="shrink-0 text-xs text-zinc-500">{since(toMs(row.updatedAt))} · {row.messages} msgs</span>
+        <span className="shrink-0 text-xs text-zinc-500">{since(toMs(row.updatedAt))}{row.messages > 0 && ` · ${row.messages} ${row.messages === 1 ? 'message' : 'messages'}`}</span>
       </button>
     </li>
   )

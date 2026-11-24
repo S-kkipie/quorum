@@ -61,6 +61,14 @@ describe('buildTimeline', () => {
     expect(tool(items)).toMatchObject({ kind: 'edit', title: 'Edited a.ts', diff: { add: 2, del: 1 } })
   })
 
+  it('a long file name in the write title keeps its extension', () => {
+    const items = buildTimeline([start('w1', 'Write', { file_path: `${BASE}/out/a-very-long-generated-report-name-2026.html`, content: 'x' }), end('w1')], BASE)
+    const t = (tool(items) as any).title as string
+    expect(t.startsWith('Created ')).toBe(true)
+    expect(t).toContain('…')
+    expect(t.endsWith('2026.html')).toBe(true)
+  })
+
   it('write of html creates one artifact; second write moves it', () => {
     const p = `${BASE}/out/report.html`
     const items = buildTimeline([

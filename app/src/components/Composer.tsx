@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
 import { clearDraft, loadDraft, saveDraft, useDraft } from '../lib/drafts'
-import { ArrowUp, ListPlus, Zap } from 'lucide-react'
+import { ArrowUp, ChevronUp, ListPlus, Zap } from 'lucide-react'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { PromptInput, PromptInputButton, PromptInputFooter, PromptInputSubmit, PromptInputTextarea } from '@/components/ai-elements/prompt-input'
 import { sendPrompt, type PromptMode } from '../lib/api'
 import type { SessionInfo } from '../proto.gen'
@@ -63,10 +64,17 @@ export default function Composer({ session }: { session: SessionInfo }) {
           placeholder="Type a message…"
           className="min-h-14 px-3 py-2 text-sm placeholder:text-zinc-600 disabled:opacity-40"
         />
-        <PromptInputFooter className="flex-wrap justify-end gap-2 px-2 pb-2">
-          <PromptInputButton disabled={off} onClick={() => go('interrupt')} variant="secondary" size="sm" className={`${btn} bg-zinc-800 text-amber-300 hover:bg-zinc-700`}><Zap size={14} aria-hidden />Interrupt and send</PromptInputButton>
-          <PromptInputButton disabled={off} onClick={() => go('queue')} variant="secondary" size="sm" className={`${btn} bg-zinc-800 text-zinc-200 hover:bg-zinc-700`}><ListPlus size={14} aria-hidden />Queue</PromptInputButton>
+        <PromptInputFooter className="justify-end gap-2 px-2 pb-2">
           <PromptInputSubmit disabled={off} aria-label="Send" size="sm" className={`${btn} bg-blue-600 font-medium text-white hover:bg-blue-500`}><ArrowUp size={14} aria-hidden />Send</PromptInputSubmit>
+          <DropdownMenu modal={false}>
+            <DropdownMenuTrigger asChild>
+              <PromptInputButton variant="secondary" size="sm" aria-label="More send options" title="More send options" className={`${btn} size-11 shrink-0 bg-zinc-800 px-0 text-zinc-200 hover:bg-zinc-700`}><ChevronUp size={16} aria-hidden /></PromptInputButton>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" side="top">
+              <DropdownMenuItem className="min-h-11 gap-2.5 px-3" disabled={off} onSelect={() => go('queue')}><ListPlus size={14} aria-hidden className="text-zinc-400" />Queue</DropdownMenuItem>
+              <DropdownMenuItem className="min-h-11 gap-2.5 px-3 text-amber-300" disabled={off} onSelect={() => go('interrupt')}><Zap size={14} aria-hidden />Interrupt and send</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </PromptInputFooter>
       </PromptInput>
     </div>

@@ -1,6 +1,7 @@
 import { ExternalLink, FileCode, FileText, Image } from 'lucide-react'
 import { Artifact, ArtifactActions, ArtifactDescription, ArtifactHeader, ArtifactTitle } from '@/components/ai-elements/artifact'
 import { Button } from '@/components/ui/button'
+import { middleTruncate } from '../../lib/truncate'
 import type { ArtifactItem } from '../../lib/timeline'
 
 const IMAGE = /\.(png|jpe?g|gif|webp|svg)$/i
@@ -33,7 +34,7 @@ export default function ArtifactCard({ item, machine = '', base = '', onOpen }: 
           <Icon size={20} aria-hidden />
         </span>
         <div className="min-w-0 flex-1">
-          <ArtifactTitle className="truncate text-zinc-100">{item.name}</ArtifactTitle>
+          <ArtifactTitle title={item.name} className="line-clamp-2 text-zinc-100 [overflow-wrap:anywhere]">{middleTruncate(item.name, 48)}</ArtifactTitle>
           <ArtifactDescription className="truncate text-xs text-zinc-500">{where}</ArtifactDescription>
         </div>
         {item.inBase && (
