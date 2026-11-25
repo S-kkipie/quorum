@@ -16,9 +16,9 @@ export const shownKey = (r: Shown): string => (r.t === 'agents' ? itemKey(r.agen
 export type SessionTimeline = {
   /** the main conversation: no item of a subagent, consecutive Agent calls grouped */
   main: Shown[]
-  /** each subagent's own items (its prompt is on its AgentItem), in order, its own subagents grouped */
+  /** each subagent's own items (its prompt is on its AgentItem), in order, its own subagents grouped; same keys as `agents` */
   byAgent: Map<string, Shown[]>
-  /** every subagent by id */
+  /** every subagent by its stable key, and by its agent, call and task ids */
   agents: Map<string, AgentItem>
   /** the key of a subagent's item → the key of the main row (its top-level card) that holds it */
   owner: Map<string, string>
@@ -56,17 +56,18 @@ function group(items: Item[]): Shown[] {
  * agent_start was not seen) get one where they start. Sets each AgentItem's steps and last tool.
  */
 export function partitionTimeline(items: Item[]): SessionTimeline {
-  const agents = new Map<string, AgentItem>()
-  for (const it of items) if (it.t === 'agent') agents.set(it.id, it)
+  // by agent id: what the items' `agent` names
+  const byId = new Map<string, AgentItem>()
+  for (const it of items) if (it.t === 'agent') byId.set(it.id, it)
   const lists = new Map<string, Item[]>()
   const made = new Set<AgentItem>()
   const main: Item[] = []
   for (const it of items) {
     const a = agentOf(it)
-    if (a && !agents.has(a)) {
+    if (a && !byId.has(a)) {
       // its card: where its first item is, running while one of its tools runs (fixed below)
-      const card: AgentItem = { t: 'agent', seq: it.seq, id: a, type: '', description: 'Subagent', status: 'completed' }
-      agents.set(a, card)
+      const card: AgentItem = { t: 'agent', seq: it.seq, id: a, key: a, type: '', description: 'Subagent', status: 'completed' }
+      byId.set(a, card)
       made.add(card)
       main.push(card)
     }
@@ -76,7 +77,7 @@ export function partitionTimeline(items: Item[]): SessionTimeline {
       lists.set(a, l)
     } else main.push(it)
   }
-  for (const [id, a] of agents) {
+  for (const [id, a] of byId) {
     const l = lists.get(id) ?? []
     let steps = 0
     let last: string | undefined
@@ -90,29 +91,57 @@ export function partitionTimeline(items: Item[]): SessionTimeline {
     if (last) a.lastTool = last
     if (made.has(a) && running) a.status = 'running'
   }
+  // every card answers to its stable key and to its agent, call and task ids
+  const agents = new Map<string, AgentItem>()
   const byAgent = new Map<string, Shown[]>()
-  for (const [id, l] of lists) byAgent.set(id, group(l))
+  for (const [id, a] of byId) {
+    const shown = group(lists.get(id) ?? [])
+    for (const k of new Set([a.key, a.id, a.toolId, a.bg?.taskId])) {
+      if (!k) continue
+      agents.set(k, a)
+      byAgent.set(k, shown)
+    }
+  }
   const shownMain = group(main)
   // the main row that holds each subagent, then every item of each subagent, nested ones included
-  const cardOf = new Map<string, string>()
+  const cardOf = new Map<AgentItem, string>()
   for (const r of shownMain) {
-    if (r.t === 'agent') cardOf.set(r.id, shownKey(r))
-    else if (r.t === 'agents') for (const a of r.agents) cardOf.set(a.id, shownKey(r))
+    if (r.t === 'agent') cardOf.set(r, shownKey(r))
+    else if (r.t === 'agents') for (const a of r.agents) cardOf.set(a, shownKey(r))
   }
-  const top = (id: string): string | undefined => {
-    const seen = new Set<string>()
-    let cur: string | undefined = id
-    while (cur && !seen.has(cur)) {
-      if (cardOf.has(cur)) return cardOf.get(cur)
-      seen.add(cur)
-      cur = agents.get(cur)?.agent
+  const top = (a: AgentItem | undefined): string | undefined => {
+    const seen = new Set<AgentItem>()
+    while (a && !seen.has(a)) {
+      if (cardOf.has(a)) return cardOf.get(a)
+      seen.add(a)
+      a = a.agent ? agents.get(a.agent) : undefined
     }
     return undefined
   }
   const owner = new Map<string, string>()
   for (const [id, l] of lists) {
-    const k = top(id)
+    const k = top(byId.get(id))
     if (k) for (const it of l) owner.set(itemKey(it), k)
   }
   return { main: shownMain, byAgent, agents, owner }
+}
+
+/** The ask fields this needs: `agent` is the subagent that asks ('' = the main conversation; absent from older mods). */
+export type AskRef = { agent?: string }
+
+/**
+ * The keys of the subagents waiting on an ask, and the subagents above them (so the main card shows
+ * it). An ask that names no agent at all (an older mod) counts for every subagent still working.
+ */
+export function askingAgents(tl: SessionTimeline, asks: readonly AskRef[], live: (a: AgentItem) => boolean): Set<string> {
+  const out = new Set<string>()
+  const mark = (a: AgentItem | undefined) => {
+    const seen = new Set<AgentItem>()
+    while (a && !seen.has(a)) { seen.add(a); out.add(a.key); a = a.agent ? tl.agents.get(a.agent) : undefined }
+  }
+  for (const ask of asks) {
+    if (typeof ask.agent === 'string') { if (ask.agent) mark(tl.agents.get(ask.agent)) }
+    else for (const a of new Set(tl.agents.values())) if (live(a)) mark(a)
+  }
+  return out
 }

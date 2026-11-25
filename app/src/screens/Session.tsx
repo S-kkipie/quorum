@@ -153,6 +153,7 @@ export default function Session({ state, id, onBack, onEvents, onTrim, onSeen, o
     )
   }
   const asks = Object.values(state.asks).filter((a) => a.session === id && !dismissed[a.askId])
+  const dismissAsk = (askId: string) => setDismissed((d) => ({ ...d, [askId]: true }))
   const closed = s.state === 'closed'
   const item = 'min-h-11 gap-2.5 px-3'
   const ctxTone = contextTone(s.contextPct)
@@ -261,6 +262,8 @@ export default function Session({ state, id, onBack, onEvents, onTrim, onSeen, o
         liveAgent={state.liveAgent[id]}
         working={s.state === 'working'}
         bgEnded={bgEnded}
+        asks={asks}
+        onAskDone={dismissAsk}
         hasMore={hasMore}
         loading={loading}
         notice={notice}
@@ -270,7 +273,7 @@ export default function Session({ state, id, onBack, onEvents, onTrim, onSeen, o
         onOpenFile={onOpenFile ? (path, o) => (o ? onOpenFile(s.machine, path, o) : onOpenFile(s.machine, path)) : undefined}
         focus={focus}
       />
-      {asks.map((a) => <AskCard key={a.askId} session={id} ask={a} onDone={() => setDismissed((d) => ({ ...d, [a.askId]: true }))} />)}
+      {asks.map((a) => <AskCard key={a.askId} session={id} ask={a} onDone={() => dismissAsk(a.askId)} />)}
       <Composer session={s} commands={state.commands[id]} />
       </div>
       <Inspector placement={layout.inspector} open={layout.inspectorOpen} onClose={layout.toggleInspector} ignore={toggleRef}

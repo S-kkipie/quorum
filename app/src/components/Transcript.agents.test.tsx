@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 
-vi.mock('../lib/api', () => ({ createView: vi.fn(), hubUrl: () => '' }))
+const decide = vi.fn(async (..._a: any[]) => {})
+vi.mock('../lib/api', () => ({ createView: vi.fn(), hubUrl: () => '', decide: (...a: any[]) => decide(...a) }))
 import Transcript from './Transcript'
 import { SHOWN_MAX } from './timeline/AgentScreen'
-import type { Event } from '../proto.gen'
+import type { Ask, Event } from '../proto.gen'
 
 afterEach(cleanup)
 let n = 0
@@ -92,20 +93,25 @@ describe('Transcript with subagents', () => {
     const el = screen.getByTestId('agent-screen')
     expect(el.className).toContain('w-full')
     expect(el.className).not.toContain('max-w-sm')
-    expect(el.style.getPropertyValue('--accent')).toBe('var(--state-background)')
+    expect(within(el).getByTestId('agent-accent').style.getPropertyValue('--accent')).toBe('var(--state-background)')
     expect(within(el).getByRole('button', { name: 'Back to the session' }).className).toContain('size-11')
     expect(within(el).queryByRole('button', { name: /stop/i })).toBeNull()
   })
-  it('a long subagent renders its last items, with Show earlier', () => {
+  it('a long subagent renders its last 100 items (virtualized), with Show earlier', () => {
+    expect(SHOWN_MAX).toBe(100)
     const many: Event[] = [call('t1', 'busy'), ev('agent_start', { id: 'A', type: 'x', description: 'busy', tool: 't1' })]
     for (let i = 0; i < SHOWN_MAX + 5; i++) many.push(ev('assistant', { text: `step ${i}`, agent: 'A' }))
     render(<Transcript events={many} />)
     fireEvent.click(screen.getByRole('button', { name: /busy/ }))
-    const s = within(screen.getByTestId('agent-screen'))
-    expect(s.queryByText('step 0')).toBeNull()
-    expect(s.getByText(`step ${SHOWN_MAX + 4}`)).toBeTruthy()
+    const el = screen.getByTestId('agent-screen')
+    const s = within(el)
+    const shown = () => [...el.querySelectorAll('[data-index]')].map((e) => e.textContent ?? '')
+    // virtualized: only rows near the viewport are in the DOM, and none of the 5 oldest
+    expect(shown().length).toBeGreaterThan(0)
+    expect(shown().length).toBeLessThan(SHOWN_MAX)
+    for (let i = 0; i < 5; i++) expect(s.queryByText(`step ${i}`)).toBeNull()
     fireEvent.click(s.getByRole('button', { name: 'Show earlier (5)' }))
-    expect(s.getByText('step 0')).toBeTruthy()
+    expect(s.queryByRole('button', { name: /Show earlier/ })).toBeNull()
   })
 })
 
@@ -113,5 +119,76 @@ describe('Transcript indicator', () => {
   it('a subagent thinking is not the session thinking', () => {
     render(<Transcript events={[ev('user', { text: 'x' }), ev('thinking', { text: '', agent: 'A' })]} />)
     expect(screen.queryByText('Thinking…')).toBeNull()
+  })
+})
+
+const ask = (o: Partial<Ask> = {}): Ask => ({ askId: 'q1', kind: 'permission', tool: 'Bash', summary: 'rm -rf build', detail: '{}', questions: null, ...o })
+
+describe('asks while a subagent screen is open', () => {
+  it('an ask that arrives is shown on the screen and can be answered there, in the session colours', async () => {
+    const onAskDone = vi.fn()
+    const { rerender } = render(<Transcript sessionId="s" events={events()} />)
+    fireEvent.click(screen.getByRole('button', { name: /audit reducer/ }))
+    rerender(<Transcript sessionId="s" events={events()} asks={[ask({ agent: 'A' })]} onAskDone={onAskDone} />)
+    const el = screen.getByTestId('agent-screen')
+    const asks = within(el).getByTestId('agent-asks')
+    expect(within(asks).getByText('rm -rf build')).toBeTruthy()
+    // the asks sit outside the violet part
+    expect(within(el).getByTestId('agent-accent').contains(asks)).toBe(false)
+    expect(within(el).getAllByText('Needs your answer').length).toBeGreaterThan(0)
+    fireEvent.click(within(asks).getByRole('button', { name: /Allow/ }))
+    await waitFor(() => expect(decide).toHaveBeenCalledWith('s', expect.objectContaining({ askId: 'q1', decision: 'allow' })))
+  })
+  it('the asks stay pinned on a nested screen too', () => {
+    render(<Transcript sessionId="s" events={events()} asks={[ask({ agent: 'N' })]} />)
+    fireEvent.click(screen.getByRole('button', { name: /audit reducer/ }))
+    let s = within(screen.getByTestId('agent-screen'))
+    // the parent shows that something inside it waits
+    expect(s.getAllByText('Needs your answer').length).toBeGreaterThan(0)
+    fireEvent.click(s.getByRole('button', { name: /dig deeper/ }))
+    s = within(screen.getByTestId('agent-screen'))
+    expect(within(s.getByTestId('agent-asks')).getByText('rm -rf build')).toBeTruthy()
+  })
+  it('the card says which subagent waits; a main-conversation ask marks none; an older mod\'s ask marks the working ones', () => {
+    const { rerender } = render(<Transcript events={events()} asks={[ask({ agent: 'C' })]} />)
+    expect(screen.getByText('1 need your answer · 1 running · 1 done')).toBeTruthy()
+    rerender(<Transcript events={events()} asks={[ask({ agent: '' })]} />)
+    expect(screen.queryByText(/need your answer/)).toBeNull()
+    rerender(<Transcript events={events()} asks={[ask()]} />)
+    expect(screen.getByText('2 need your answer · 1 done')).toBeTruthy()
+  })
+})
+
+describe('stable subagent screens', () => {
+  it('a card tapped before its agent_start keeps its screen open and fills in', () => {
+    const first = [ev('user', { text: 'go' }), call('t9', 'early')]
+    const { rerender } = render(<Transcript events={first} />)
+    fireEvent.click(screen.getByRole('button', { name: /early/ }))
+    expect(within(screen.getByTestId('agent-screen')).getByText('Nothing from this subagent yet.')).toBeTruthy()
+    rerender(<Transcript events={[...first, ev('agent_start', { id: 'E', type: 'Explore', description: 'early', tool: 't9' }), ...bash('e1', 'make early', 'E')]} />)
+    expect(within(screen.getByTestId('agent-screen')).getByText('make early')).toBeTruthy()
+  })
+  it('a screen whose subagent left the timeline closes', () => {
+    const { rerender } = render(<Transcript events={events()} />)
+    fireEvent.click(screen.getByRole('button', { name: /audit hub/ }))
+    expect(screen.getByTestId('agent-screen')).toBeTruthy()
+    rerender(<Transcript events={[ev('user', { text: 'new page' })]} />)
+    expect(screen.queryByTestId('agent-screen')).toBeNull()
+  })
+  it('a nested subagent tagged only by its parent (no call id) is a card inside the parent', () => {
+    const evs = [call('t1', 'parent'), ev('agent_start', { id: 'P', type: 'x', description: 'parent', tool: 't1' }),
+      ev('agent_start', { id: 'K', type: 'Plan', description: 'only tagged', agent: 'P' }), ...bash('k1', 'make kid', 'K')]
+    render(<Transcript events={evs} />)
+    expect(screen.queryByText('only tagged')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /parent/ }))
+    fireEvent.click(within(screen.getByTestId('agent-screen')).getByRole('button', { name: /only tagged/ }))
+    expect(within(screen.getByTestId('agent-screen')).getByText('make kid')).toBeTruthy()
+  })
+  it('a subagent still working stays in view when a compact folds the conversation', () => {
+    render(<Transcript events={[ev('user', { text: 'old' }), call('t1', 'long job'), ev('agent_start', { id: 'L', type: 'x', description: 'long job', tool: 't1' }),
+      ev('compact', { at: 1, trigger: 'auto' }), ev('assistant', { text: 'after' })]} />)
+    expect(screen.getByRole('button', { name: /Earlier conversation/ })).toBeTruthy()
+    expect(screen.queryByText('old')).toBeNull()
+    expect(screen.getByRole('button', { name: /long job/ })).toBeTruthy()
   })
 })

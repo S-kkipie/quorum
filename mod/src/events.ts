@@ -191,14 +191,14 @@ export function makeHandlers(
     },
 
     /**
-     * agent.spawn answered: `agent_start` names the Agent call that started it (`tool`, absent when
-     * no call did) and, for a subagent spawned by another, its parent (`agent`, like its events).
+     * agent.spawn answered: `agent_start` names the Agent call that started it (`tool`, '' when no
+     * call did) and, for a subagent spawned by another, its parent (`agent`, like its events).
      */
     agentSpawn(e: { subagentType?: string; description?: string; tool_use_id?: string; parentAgentId?: string }, r: { agentId?: string } | undefined): void {
       safe(l => {
         if (!full(l) || !r?.agentId) return
-        const tool = e.tool_use_id ? { tool: e.tool_use_id } : {}
-        l.emit({ kind: 'agent_start', data: tag(e.parentAgentId, { id: r.agentId, type: e.subagentType ?? '', description: e.description ?? '', ...tool }) })
+        // `tool` is always sent ('' when no call started it), so the app tells it from an older mod's event
+        l.emit({ kind: 'agent_start', data: tag(e.parentAgentId, { id: r.agentId, type: e.subagentType ?? '', description: e.description ?? '', tool: e.tool_use_id ?? '' }) })
       })
     },
 

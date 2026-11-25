@@ -352,7 +352,8 @@ export const register: Register = on => {
 
   on('agent.spawn', async ($, e, next) => {
     const r = await next(e)
-    h.agentSpawn(e as never, r as never)
+    // read field by field: the typecheck confirms the host's names
+    h.agentSpawn({ subagentType: e.subagentType, description: e.description, tool_use_id: e.tool_use_id, parentAgentId: e.parentAgentId }, r as never)
     quorum.control?.agentSpawned((r as { agentId?: string } | undefined)?.agentId, e as never)
     return r
   })

@@ -283,7 +283,7 @@ test('main-thread tool.check ask → race: terminal dialog and device ask at onc
   const p = f.control.permission({ tool: 'Bash', input: { command: 'rm x' }, tool_use_id: 'u1' }, { decision: 'ask' }, h.hook)
   await flush()
   expect(h.qs).toEqual(['Bash: rm x'])
-  expect(f.evs[0]).toEqual({ kind: 'ask', data: { askId: 'a1', kind: 'permission', tool: 'Bash', summary: 'rm x', detail: '{"command":"rm x"}', questions: null } })
+  expect(f.evs[0]).toEqual({ kind: 'ask', data: { askId: 'a1', kind: 'permission', tool: 'Bash', summary: 'rm x', detail: '{"command":"rm x"}', questions: null, agent: '' } })
   expect(f.updates).toEqual([{ state: 'needs_you' }])
   expect(h.held.length).toBe(1)
   await f.control.handle(cmd({ type: 'decide', askId: 'a1', decision: 'allow' }))
@@ -384,6 +384,8 @@ test('a subagent tool.check also runs the race; its end withdraws only its ask',
   await flush()
   expect(hs.qs).toEqual(['Bash: ls'])
   expect(f.control.asks.pending).toEqual(['a1', 'a2'])
+  // each ask names who asks: the subagent, or '' for the main conversation
+  expect(f.evs.filter(e => e.kind === 'ask').map(e => e.data.agent)).toEqual(['ag1', ''])
   f.control.turnEnd({ agentId: 'ag1' })
   expect(await sub).toEqual({ decision: 'deny', reason: 'Turn interrupted' })
   expect(f.control.asks.pending).toEqual(['a2'])

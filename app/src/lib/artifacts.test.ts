@@ -40,4 +40,13 @@ describe('artifactLinks', () => {
       expect(urls).toEqual([own])
     } finally { vi.unstubAllGlobals() }
   })
+  it('finds links in a subagent\'s task and answer (the Agent call is its card)', () => {
+    const out = artifactLinks([
+      ev(1, 'tool_start', { id: 'tu', name: 'Agent', summary: '', input: { description: 'd', prompt: 'Update /v/aa11/brief.md' } }),
+      ev(2, 'agent_start', { id: 'ag', type: 'x', description: 'd', tool: 'tu' }),
+      ev(3, 'agent_end', { id: 'ag', status: 'completed', answer: 'Wrote /v/bb22/out.html' }),
+      ev(4, 'tool_end', { id: 'tu', ok: true, output: 'Wrote /v/bb22/out.html' }),
+    ])
+    expect(out.map((l) => [l.url, l.eventKey])).toEqual([['/v/aa11/brief.md', 'agent:1'], ['/v/bb22/out.html', 'agent:1']])
+  })
 })

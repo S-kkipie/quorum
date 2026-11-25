@@ -6,7 +6,7 @@ import type { AgentItem } from '../../lib/timeline'
 
 afterEach(() => { cleanup(); vi.useRealTimers() })
 const T0 = 1_800_000_000_000
-const agent = (o: Partial<AgentItem> = {}): AgentItem => ({ t: 'agent', seq: 1, id: 'a', type: 'Explore', description: 'find callers', status: 'running', steps: 0, ...o })
+const agent = (o: Partial<AgentItem> = {}): AgentItem => ({ t: 'agent', seq: 1, id: 'a', key: o.id ?? 'a', type: 'Explore', description: 'find callers', status: 'running', steps: 0, ...o })
 
 describe('AgentCard', () => {
   it('one subagent: status, type, steps, live clock, last tool and tokens', () => {
@@ -72,5 +72,22 @@ describe('AgentCard', () => {
     expect(elapsed(0)).toBe('0s')
     expect(elapsed(59_999)).toBe('59s')
     expect(elapsed(3_723_000)).toBe('1h 02m')
+  })
+  it('a finished card with no recorded steps does not say 0 steps; a working one does', () => {
+    const { rerender } = render(<AgentCard agents={[agent({ status: 'completed', steps: 0 })]} onOpen={() => {}} />)
+    expect(screen.queryByText('0 steps')).toBeNull()
+    rerender(<AgentCard agents={[agent({ steps: 0 })]} onOpen={() => {}} />)
+    expect(screen.getByText('0 steps')).toBeTruthy()
+  })
+  it('an ask on a subagent: Needs your answer on its line, by key', () => {
+    render(<AgentCard agents={[agent({ key: 'k1', id: 'other' })]} asking={new Set(['k1'])} onOpen={() => {}} />)
+    expect(screen.getByText('Needs your answer')).toBeTruthy()
+    expect(screen.getByLabelText('needs your answer')).toBeTruthy()
+  })
+  it('the group header controls its list', () => {
+    render(<AgentCard onOpen={() => {}} agents={[agent({ seq: 1, id: 'a' }), agent({ seq: 2, id: 'b', key: 'b' })]} />)
+    const head = screen.getByRole('button', { name: /2 subagents/ })
+    const id = head.getAttribute('aria-controls')!
+    expect(document.getElementById(id)?.contains(screen.getAllByTestId('agent-line')[0])).toBe(true)
   })
 })

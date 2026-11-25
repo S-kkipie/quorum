@@ -365,6 +365,10 @@ export interface Ask {
   summary: string;
   detail: string;
   questions: any /* json.RawMessage */;
+  /**
+   * Agent is the subagent that asks ("" for the main conversation); absent from older mods.
+   */
+  agent?: string;
 }
 export interface AskResolved {
   askId: string;

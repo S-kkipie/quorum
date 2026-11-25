@@ -24,7 +24,7 @@ function nameOf(url: string): string {
 }
 
 /**
- * Local-artifact links in tool results and answers, one per URL (the first sighting wins). `hub` is
+ * Local-artifact links in tool results, answers and subagents' tasks and answers, one per URL (the first sighting wins). `hub` is
  * the hub address (api.ts `hubUrl()`; empty: this page's origin).
  */
 export const artifactLinks = (events: Event[], hub = ''): ArtifactLink[] => artifactLinksOf(buildTimeline(events, ''), hub)
@@ -43,6 +43,8 @@ export function artifactLinksOf(items: Item[], hub = ''): ArtifactLink[] {
   for (const it of items) {
     if (it.t === 'tool' && it.output) scan(it.output, itemKey(it))
     else if (it.t === 'assistant') scan(it.text, itemKey(it))
+    // a subagent's card: links in its task and in its answer (its Agent call's result)
+    else if (it.t === 'agent') { if (it.prompt) scan(it.prompt, itemKey(it)); if (it.answer) scan(it.answer, itemKey(it)) }
   }
   return [...out.values()]
 }

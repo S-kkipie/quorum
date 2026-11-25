@@ -44,7 +44,7 @@ test('a device wins (allow): no ask_resolved from the mod; the late terminal ans
   const p = permissionRace(f.deps, f.a)
   await flush()
   expect(f.questions).toEqual(['Write: /x/hola.txt'])
-  expect(f.evs[0]).toEqual({ kind: 'ask', data: { askId: 'a1', kind: 'permission', tool: 'Write', summary: '/x/hola.txt', detail: '{"file_path":"/x/hola.txt"}', questions: null } })
+  expect(f.evs[0]).toEqual({ kind: 'ask', data: { askId: 'a1', kind: 'permission', tool: 'Write', summary: '/x/hola.txt', detail: '{"file_path":"/x/hola.txt"}', questions: null, agent: '' } })
   expect(f.sleeps.map(s => s.ms)).toEqual([HOLD_MAX_MS])
   expect(f.held.length).toBe(1)
   f.asks.resolve('a1', { decision: 'allow' })

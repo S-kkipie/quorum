@@ -1,4 +1,4 @@
-import { useState, type CSSProperties, type ReactNode } from 'react'
+import { useMemo, useState, type CSSProperties, type ReactNode } from 'react'
 import { Bot, ChevronLeft, ChevronsUp } from 'lucide-react'
 import { useStickToBottomContext } from 'use-stick-to-bottom'
 import { Conversation, ConversationScrollButton } from '@/components/ai-elements/conversation'
@@ -7,6 +7,9 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet'
 import { formatTokens } from '../../lib/meters'
 import { shownKey, type SessionTimeline, type Shown } from '../../lib/subagents'
+import type { Ask } from '../../proto.gen'
+import AskCard from '../AskCard'
+import VirtualRows from './VirtualRows'
 import { agentClock, agentPhase, PHASE_LABEL, PhaseIcon, steps, useNow } from './AgentCard'
 
 /**
@@ -21,7 +24,7 @@ const VIOLET = {
 } as CSSProperties
 
 /** Items a subagent screen renders at first; older ones come back with "Show earlier". */
-export const SHOWN_MAX = 300
+export const SHOWN_MAX = 100
 
 /** Claude's answers, as the main transcript sets them. */
 const answer = 'w-full max-w-[70ch] break-words font-serif text-[15.5px] leading-[1.6] text-ink'
@@ -42,9 +45,15 @@ function Scroll({ children }: { children: ReactNode }) {
  * subagents are cards that open on top (Back returns to it). Full screen on a phone, a wide side
  * sheet on a desktop. Quorum has no way to stop a single subagent, so there is no Stop here.
  */
-export default function AgentScreen({ stack, tl, liveAgent, bgEnded, render, onBack, onClose }: {
-  /** the open subagents, outermost first: the last one is shown */
+export default function AgentScreen({ stack, tl, liveAgent, bgEnded, asking, sessionId = '', asks = [], onAskDone, render, onBack, onClose }: {
+  /** the open subagents by stable key, outermost first: the last one is shown */
   stack: string[]
+  /** keys of the subagents an ask waits on */
+  asking?: ReadonlySet<string>
+  /** the session's open asks: answerable here too, pinned under every screen */
+  sessionId?: string
+  asks?: Ask[]
+  onAskDone?: (askId: string) => void
   tl: SessionTimeline
   /** streamed text of running subagents, by id */
   liveAgent?: Record<string, string>
@@ -56,33 +65,42 @@ export default function AgentScreen({ stack, tl, liveAgent, bgEnded, render, onB
 }) {
   const id = stack[stack.length - 1]
   const a = id ? tl.agents.get(id) : undefined
+  // the screen's own key: its stable key, so a card whose ids fill in later keeps its screen
   return (
     <Sheet open={!!a} onOpenChange={(o) => { if (!o) onClose() }}>
       {a && (
-        <SheetContent side="right" showCloseButton={false} style={VIOLET} data-testid="agent-screen"
+        <SheetContent side="right" showCloseButton={false} data-testid="agent-screen"
           className="w-full gap-0 border-line bg-background p-0 pt-[env(safe-area-inset-top,0px)] sm:max-w-none lg:w-[min(48rem,64vw)]">
-          <Body key={id} id={id} tl={tl} live={liveAgent?.[id]} bgEnded={bgEnded} render={render} onBack={onBack}
-            backLabel={stack.length > 1 ? 'Back to the parent subagent' : 'Back to the session'} />
+          {/* the violet accent covers the subagent's own part; asks keep the session's colours */}
+          <div data-testid="agent-accent" style={VIOLET} className="flex min-h-0 flex-1 flex-col">
+            <Body key={a.key} id={a.key} tl={tl} live={liveAgent?.[a.id]} bgEnded={bgEnded} asking={!!asking?.has(a.key)} render={render} onBack={onBack}
+              backLabel={stack.length > 1 ? 'Back to the parent subagent' : 'Back to the session'} />
+          </div>
+          {asks.length > 0 && (
+            <div data-testid="agent-asks" className="max-h-[50dvh] shrink-0 overflow-y-auto border-t border-line pb-[env(safe-area-inset-bottom,0px)]">
+              {asks.map((q) => <AskCard key={q.askId} session={sessionId} ask={q} onDone={() => onAskDone?.(q.askId)} />)}
+            </div>
+          )}
         </SheetContent>
       )}
     </Sheet>
   )
 }
 
-function Body({ id, tl, live, bgEnded, render, onBack, backLabel }: {
-  id: string; tl: SessionTimeline; live?: string; bgEnded?: (taskId: string) => boolean
+function Body({ id, tl, live, bgEnded, asking, render, onBack, backLabel }: {
+  id: string; tl: SessionTimeline; live?: string; bgEnded?: (taskId: string) => boolean; asking: boolean
   render: (r: Shown) => ReactNode; onBack: () => void; backLabel: string
 }) {
   const a = tl.agents.get(id)!
-  const phase = agentPhase(a, bgEnded)
-  const working = phase === 'running' || phase === 'background'
+  const phase = agentPhase(a, bgEnded, asking)
+  const working = phase === 'running' || phase === 'asking' || phase === 'background'
   const now = useNow(working && !!a.startedAt)
   const clock = agentClock(a, phase, now)
   const rows = tl.byAgent.get(id) ?? []
   const [more, setMore] = useState(0)
   const cap = SHOWN_MAX + more
   const hidden = Math.max(0, rows.length - cap)
-  const shown = hidden ? rows.slice(hidden) : rows
+  const list = useMemo(() => (hidden ? rows.slice(hidden) : rows).map((item) => ({ key: shownKey(item), item })), [rows, hidden])
   const answered = rows.some((r) => r.t === 'assistant')
   const parent = a.agent ? tl.agents.get(a.agent) : undefined
   return (
@@ -101,13 +119,13 @@ function Body({ id, tl, live, bgEnded, render, onBack, backLabel }: {
             {[a.type || 'subagent', parent ? `inside ${parent.description || 'a subagent'}` : ''].filter(Boolean).join(' · ')}
           </SheetDescription>
         </div>
-        <span className="flex shrink-0 items-center gap-1.5 rounded-full bg-accent-soft px-2.5 py-1 text-xs font-medium text-accent">
+        <span className={`flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${phase === 'asking' ? 'bg-state-needs-soft text-state-needs' : 'bg-accent-soft text-accent'}`}>
           <PhaseIcon phase={phase} />{PHASE_LABEL[phase]}
         </span>
       </header>
       <div className="flex flex-wrap gap-1.5 px-3 py-2 text-xs text-muted-foreground">
         {clock && <span className="rounded-full bg-chip px-2.5 py-1 tabular-nums">{clock}</span>}
-        <span className="rounded-full bg-chip px-2.5 py-1">{steps(a.steps)}</span>
+        {(!!a.steps || working) && <span className="rounded-full bg-chip px-2.5 py-1">{steps(a.steps)}</span>}
         {!!a.tokens && <span className="rounded-full bg-chip px-2.5 py-1">{`${formatTokens(a.tokens)} tok`}</span>}
       </div>
       <Conversation className="min-h-0 flex-1" initial="instant">
@@ -125,7 +143,7 @@ function Body({ id, tl, live, bgEnded, render, onBack, backLabel }: {
               <ChevronsUp size={16} aria-hidden />{`Show earlier (${hidden})`}
             </button>
           )}
-          {shown.map((r) => <div key={shownKey(r)} className="flex flex-col">{render(r)}</div>)}
+          <VirtualRows rows={list} render={(r) => render(r.item)} />
           {working && live && (
             <Message from="assistant" role="article" aria-label="Subagent" className="my-2 max-w-full">
               <MessageContent className={answer}><MessageResponse isAnimating>{live}</MessageResponse></MessageContent>

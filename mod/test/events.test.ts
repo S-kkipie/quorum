@@ -97,11 +97,13 @@ test('agent_start names its Agent call and the agent that spawned it', async () 
   h.agentSpawn({ subagentType: 'Explore', description: 'look', tool_use_id: 'tu1' }, { agentId: 'ag1' })
   h.agentSpawn({ subagentType: 'Plan', description: 'deeper', tool_use_id: 'tu2', parentAgentId: 'ag1' }, { agentId: 'ag2' })
   h.agentSpawn({ subagentType: 'fork', description: 'f', tool_use_id: '' }, { agentId: 'ag3' })
+  h.agentSpawn({ subagentType: 'fork', description: 'g', parentAgentId: 'ag1' }, { agentId: 'ag4' })
   await flush()
   expect(f.evs.map(e => e.data)).toEqual([
     { id: 'ag1', type: 'Explore', description: 'look', tool: 'tu1' },
     { agent: 'ag1', id: 'ag2', type: 'Plan', description: 'deeper', tool: 'tu2' },
-    { id: 'ag3', type: 'fork', description: 'f' },
+    { id: 'ag3', type: 'fork', description: 'f', tool: '' },
+    { agent: 'ag1', id: 'ag4', type: 'fork', description: 'g', tool: '' },
   ])
 })
 
@@ -126,7 +128,7 @@ test('subagent: events with agent and without changing the state', async () => {
   h.turnComplete({ answer: 'z'.repeat(3000), agentId: 'ag1' })
   await flush()
   expect(f.kinds()).toEqual(['agent_start', 'assistant_delta', 'assistant_delta', 'assistant', 'tool_start', 'agent_end'])
-  expect(f.evs[0].data).toEqual({ id: 'ag1', type: 'Explore', description: 'busca' })
+  expect(f.evs[0].data).toEqual({ id: 'ag1', type: 'Explore', description: 'busca', tool: '' })
   for (const e of f.evs.filter(e => ['assistant_delta', 'assistant', 'tool_start'].includes(e.kind))) expect(e.data.agent).toBe('ag1')
   const end = f.evs[f.evs.length - 1].data
   expect(end.status).toBe('completed')

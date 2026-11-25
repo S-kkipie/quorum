@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { observeElementRect, useVirtualizer } from '@tanstack/react-virtual'
 import { ChevronsUp, Loader2 } from 'lucide-react'
 import { useStickToBottomContext } from 'use-stick-to-bottom'
 import { Conversation, ConversationScrollButton } from '@/components/ai-elements/conversation'
@@ -8,10 +7,11 @@ import { cn } from '@/lib/utils'
 import { Message, MessageContent, MessageResponse } from '@/components/ai-elements/message'
 import { PathLinksProvider } from '@/components/ai-elements/pathLinks'
 import { Shimmer } from '@/components/ai-elements/shimmer'
-import type { Event } from '../proto.gen'
+import type { Ask, Event } from '../proto.gen'
 import { formatTokens } from '../lib/meters'
 import { buildTimeline, type OpenOpts } from '../lib/timeline'
-import { partitionTimeline, shownKey, type Shown } from '../lib/subagents'
+import { askingAgents, partitionTimeline, shownKey, type Shown } from '../lib/subagents'
+import { agentPhase, live as isLive } from './timeline/AgentCard'
 import ArtifactCard from './timeline/ArtifactCard'
 import CommandCard from './timeline/CommandCard'
 import PastedImages from './timeline/PastedImages'
@@ -20,6 +20,7 @@ import { splitUploads } from '../lib/attachments'
 import ToolItem from './timeline/ToolItem'
 import AgentCard from './timeline/AgentCard'
 import AgentScreen from './timeline/AgentScreen'
+import VirtualRows from './timeline/VirtualRows'
 import TaskCard from './TaskCard'
 
 /**
@@ -77,55 +78,6 @@ type Row = { key: string } & ({ kind: 'item'; item: Shown } | { kind: 'earlier';
 /** A request to scroll to a row by its key; a new `n` asks again for the same key. */
 export type Focus = { key: string; n: number }
 
-/** A row height before it is measured. */
-const ESTIMATE = 72
-
-/**
- * The scroll element's size; one that is not laid out (hidden, or a test DOM) counts as a screenful
- * so the first rows still render.
- */
-const observeRect: typeof observeElementRect = (instance, cb) =>
-  observeElementRect(instance, (r) => cb(r.height > 0 ? r : { width: r.width, height: window.innerHeight || 800 }))
-
-/** Renders only the rows near the viewport of the Conversation's scroll element; heights are measured. */
-function VirtualRows({ rows, render, focus }: { rows: Row[]; render: (r: Row) => ReactNode; focus?: Focus }) {
-  const { scrollRef } = useStickToBottomContext()
-  const list = useRef<HTMLDivElement>(null)
-  // the scroll element's ref is attached after this child's layout effects: render again once it is
-  const [, setMounted] = useState(false)
-  useEffect(() => setMounted(true), [])
-  const v = useVirtualizer({
-    count: rows.length,
-    getScrollElement: () => scrollRef.current,
-    estimateSize: () => ESTIMATE,
-    getItemKey: (i) => rows[i].key,
-    overscan: 6,
-    scrollMargin: list.current?.offsetTop ?? 0,
-    observeElementRect: observeRect,
-  })
-  // scroll to the requested row once it is in the list (a folded one is unfolded by the parent first)
-  const done = useRef(0)
-  const at = focus ? rows.findIndex((r) => r.key === focus.key) : -1
-  useEffect(() => {
-    if (!focus || at < 0 || done.current === focus.n) return
-    done.current = focus.n
-    v.scrollToIndex(at, { align: 'center' })
-  }, [focus, at, v])
-  const items = v.getVirtualItems()
-  const margin = v.options.scrollMargin
-  return (
-    <div ref={list} className="relative w-full" style={{ height: v.getTotalSize() }}>
-      {items.map((it) => (
-        // flex column: the rows' own vertical margins stay inside the measured box
-        <div key={it.key} data-index={it.index} ref={v.measureElement} className="absolute left-0 top-0 flex w-full flex-col"
-          style={{ transform: `translateY(${it.start - margin}px)` }}>
-          {render(rows[it.index])}
-        </div>
-      ))}
-    </div>
-  )
-}
-
 const pad2 = (n: number) => String(n).padStart(2, '0')
 /** Local wall-clock time, HH:MM. */
 export const hhmm = (ms: number) => { const d = new Date(ms); return `${pad2(d.getHours())}:${pad2(d.getMinutes())}` }
@@ -136,9 +88,12 @@ export const hhmm = (ms: number) => { const d = new Date(ms); return `${pad2(d.g
  */
 const answer = 'w-full max-w-[70ch] break-words font-serif text-[15.5px] leading-[1.6] text-ink'
 
-export default function Transcript({ events, base = '', worktrees, machine = '', sessionId = '', live, liveAgent, working, bgEnded, hasMore, autoLoad = true, loading, notice, onLoadMore, onAtBottom, onOpenFile, focus }: {
+export default function Transcript({ events, base = '', worktrees, machine = '', sessionId = '', live, liveAgent, working, bgEnded, asks, onAskDone, hasMore, autoLoad = true, loading, notice, onLoadMore, onAtBottom, onOpenFile, focus }: {
   /** scrolls to a row (the inspector's changed files) */
   focus?: Focus
+  /** the session's open asks: also answerable on a subagent's screen, and shown on its card */
+  asks?: Ask[]
+  onAskDone?: (askId: string) => void
   autoLoad?: boolean
   events: Event[]
   /** session root, else cwd: decides which artifact cards can be opened */
@@ -171,7 +126,10 @@ export default function Transcript({ events, base = '', worktrees, machine = '',
   // the main conversation only: each subagent's work lives on its own screen (its card opens it)
   const tl = useMemo(() => partitionTimeline(buildTimeline(events, base, wts)), [events, base, wts])
   const items = tl.main
-  const [agentStack, setAgentStack] = useState<string[]>([])
+  const [openStack, setAgentStack] = useState<string[]>([])
+  // a screen whose subagent left the timeline (history trimmed, session replaced) closes
+  const agentStack = openStack.filter((k) => tl.agents.has(k))
+  const asking = useMemo(() => askingAgents(tl, asks ?? [], (a) => isLive(agentPhase(a, bgEnded))), [tl, asks, bgEnded])
   const openAgent = useCallback((id: string) => setAgentStack((s) => (s[s.length - 1] === id ? s : [...s, id])), [])
   const last = events[events.length - 1]
   // a subagent thinking shows on its own screen, not as the session's indicator
@@ -197,6 +155,11 @@ export default function Transcript({ events, base = '', worktrees, machine = '',
       if (notice || loading) out.push({ key: 'head', kind: 'head' })
       const count = items.slice(0, newestCompact).filter((r) => r.t === 'user' || (r.t === 'assistant' && !r.agent)).length
       out.push({ key: 'earlier', kind: 'earlier', count })
+      // subagents still working stay in view: their cards are pinned under the fold
+      for (const it of items.slice(0, newestCompact)) {
+        const busy = it.t === 'agent' ? it.status === 'running' : it.t === 'agents' && it.agents.some((a) => a.status === 'running')
+        if (busy) out.push({ key: shownKey(it), kind: 'item', item: it })
+      }
       for (const it of items.slice(newestCompact)) out.push({ key: shownKey(it), kind: 'item', item: it })
       return out
     }
@@ -229,7 +192,7 @@ export default function Transcript({ events, base = '', worktrees, machine = '',
 
   const renderItem = (r: Shown): ReactNode => {
     switch (r.t) {
-      case 'agents': return <AgentCard agents={r.agents} bgEnded={bgEnded} onOpen={openAgent} />
+      case 'agents': return <AgentCard agents={r.agents} bgEnded={bgEnded} asking={asking} onOpen={openAgent} />
       case 'user': {
         // files attached from a device are mentioned as @<path> of the machine's uploads folder: shown as chips
         const cmdText = r.command ? (r.command.args ? `/${r.command.name} ${r.command.args}` : `/${r.command.name}`) : ''
@@ -265,7 +228,7 @@ export default function Transcript({ events, base = '', worktrees, machine = '',
       )
       case 'info': return <Message from="system" role="note" className="my-2 max-w-full text-center text-xs text-muted-foreground">{r.text}</Message>
       case 'tool': case 'reads': return <ToolItem item={r} base={base} worktrees={wts} machine={machine} sessionId={sessionId} onOpenFile={onOpenFile} bgEnded={bgEnded} />
-      case 'agent': return <AgentCard agents={[r]} bgEnded={bgEnded} onOpen={openAgent} />
+      case 'agent': return <AgentCard agents={[r]} bgEnded={bgEnded} asking={asking} onOpen={openAgent} />
       case 'artifact': return <ArtifactCard item={r} machine={machine} base={base} onOpen={onOpenFile} />
       case 'command': return <CommandCard item={r} />
       case 'compact': {
@@ -319,8 +282,8 @@ export default function Transcript({ events, base = '', worktrees, machine = '',
       <ConversationScrollButton aria-label="Scroll to bottom" className="size-11" />
       <HistoryLoader firstKey={firstKey} hasMore={hasMore} autoLoad={autoLoad && !collapsed && !notice && !loading} onLoadMore={loadOlder} onAtBottom={onAtBottom} />
     </Conversation>
-    <AgentScreen stack={agentStack} tl={tl} liveAgent={liveAgent} bgEnded={bgEnded} render={renderItem}
-      onBack={() => setAgentStack((s) => s.slice(0, -1))} onClose={() => setAgentStack([])} />
+    <AgentScreen stack={agentStack} tl={tl} liveAgent={liveAgent} bgEnded={bgEnded} asking={asking} sessionId={sessionId} asks={asks} onAskDone={onAskDone} render={renderItem}
+      onBack={() => setAgentStack(agentStack.slice(0, -1))} onClose={() => setAgentStack([])} />
     </PathLinksProvider>
   )
 }

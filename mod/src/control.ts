@@ -72,7 +72,8 @@ export class Asks {
         resolve(d)
       }
       this.waiting.set(askId, { kind: a.kind, agentId: opts.agentId, settle })
-      this.emit('ask', { askId, ...a })
+      // `agent`: the subagent that asks, '' for the main conversation (the app shows it on its card)
+      this.emit('ask', { askId, ...a, agent: opts.agentId ?? '' })
       this.status('needs_you')
       if (Number.isFinite(waitMs)) void this.sleep(waitMs).then(() => settle(undefined, 'terminal', 'timeout'), () => {})
     })

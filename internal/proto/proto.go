@@ -303,6 +303,8 @@ type Ask struct {
 	Summary   string          `json:"summary"`
 	Detail    string          `json:"detail"`
 	Questions json.RawMessage `json:"questions"`
+	// Agent is the subagent that asks ("" for the main conversation); absent from older mods.
+	Agent *string `json:"agent,omitempty"`
 }
 
 type AskResolved struct {

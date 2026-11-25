@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { buildTimeline, itemKey, type AgentGroupItem, type AgentItem } from './timeline'
-import { GROUP_MS, partitionTimeline, shownKey, type Shown } from './subagents'
+import { askingAgents, GROUP_MS, partitionTimeline, shownKey, type Shown } from './subagents'
 import type { Event } from '../proto.gen'
 
 let n = 0
@@ -142,5 +142,70 @@ describe('subagents in the timeline', () => {
     expect(titles(tl.main)).toEqual(['user:hi', 'agent:Subagent'])
     expect(tl.main[1]).toMatchObject({ id: 'ghost', status: 'running', steps: 1 })
     expect(titles(tl.byAgent.get('ghost')!)).toEqual(['ls'])
+  })
+
+  it('a card answers to its stable key, its agent id and its call id', () => {
+    const tl = partitionTimeline(buildTimeline([call('tu1', 'x'), start('ag1', 'tu1', 'x'), done('tu1', 'launched', undefined, { background: { taskId: 'ag1' } })], BASE))
+    const a = tl.agents.get('tu1')!
+    expect(a.key).toBe('tu1')
+    expect(tl.agents.get('ag1')).toBe(a)
+    expect(tl.byAgent.get('tu1')).toBe(tl.byAgent.get('ag1'))
+  })
+
+  it('an agent_start naming a call that is not here is its own card (no guessing)', () => {
+    const items = buildTimeline([call('tu1', 'same'), start('ag9', 'gone', 'same')], BASE)
+    expect(items.map((x: any) => [x.key, x.id, x.status])).toEqual([['tu1', 'tu1', 'running'], ['ag9', 'ag9', 'running']])
+  })
+
+  it('an agent_start that no call started (tool \'\', a fork) is its own card', () => {
+    const items = buildTimeline([call('tu1', 'same'), ev('agent_start', { id: 'f1', type: 'fork', description: 'same', tool: '' })], BASE)
+    expect(items.map((x: any) => x.id)).toEqual(['tu1', 'f1'])
+  })
+
+  it('an older mod\'s agent_start links by description only when one call fits', () => {
+    const items = buildTimeline([call('tu1', 'same'), call('tu2', 'same'), start('ag1', undefined, 'same')], BASE)
+    expect(items.map((x: any) => x.id)).toEqual(['tu1', 'tu2', 'ag1'])
+  })
+
+  it('a nested agent_start never takes a main-level call', () => {
+    const tl = partitionTimeline(buildTimeline([call('tu1', 'parent'), start('P', 'tu1', 'parent'), call('tu2', 'scan'), start('K', undefined, 'scan', 'P')], BASE))
+    expect(tl.agents.get('tu2')!.id).toBe('tu2')
+    expect(tl.agents.get('K')).toMatchObject({ key: 'K', agent: 'P' })
+    expect(titles(tl.byAgent.get('P')!)).toEqual(['agent:scan'])
+  })
+
+  it('a linked call stays running at its tool_end until its agent_end, which sets the answer', () => {
+    const evs = [call('tu1', 'x'), start('ag1', 'tu1', 'x'), done('tu1', 'partial result')]
+    expect(buildTimeline(evs, BASE)[0]).toMatchObject({ status: 'running' })
+    const ended = buildTimeline([...evs, ev('agent_end', { id: 'ag1', status: 'completed', answer: 'final' })], BASE)[0] as AgentItem
+    expect(ended).toMatchObject({ status: 'completed', answer: 'final' })
+    expect(ended.endedAt).toBeGreaterThan(0)
+  })
+
+  it('a launch message does not end the card', () => {
+    const items = buildTimeline([call('tu1', 'x'), done('tu1', 'Async agent launched successfully. agentId: ag1')], BASE)
+    expect(items[0]).toMatchObject({ status: 'running' })
+    expect((items[0] as AgentItem).answer).toBeUndefined()
+  })
+
+  it('a file a subagent wrote is its artifact card, on its screen; the main group stays one card', () => {
+    const tl = partitionTimeline(buildTimeline([
+      call('a', 'one'), call('b', 'two'), start('A', 'a', 'one'), start('B', 'b', 'two'),
+      tool('w', 'Write', { file_path: '/p/report.html', content: '<h1/>' }, 'A'), tend('w', 'A'),
+    ], BASE))
+    expect(titles(tl.main)).toEqual(['group:2'])
+    expect(tl.byAgent.get('A')!.map((r) => r.t)).toEqual(['tool', 'artifact'])
+    expect(tl.byAgent.get('A')![1]).toMatchObject({ t: 'artifact', name: 'report.html', agent: 'A' })
+  })
+
+  it('askingAgents: the asking subagent and the ones above it; \'\' is the main conversation; no field marks the working ones', () => {
+    const tl = partitionTimeline(buildTimeline([
+      call('tu1', 'parent'), start('P', 'tu1', 'parent'), call('tu2', 'kid', { agent: 'P' }), start('K', 'tu2', 'kid', 'P'),
+      call('tu3', 'idle'), start('I', 'tu3', 'idle'), ev('agent_end', { id: 'I', status: 'completed' }),
+    ], BASE))
+    const live = (a: AgentItem) => a.status === 'running'
+    expect([...askingAgents(tl, [{ agent: 'K' }], live)].sort()).toEqual(['tu1', 'tu2'])
+    expect(askingAgents(tl, [{ agent: '' }], live).size).toBe(0)
+    expect([...askingAgents(tl, [{}], live)].sort()).toEqual(['tu1', 'tu2'])
   })
 })

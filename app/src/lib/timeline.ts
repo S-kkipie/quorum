@@ -17,6 +17,8 @@ export type ReadsItem = { t: 'reads'; seq: number; files: string[]; title: strin
  * known (agent_start, or a background launch's task id), else its Agent call's id.
  */
 export type AgentItem = { t: 'agent'; seq: number; id: string; type: string; description: string; status: string; answer?: string
+  /** stable for the card's whole life (its Agent call's id, else its agent id), while `id` may change */
+  key: string
   /** a background subagent: its Agent call's task id (= this id) and, once ended, the task_end status */
   bg?: { taskId: string; status?: string }
   /** the Agent call that started it */
@@ -35,7 +37,7 @@ export type AgentItem = { t: 'agent'; seq: number; id: string; type: string; des
   tokens?: number }
 /** Subagents launched together (consecutive Agent calls a few seconds apart): one card. */
 export type AgentGroupItem = { t: 'agents'; seq: number; agents: AgentItem[] }
-export type ArtifactItem = { t: 'artifact'; seq: number; path: string; name: string; inBase: boolean }
+export type ArtifactItem = { t: 'artifact'; seq: number; path: string; name: string; inBase: boolean; agent?: string }
 /** A slash command a device ran: one item per command id, with its latest status. */
 export type CommandItem = { t: 'command'; seq: number; id: string; name: string; args: string; origin: string; status: 'queued' | 'done' | 'failed'; text?: string; error?: string }
 /** A compact boundary: "Conversation compacted · HH:MM" (no time when `at` is unknown). */
@@ -89,6 +91,8 @@ const commandRefOf = (v: any): CommandRef | undefined =>
 const VIEWABLE = new Set(['html', 'htm', 'md', 'svg', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'pdf'])
 const EDIT_VIEWABLE = new Set(['html', 'htm', 'svg'])
 const DENIED = /deneg|denied|rechaz/i
+/** An Agent call's result that only says it launched the subagent (it keeps running). */
+const LAUNCHED = /async agent launched|async_launched|remote_launched|"isAsync"\s*:\s*true/i
 
 /** Last path segment, for `/` and `\` separators. */
 export function basename(p: string): string {
@@ -265,7 +269,7 @@ function artifactFor(t: ToolItem, base: string, worktrees: readonly string[]): A
   const ok = t.name === 'Write' ? VIEWABLE.has(x) : (t.name === 'Edit' || t.name === 'MultiEdit') && EDIT_VIEWABLE.has(x)
   if (!ok) return undefined
   const path = absPath(t.file, base)
-  return { t: 'artifact', seq: t.seq, path, name: basename(path), inBase: inBases(path, base, worktrees) }
+  return { t: 'artifact', seq: t.seq, path, name: basename(path), inBase: inBases(path, base, worktrees), ...(t.agent ? { agent: t.agent } : {}) }
 }
 
 function groupState(ts: ToolItem[]): ToolState {
@@ -316,6 +320,8 @@ export function buildTimeline(events: Event[], base: string, worktrees: readonly
   // Agent calls by tool id, and those not yet tied to an agent_start (oldest first)
   const agentCalls = new Map<string, AgentItem>()
   let unlinked: AgentItem[] = []
+  // calls an agent_start was tied to: their agent_end, not their tool_end, says how they ended
+  const linked = new Set<AgentItem>()
   const commands = new Map<string, CommandItem>()
   // user events of commands a device ran: the command card shows them (see hideDeviceCommands)
   const deviceCommands = new Set<Item>()
@@ -347,7 +353,7 @@ export function buildTimeline(events: Event[], base: string, worktrees: readonly
           // the call is the subagent's card: agent_start / agent_end / its own tool_end fill it in
           const i = d.input && typeof d.input === 'object' ? d.input : {}
           const a: AgentItem = {
-            t: 'agent', seq, id: d.id, toolId: d.id, type: str(i.subagent_type) ?? '', description: str(i.description) ?? str(d.summary) ?? '',
+            t: 'agent', seq, id: d.id, key: d.id, toolId: d.id, type: str(i.subagent_type) ?? '', description: str(i.description) ?? str(d.summary) ?? '',
             status: seq < 0 ? 'completed' : 'running', ...(str(i.prompt) ? { prompt: i.prompt } : {}), ...(d.agent ? { agent: d.agent } : {}), ...(e.ts ? { startedAt: e.ts } : {}),
           }
           agentCalls.set(d.id, a)
@@ -381,8 +387,8 @@ export function buildTimeline(events: Event[], base: string, worktrees: readonly
             agents.set(taskId, call)
             call.bg = { taskId, ...(taskEnds.has(taskId) ? { status: taskEnds.get(taskId)!.status } : {}) }
             bgTools.set(taskId, [...(bgTools.get(taskId) ?? []), call])
-          } else if (call.status === 'running') {
-            // a foreground subagent ends with its call (its agent_end may be missing)
+          } else if (call.status === 'running' && (!ok || (!linked.has(call) && !LAUNCHED.test(output)))) {
+            // a call no agent_start was tied to ends with its tool_end; a failed call always does
             call.status = ok ? 'completed' : 'error'
             if (!call.answer && output) call.answer = output
             if (e.ts && !call.endedAt) call.endedAt = e.ts
@@ -413,19 +419,26 @@ export function buildTimeline(events: Event[], base: string, worktrees: readonly
         const known = agents.get(d.id)
         if (known) {
           Object.assign(known, { type: str(d.type) ?? known.type, description: str(d.description) ?? known.description }, parent ? { agent: parent } : {})
+          linked.add(known)
           break
         }
-        // its Agent call: named by the mod, else the oldest running one of the same description, else of the same parent
-        const call = (str(d.tool) && unlinked.find((x) => x.toolId === d.tool))
-          || unlinked.find((x) => x.description === (d.description ?? '') && (!parent || x.agent === parent))
-          || unlinked.find((x) => x.agent === parent)
+        // its Agent call: the one the mod names ('' = no call started it: a card of its own); from an
+        // older mod (no `tool`), the only running call of that description (of the same parent when it
+        // is named: never a main-level call for a nested one)
+        let call: AgentItem | undefined
+        if (typeof d.tool === 'string') call = d.tool ? unlinked.find((x) => x.toolId === d.tool) : undefined
+        else {
+          const same = unlinked.filter((x) => x.description === (d.description ?? '') && (!parent || x.agent === parent))
+          if (same.length === 1) call = same[0]
+        }
         if (call) {
           unlinked = unlinked.filter((x) => x !== call)
+          linked.add(call)
           Object.assign(call, { id: d.id, type: str(d.type) ?? call.type, description: str(d.description) ?? call.description }, parent ? { agent: parent } : {})
           agents.set(d.id, call)
           break
         }
-        const a: AgentItem = { t: 'agent', seq, id: d.id, type: d.type ?? '', description: d.description ?? '', status: 'running', ...(parent ? { agent: parent } : {}), ...(e.ts ? { startedAt: e.ts } : {}) }
+        const a: AgentItem = { t: 'agent', seq, id: d.id, key: d.id, type: d.type ?? '', description: d.description ?? '', status: 'running', ...(parent ? { agent: parent } : {}), ...(e.ts ? { startedAt: e.ts } : {}) }
         agents.set(d.id, a)
         flat.push(a)
         break
