@@ -14,9 +14,14 @@ function initialJs(): { bytes: number; files: string[] } {
 }
 
 describe('bundle budget', () => {
-  it.skipIf(!existsSync(resolve(DIST, 'index.html')))('initial JS stays at 655 kB or less; the briefing is not in it', () => {
+  it.skipIf(!existsSync(resolve(DIST, 'index.html')))('initial JS stays at 655 kB or less; the briefing and the meeting UI are not in it', () => {
     const { bytes, files } = initialJs()
     expect(bytes).toBeLessThanOrEqual(INITIAL_JS_MAX)
-    for (const f of files) expect(readFileSync(resolve(DIST, f), 'utf8')).not.toContain('Written by Haiku from')
+    for (const f of files) {
+      const js = readFileSync(resolve(DIST, f), 'utf8')
+      expect(js).not.toContain('Written by Haiku from')
+      // the meeting page, its API and Settings → Meetings load on first use
+      for (const s of ['Re-summarise with names', 'How many people?', '/api/settings/meetings', '/api/meetings/uploads', 'Names I go by']) expect(js).not.toContain(s)
+    }
   })
 })

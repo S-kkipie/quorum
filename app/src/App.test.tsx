@@ -19,9 +19,12 @@ let isWide = true
 vi.stubGlobal('matchMedia', () => ({ matches: isWide, addEventListener() {}, removeEventListener() {} }))
 let restSessions: any[] = []
 const ticketRow = { id: 't1', projectId: 'p1', externalId: '1', title: 'Fix login', status: 'todo', rawStatus: 'open', assignee: '', url: '', body: '', comments: [], updatedAt: 1 }
+const meetingRow = { id: 'm1', projectId: 'p1', title: 'Weekly sync', startedAt: 0, durationS: 600, language: 'en', status: 'queued', progress: 0, error: '', provider: '', createdAt: 1, updatedAt: 1, hasAudio: true, audioBytes: 1, channels: '', speakerCount: 0 }
 const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
   if (String(url).includes('/api/sessions?')) return new Response(JSON.stringify(restSessions))
   if (String(url).endsWith('/api/projects/p1/tickets')) return new Response(JSON.stringify([ticketRow]))
+  if (String(url).endsWith('/api/meetings/m1')) return new Response(JSON.stringify(meetingRow))
+  if (String(url).includes('/api/meetings?projectId=p1')) return new Response(JSON.stringify([meetingRow]))
   if (String(url).endsWith('/api/launch')) return new Response(JSON.stringify({ reqId: 'r1' }), { status: 202 })
   if (init?.method === 'POST') return new Response('', { status: 202 })
   return new Response('[]')
@@ -237,6 +240,41 @@ describe('App', () => {
     expect(screen.queryByText('Workspaces')).toBeNull()
     expect(spy).not.toHaveBeenCalled()
     spy.mockRestore()
+  })
+
+  it('a ?meeting=<id> link opens the meeting page and leaves the URL; Back goes up to the board', async () => {
+    history.replaceState(null, '', '/?meeting=m1')
+    render(<App />)
+    expect(await screen.findByRole('heading', { level: 2, name: 'Weekly sync' })).toBeTruthy()
+    expect(location.search).toBe('')
+    expect(history.state).toMatchObject({ meeting: 'm1' })
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }))
+    await waitFor(() => expect(screen.queryByRole('heading', { level: 2, name: 'Weekly sync' })).toBeNull())
+    expect(screen.getByText('No workspaces or projects yet.')).toBeTruthy()
+  })
+
+  it('narrow: a ?meeting=<id> link opens the meeting full screen', async () => {
+    isWide = false
+    history.replaceState(null, '', '/?meeting=m1')
+    render(<App />)
+    expect(await screen.findByRole('heading', { level: 2, name: 'Weekly sync' })).toBeTruthy()
+    expect(screen.queryByRole('navigation', { name: 'Main' })).toBeNull()
+  })
+
+  it('narrow: a meeting of the project page opens over it and Back returns to the project', async () => {
+    isWide = false
+    render(<App />)
+    const ws = () => FakeWS.all[FakeWS.all.length - 1]
+    await waitFor(() => expect(FakeWS.all.length).toBeGreaterThan(0))
+    const send = (e: any) => act(() => ws().onmessage({ data: JSON.stringify(e) }))
+    send({ type: 'workspace_upsert', payload: { id: 'w1', name: 'Work', color: '', whoasProfile: '' } })
+    send({ type: 'project_upsert', payload: { id: 'p1', workspaceId: 'w1', name: 'Acme', repoUrl: '', connector: { kind: 'none', settings: {}, hasToken: false, intervalMin: 5 }, summary: '', summaryAt: 0, progress: { done: 0, total: 0 }, syncError: '', syncedAt: 0 } })
+    act(() => { history.pushState({ project: 'p1', tab: 'projects', depth: 1 }, ''); dispatchEvent(new PopStateEvent('popstate', { state: history.state })) })
+    const section = await screen.findByRole('region', { name: 'Meetings' })
+    fireEvent.click(await within(section).findByRole('button', { name: /Weekly sync/ }))
+    expect(await screen.findByRole('heading', { level: 2, name: 'Weekly sync' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }))
+    expect(await screen.findByRole('region', { name: 'Meetings' })).toBeTruthy()
   })
 
   it('Launch shows "Starting Claude on vps-1…" and launch_session opens the session', async () => {

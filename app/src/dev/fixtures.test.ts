@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { buildTimeline } from '../lib/timeline'
 import { partitionTimeline } from '../lib/subagents'
-import { fixtureBriefing, fixtureConversations, fixtureEvents, fixtureHistory, fixtureState, LONG_SESSION, TOOL_OUTPUT_MAX } from './fixtures'
+import { fixtureBriefing, fixtureConversations, fixtureMeetings, fixtureEvents, fixtureHistory, fixtureState, LONG_SESSION, TOOL_OUTPUT_MAX } from './fixtures'
 import type { Event } from '../proto.gen'
 
 const convKey = (m: string, r: string) => m + '\u0000' + r
@@ -183,5 +183,23 @@ describe('briefing fixtures', () => {
     const w = await fixtureBriefing('worst')('p1')
     expect(w.myTickets.some((t) => t.plannedEnd! < Date.now() - 86_400_000)).toBe(true)
     expect(w.pinned.some((n) => n.text.length === 500)).toBe(true)
+  })
+})
+
+describe('meetings', () => {
+  it('worst has a meeting in every status, an unassigned one and a GitHub project meeting', async () => {
+    const f = fixtureMeetings('worst')
+    const all = await f.list({})
+    for (const st of ['uploaded', 'queued', 'transcribing', 'summarising', 'ready', 'failed']) expect(all.some((m) => m.status === st)).toBe(true)
+    expect((await f.list({ unassigned: true })).length).toBeGreaterThan(0)
+    expect((await f.list({ projectId: 'p3' })).length).toBe(1)
+    const r = await f.get('mr')
+    expect(r.actions?.some((a) => a.mine)).toBe(true)
+    expect(r.segments?.length).toBeGreaterThan(0)
+    expect(all.every((m) => m.segments === undefined)).toBe(true)
+  })
+  it('empty has none; huge has a 1,500-segment meeting', async () => {
+    expect(await fixtureMeetings('empty').list({})).toEqual([])
+    expect((await fixtureMeetings('huge').get('mt0')).segments).toHaveLength(1500)
   })
 })

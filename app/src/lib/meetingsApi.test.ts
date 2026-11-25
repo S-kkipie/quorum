@@ -6,7 +6,8 @@ vi.stubGlobal('localStorage', {
   setItem: (k: string, v: string) => { mem[k] = v },
   removeItem: (k: string) => { delete mem[k] },
 })
-import { setHub, uploadMeeting, listMeetings, getMeeting, patchMeeting, deleteMeeting, meetingAudioURL, MEETING_MAX_BYTES } from './api'
+import { setHub } from './api'
+import { uploadMeeting, listMeetings, getMeeting, patchMeeting, deleteMeeting, meetingAudioURL, MEETING_MAX_BYTES } from './meetingsApi'
 
 beforeEach(() => { for (const k in mem) delete mem[k]; setHub('http://h:1/', 'tok') })
 

@@ -354,3 +354,24 @@ describe('project_briefing_changed', () => {
     expect(same).toBe(s)
   })
 })
+
+describe('meeting_changed', () => {
+  const mc = (p: Record<string, unknown>) => ({ type: 'meeting_changed', payload: p } as unknown as Envelope)
+  it('keeps the live status and progress; only changes that are not progress bump the revisions', () => {
+    let s = initialState()
+    s = reduce(s, mc({ id: 'm1', projectId: 'p1', status: 'queued' }))
+    expect(s.meetingLive.m1).toEqual({ projectId: 'p1', status: 'queued', progress: 0, stage: '', rev: 1 })
+    expect(s.meetingsRev).toBe(1)
+    s = reduce(s, mc({ id: 'm1', projectId: 'p1', status: 'transcribing', progress: 0, stage: 'starting' }))
+    s = reduce(s, mc({ id: 'm1', projectId: 'p1', status: 'transcribing', progress: 40, stage: 'transcribing' }))
+    expect(s.meetingLive.m1).toMatchObject({ status: 'transcribing', progress: 40, stage: 'transcribing', rev: 2 })
+    expect(s.meetingsRev).toBe(2)
+    // the same state again (a rename, a title change) refetches
+    s = reduce(s, mc({ id: 'm1', projectId: 'p1', status: 'transcribing', progress: 40, stage: 'transcribing' }))
+    expect(s.meetingLive.m1.rev).toBe(3)
+    // a move to another project refetches
+    s = reduce(s, mc({ id: 'm1', projectId: 'p2', status: 'transcribing', progress: 41, stage: 'transcribing' }))
+    expect(s.meetingLive.m1.rev).toBe(4)
+    expect(reduce(s, mc({ projectId: 'p1' }))).toBe(s)
+  })
+})

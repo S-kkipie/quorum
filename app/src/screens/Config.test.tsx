@@ -144,3 +144,21 @@ describe('Appearance', () => {
     expect(root.style.getPropertyValue('--accent')).toBe('')
   })
 })
+
+describe('Settings → Meetings', () => {
+  it('has a Meetings section that loads with Settings (provider, inbox) and opens a meeting from the inbox', async () => {
+    const row = { id: 'm9', projectId: '', title: 'Hallway chat', startedAt: 0, durationS: 60, language: '', status: 'ready', progress: 100, error: '', provider: '', createdAt: 1, updatedAt: 1, hasAudio: true, audioBytes: 1, channels: '', speakerCount: 0 }
+    vi.stubGlobal('fetch', vi.fn(async (u: string) => {
+      if (String(u).endsWith('/api/settings/meetings')) return new Response(JSON.stringify({ provider: 'local', model: '', baseUrl: '', language: 'es', aliases: [], hasKey: false }))
+      if (String(u).endsWith('/api/meetings/disk')) return new Response(JSON.stringify({ audioBytes: 0, freeBytes: 1e10 }))
+      if (String(u).includes('/api/meetings?unassigned=1')) return new Response(JSON.stringify([row]))
+      return new Response('[]')
+    }))
+    const onOpenMeeting = vi.fn()
+    render(<Config state={initialState()} onOpenMeeting={onOpenMeeting} />)
+    expect(screen.getByRole('heading', { name: 'Meetings' })).toBeTruthy()
+    expect(await screen.findByLabelText('Summary provider')).toBeTruthy()
+    fireEvent.click(await screen.findByRole('button', { name: /Hallway chat/ }))
+    expect(onOpenMeeting).toHaveBeenCalledWith('m9')
+  })
+})

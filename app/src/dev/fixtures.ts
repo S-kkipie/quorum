@@ -1,6 +1,7 @@
-import type { AccountUsage, BackgroundItem, MeetingItem, Ticket, Checkout, Conversation, Event, ModelOption, Project, Proposal, SessionCommand, SessionCommands, SessionInfo, SessionState, TranscriptPage, Workspace } from '../proto.gen'
+import type { AccountUsage, BackgroundItem, Meeting, MeetingAction, MeetingItem, MeetingSegment, Ticket, Checkout, Conversation, Event, ModelOption, Project, Proposal, SessionCommand, SessionCommands, SessionInfo, SessionState, TranscriptPage, Workspace } from '../proto.gen'
 import { addEvents, initialState, setConversations, setProjectsData, setUsage, type AppState } from '../lib/store'
 import type { Briefing, Machine } from '../lib/api'
+import type { MeetingQuery, MeetingSettings } from '../lib/meetingsApi'
 
 /** Dev-only fixtures for the Break UI pass: extreme but plausible data, no hub needed. */
 export type DataMode = 'demo' | 'worst' | 'empty' | 'one' | 'huge'
@@ -245,7 +246,7 @@ const finish = (parts: { machines: Machine[]; workspaces: Workspace[]; projects:
 const STATES: SessionState[] = ['working', 'needs_you', 'background', 'idle', 'closed', 'background', 'idle']
 
 function worst(): AppState {
-  const machines = [machine('vps-1'), machine('laptop', { os: 'darwin', online: false }), machine('desktop-wsl', { os: 'linux' })]
+  const machines = [machine('vps-1'), machine('laptop', { os: 'darwin', online: false, caps: { herdr: true, terminal: true, root: false, meetingWorker: 'no_gpu' } }), machine('desktop-wsl', { os: 'linux', caps: { herdr: true, terminal: true, root: false, transcribe: true, meetingWorker: 'ready' } })]
   const workspaces = [
     workspace('w1', 'Platform', '#2563eb'),
     workspace('w2', padTo('Customer research and long-term experimentation programme ', 90), '#16a34a'),
@@ -255,7 +256,7 @@ function worst(): AppState {
   const projects = [
     project('p1', 'w1', padTo('Next-generation synchronisation and offline-first reconciliation layer ', 120), { summary: longTitle(600, 'Summary'), progress: { done: 1, total: 1 }, syncError: padTo('connector: 502 from upstream while listing tickets ', 300), connector: { kind: 'moontech', settings: { product: 'Acme', person: 'Ana', username: 'ana' }, hasToken: true, intervalMin: 5 } }),
     project('p2', 'w2', 'Ünïcödé 日本語 résumé', { progress: { done: 0, total: 0 } }),
-    project('p3', 'w3', 'Z', { progress: { done: 999, total: 1200 } }),
+    project('p3', 'w3', 'Z', { progress: { done: 999, total: 1200 }, connector: { kind: 'github', settings: { repo: 'acme/z' }, hasToken: false, intervalMin: 5 } }),
   ]
   const checkouts = [
     checkout('k1', 'p1', 'vps-1', '/work/app'), checkout('k2', 'p1', 'laptop', '/work/app'), checkout('k3', 'p1', 'desktop-wsl', '/work/app'),
@@ -451,5 +452,71 @@ export function fixtureBriefing(mode: FixtureMode): (projectId: string) => Promi
       },
       pinned: [{ id: 'n1', text: 'x'.repeat(500), at: t }, { id: 'n2', text: 'Staging is on vps-1, never test on prod.', at: t }],
     }
+  }
+}
+
+// --- Meetings (Plan 14): made-up content, every status ---
+
+const mtg = (id: string, o: Partial<Meeting> = {}): Meeting => ({
+  id, projectId: 'p1', title: 'Weekly sync', startedAt: NOW - DAY, durationS: 1800, language: 'en', status: 'ready', progress: 100, error: '',
+  provider: 'local', createdAt: NOW - DAY, updatedAt: NOW - DAY, hasAudio: true, audioBytes: 12_000_000, channels: '', speakerCount: 0, ...o,
+})
+const LINES = [
+  'Good morning, shall we start with the export?', 'The export is almost done; the CSV part works.', 'Then we ship it on Monday.',
+  'Who owns the backups now?', 'Nobody yet, we should decide that next week.', 'I will send the report by Friday.',
+]
+const segs = (n: number, people = 3, long = false): MeetingSegment[] => Array.from({ length: n }, (_, i) => {
+  const label = `Speaker ${(i % people) + 1}`
+  return { startMs: i * 7000, endMs: i * 7000 + 6000, label, speaker: i % people === 1 ? 'Ben' : label, text: long && i === 2 ? 'w'.repeat(400) : LINES[i % LINES.length] }
+})
+const acts = (long = false): MeetingAction[] => [
+  { id: 'a1', text: 'Write the release notes', owner: 'Ben', due: '', mine: false, tsMs: 14_000 },
+  { id: 'a2', text: long ? longTitle(300, 'Send the report') : 'Send the report', owner: 'Ana', due: 'Friday', mine: true, tsMs: 35_000 },
+  { id: 'a3', text: long ? 'https://example.com/' + 'y'.repeat(200) : 'Book the room', owner: '', due: '', mine: false, issueUrl: long ? 'https://github.com/acme/z/issues/7' : undefined },
+]
+const readyMeeting = (id: string, o: Partial<Meeting> = {}, long = false, n = 24): Meeting => mtg(id, {
+  summary: {
+    title: 'Weekly sync', summary: long ? longTitle(600, 'The team reviewed the export') : 'The team reviewed the export and agreed to ship it on Monday. Backups still need an owner.',
+    topics: long ? ['Export', 'Backups', 'x'.repeat(120), '日本語'] : ['Export', 'Backups'],
+    decisions: [{ text: long ? longTitle(300, 'Ship the export') : 'Ship the export on Monday', tsMs: 14_000 }],
+    openPoints: [{ text: long ? 'Who owns the backups? ' + LONG_PATH : 'Who owns the backups?' }],
+    attendees: long ? ['Ana', 'Ben', 'Zoë Ünïcödé', 'x'.repeat(80)] : ['Ana', 'Ben'],
+  },
+  actions: acts(long), segments: segs(n, 3, long), speakers: { 'Speaker 2': 'Ben' }, ...o,
+})
+
+function meetingsFor(mode: FixtureMode): Meeting[] {
+  if (mode === 'empty') return []
+  if (mode === 'one') return [readyMeeting('mt1')]
+  if (mode === 'huge') {
+    return [readyMeeting('mt0', { title: 'Two-hour planning', durationS: 7200 }, false, 1500),
+      ...Array.from({ length: 80 }, (_, i) => mtg('mh' + i, { title: `Meeting ${i + 1}`, startedAt: NOW - i * DAY, status: i % 9 === 0 ? 'failed' : 'ready', error: i % 9 === 0 ? 'The machine stopped responding.' : '' }))]
+  }
+  return [
+    mtg('mu', { status: 'uploaded', title: '', progress: 0, durationS: 0 }),
+    mtg('mq', { status: 'queued', title: padTo('A meeting title that goes on and on without stopping ', 200), progress: 0 }),
+    mtg('mt', { status: 'transcribing', progress: 40, speakerCount: 4, segments: [] }),
+    mtg('ms', { status: 'summarising', progress: 0, segments: segs(12) }),
+    readyMeeting('mr', {}, true),
+    readyMeeting('mg', { projectId: 'p3', title: 'GitHub project meeting' }),
+    mtg('mn', { status: 'ready', title: 'Silent recording', summary: { title: '', summary: '', topics: [], decisions: [], openPoints: [], attendees: [] }, actions: [], segments: [], hasAudio: false }),
+    mtg('mf', { status: 'failed', progress: 0, error: 'CUDA error: out of memory while loading the model on desktop-wsl. Close other GPU programs and press Retry.' }),
+    mtg('mx', { projectId: '', title: 'Hallway chat (unassigned)', status: 'ready' }),
+    mtg('my', { projectId: '', title: 'Ünïcödé 日本語 recording', status: 'queued', progress: 0 }),
+  ]
+}
+
+/** Dev fixture meetings: list (by project or the inbox), detail and settings. */
+export function fixtureMeetings(mode: FixtureMode): { list: (q: MeetingQuery) => Promise<Meeting[]>; get: (id: string) => Promise<Meeting>; settings: () => Promise<MeetingSettings> } {
+  const all = meetingsFor(mode)
+  const row = ({ summary: _s, segments: _g, actions: _a, speakers: _p, ...m }: Meeting): Meeting => m
+  return {
+    list: async (q) => all.filter((m) => (q.unassigned ? !m.projectId : q.projectId ? m.projectId === q.projectId : true)).map(row),
+    get: async (id) => {
+      const m = all.find((x) => x.id === id)
+      if (!m) throw new Error('no such meeting')
+      return m
+    },
+    settings: async () => ({ provider: 'local', model: '', baseUrl: '', language: 'es', aliases: mode === 'worst' ? ['Ana', 'x'.repeat(64)] : ['Ana'], hasKey: false }),
   }
 }

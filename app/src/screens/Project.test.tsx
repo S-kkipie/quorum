@@ -1,21 +1,22 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useState } from 'react'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import Project from './Project'
-import { initialState, setCheckouts, setConversations, setTickets } from '../lib/store'
+import { initialState, reduce, setCheckouts, setConversations, setTickets } from '../lib/store'
 import { proj, sess, tk } from '../lib/fixtures.test-util'
 import type { AppState } from '../lib/store'
 
 // what GET /briefing answers (null: an empty briefing)
 let briefing: any = null
-const fetchMock = vi.fn(async (u: string, _i?: RequestInit) => {
+const defaultFetch = async (u: string, _i?: RequestInit) => {
   if (String(u).endsWith('/briefing')) return new Response(JSON.stringify(briefing ?? { whereLeftOff: null, newSince: [], myTickets: [], meetings: { decisions: [], openPoints: [], actions: [] }, pinned: [], sessions: [], seenAt: 0, prevSeenAt: 0 }))
   if (String(u).endsWith('/visit')) return new Response(JSON.stringify({ seenAt: 1, prevSeenAt: 0 }))
   if (String(u).includes('/conversations')) return new Response(JSON.stringify([{ id: 'c9', title: 'Old', firstPrompt: '', messages: 4, updatedAt: Date.now(), open: false }]))
   if (String(u).endsWith('/api/launch')) return new Response(JSON.stringify({ reqId: 'r1' }))
   return new Response('[]')
-})
+}
+const fetchMock = vi.fn(defaultFetch)
 vi.stubGlobal('fetch', fetchMock)
 vi.stubGlobal('localStorage', { getItem: () => 'tok', setItem() {}, removeItem() {} })
 afterEach(() => { cleanup(); fetchMock.mockClear(); briefing = null })
@@ -129,16 +130,44 @@ describe('Project: briefing', () => {
     expect(screen.queryByText('OLD SUMMARY')).toBeNull()
     expect(String(calls('/briefing')[0][0])).toContain('/api/projects/p1/briefing')
   })
-  it('no ticket source, no sessions, no notes: only the hint and the Sessions section', async () => {
+  it('no ticket source, no sessions, no notes: only the hint, Meetings and the Sessions section', async () => {
     const onEdit = vi.fn()
     render(<P kind="none" onEdit={onEdit} />)
     const hint = await screen.findByRole('button', { name: 'Connect a ticket source to see your tickets here' })
-    expect(screen.queryAllByRole('region').map((r) => r.getAttribute('aria-label'))).toEqual(['Sessions'])
+    expect(screen.queryAllByRole('region').map((r) => r.getAttribute('aria-label'))).toEqual(['Meetings', 'Sessions'])
     expect(screen.queryByRole('alert')).toBeNull()
     expect(screen.queryByRole('button', { name: 'Continue where I left off' })).toBeNull()
     fireEvent.click(hint)
     expect(onEdit).toHaveBeenCalledWith('p1')
     await screen.findByText('Old')
+  })
+  it('the Meetings section follows "From meetings", lists the project\'s meetings and refetches on meeting_changed', async () => {
+    briefing = { whereLeftOff: null, newSince: [], myTickets: [], meetings: { decisions: [{ text: 'Ship it', noteTitle: 'Weekly', date: '2026-11-20' }], openPoints: [], actions: [] }, pinned: [], sessions: [], seenAt: 0, prevSeenAt: 0 }
+    const row = { id: 'm1', projectId: 'p1', title: 'Weekly sync', startedAt: 0, durationS: 1800, language: 'en', status: 'transcribing', progress: 30, error: '', provider: '', createdAt: 1, updatedAt: 1, hasAudio: true, audioBytes: 1, channels: '', speakerCount: 0 }
+    fetchMock.mockImplementation(async (u: string) => {
+      if (String(u).endsWith('/briefing')) return new Response(JSON.stringify(briefing))
+      if (String(u).includes('/api/meetings?projectId=p1')) return new Response(JSON.stringify([row]))
+      return new Response('[]')
+    })
+    try {
+      const onOpenMeeting = vi.fn()
+      let s = state()
+      const { rerender } = render(<Project state={s} id="p1" onOpenMeeting={onOpenMeeting} />)
+      await screen.findByRole('region', { name: 'From meetings' })
+      const names = screen.queryAllByRole('region').map((r) => r.getAttribute('aria-label'))
+      expect(names.indexOf('Meetings')).toBe(names.indexOf('From meetings') + 1)
+      const section = screen.getByRole('region', { name: 'Meetings' })
+      expect(screen.getByRole('button', { name: 'Upload recording' })).toBeTruthy()
+      fireEvent.click(await within(section).findByRole('button', { name: /Weekly sync.*Transcribing 30%/ }))
+      expect(onOpenMeeting).toHaveBeenCalledWith('m1')
+      const lists = () => fetchMock.mock.calls.filter(([u]) => String(u).includes('/api/meetings?projectId=p1')).length
+      expect(lists()).toBe(1)
+      s = reduce(s, { type: 'meeting_changed', payload: { id: 'm1', projectId: 'p1', status: 'summarising' } } as any)
+      rerender(<Project state={s} id="p1" onOpenMeeting={onOpenMeeting} />)
+      await waitFor(() => expect(lists()).toBe(2))
+    } finally {
+      fetchMock.mockImplementation(defaultFetch)
+    }
   })
   it('refetches on project_briefing_changed and posts the visit once after 5 s', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })

@@ -15,8 +15,9 @@ import type { AppState } from '../lib/store'
 import type { SessionRow } from '../lib/sessions'
 import type { Checkout, Conversation } from '../proto.gen'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import ProjectMeetings from '../components/meetings/ProjectMeetings'
 
-export default function Project({ state, id, onBack, onOpenTickets, onOpenSession, onEdit, onTickets, onCheckouts, onConversations, checkoutsOpen, onCheckoutsOpenChange, pending = false, onLaunched, onGuard, onTerminal }: {
+export default function Project({ state, id, onBack, onOpenTickets, onOpenSession, onEdit, onTickets, onCheckouts, onConversations, checkoutsOpen, onCheckoutsOpenChange, pending = false, onLaunched, onGuard, onTerminal, onOpenMeeting }: {
   state: AppState
   id: string
   onBack?: () => void
@@ -34,6 +35,7 @@ export default function Project({ state, id, onBack, onOpenTickets, onOpenSessio
   onLaunched?: (p: { reqId: string; machine: string; label: string }) => void
   onGuard?: (fn: () => Promise<{ reqId: string; machine: string; label: string }>) => Promise<void>
   onTerminal?: (machine: string, root: string) => Promise<unknown> | void
+  onOpenMeeting?: (id: string) => void
 }) {
   const p = state.projects[id]
   const [error, setError] = useState('')
@@ -114,6 +116,8 @@ export default function Project({ state, id, onBack, onOpenTickets, onOpenSessio
       ) : (
         briefingError && <p className="px-3 pt-2 text-xs text-muted-foreground [overflow-wrap:anywhere]">Briefing unavailable: {briefingError}</p>
       )}
+
+      <ProjectMeetings state={state} projectId={id} onOpenMeeting={onOpenMeeting} />
 
       <section role="region" aria-label="Sessions">
         <NewSessionCard state={state} projectId={id} pending={pending} onLaunched={(p) => onLaunched?.(p)} onGuard={(f) => onGuard?.(f) ?? Promise.resolve()} onTerminal={(m, r) => onTerminal?.(m, r)} />

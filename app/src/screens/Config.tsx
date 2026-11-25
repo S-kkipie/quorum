@@ -40,6 +40,8 @@ function ThemeMode({ pref, setPref }: { pref: ThemePref; setPref: (p: ThemePref)
 
 // The palette tiles and custom accent load with Settings (palette data stays out of the initial bundle).
 const PalettePicker = lazy(() => import('../components/PalettePicker'))
+// Settings → Meetings is its own chunk too
+const MeetingsSettings = lazy(() => import('../components/meetings/MeetingsSettings'))
 
 /** Theme and palette for this device. */
 export function Appearance() {
@@ -54,7 +56,7 @@ export function Appearance() {
   )
 }
 
-export default function Config({ state, onBack, editProject }: { state: AppState; onBack?: () => void; editProject?: string | null }) {
+export default function Config({ state, onBack, editProject, onOpenMeeting }: { state: AppState; onBack?: () => void; editProject?: string | null; onOpenMeeting?: (id: string) => void }) {
   const [editWs, setEditWs] = useState<string | null>(null) // id, or '' = new
   const [editPr, setEditPr] = useState<string | null>(editProject ?? null) // id, '' = new
   const [prefill, setPrefill] = useState<{ repoURL: string; name: string } | null>(null)
@@ -127,6 +129,11 @@ export default function Config({ state, onBack, editProject }: { state: AppState
         </ul>
         {workspaces.length > 0 && (editPr === '' ? <div className="mt-2"><ProjectForm key={prefill?.repoURL ?? ''} state={state} prefill={prefill} onDone={closeProject} /></div>
           : <Button variant="secondary" size="sm" onClick={() => { setPrefill(null); setEditPr('') }} className="mt-2 min-h-11 text-xs">New project</Button>)}
+
+        <h3 className={h2}>Meetings</h3>
+        <Suspense fallback={<div className="min-h-40" />}>
+          <MeetingsSettings state={state} onOpenMeeting={onOpenMeeting} />
+        </Suspense>
 
         <h3 className={h2}>Project suggestions</h3>
         {sugError && <p role="alert" className="text-xs text-danger">{sugError}</p>}

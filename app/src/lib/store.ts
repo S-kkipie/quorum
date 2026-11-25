@@ -40,7 +40,13 @@ export interface AppState {
   lastAttention: Record<string, LastAttention>
   /** Bumped by project_briefing_changed: an open project page refetches its briefing. */
   briefingRev: Record<string, number>
+  /** The last meeting_changed per meeting: its live status and progress; rev is bumped by every change but progress. */
+  meetingLive: Record<string, MeetingLive>
+  /** Bumped by every meeting_changed that is not only progress: open meeting lists refetch. */
+  meetingsRev: number
 }
+
+export interface MeetingLive { projectId: string; status: string; progress: number; stage: string; rev: number }
 
 export interface LastAttention { kind: 'needs_you' | 'done'; at: number }
 
@@ -49,7 +55,7 @@ export type AskEntry = Ask & { session: string }
 
 export const initialState = (): AppState => ({
   machines: {}, sessions: {}, order: [], events: {}, live: {}, liveAgent: {}, asks: {}, replaced: {}, replacedBy: {},
-  workspaces: {}, projects: {}, tickets: {}, links: {}, proposals: {}, checkouts: {}, worked: {}, conversations: {}, usage: {}, commands: {}, commandsRev: {}, lastAttention: {}, briefingRev: {},
+  workspaces: {}, projects: {}, tickets: {}, links: {}, proposals: {}, checkouts: {}, worked: {}, conversations: {}, usage: {}, commands: {}, commandsRev: {}, lastAttention: {}, briefingRev: {}, meetingLive: {}, meetingsRev: 0,
 })
 
 /** An event read from the machine's transcript (history page): no hub seq, identified by its key. */
@@ -431,6 +437,16 @@ export function reduce(s: AppState, env: Envelope): AppState {
     case 'project_briefing_changed': {
       const id = env.payload?.projectId
       return typeof id === 'string' && id ? { ...s, briefingRev: { ...s.briefingRev, [id]: (s.briefingRev?.[id] ?? 0) + 1 } } : s
+    }
+    case 'meeting_changed': {
+      const p = env.payload ?? {}
+      if (typeof p.id !== 'string' || !p.id) return s
+      const prev = s.meetingLive?.[p.id]
+      const next = { projectId: String(p.projectId ?? ''), status: String(p.status ?? ''), progress: Number(p.progress) || 0, stage: String(p.stage ?? ''), rev: prev?.rev ?? 0 }
+      // a heartbeat that only moves the progress or the stage needs no refetch
+      const progressOnly = !!prev && prev.status === next.status && prev.projectId === next.projectId && (prev.progress !== next.progress || prev.stage !== next.stage)
+      if (!progressOnly) next.rev++
+      return { ...s, meetingLive: { ...s.meetingLive, [p.id]: next }, meetingsRev: (s.meetingsRev ?? 0) + (progressOnly ? 0 : 1) }
     }
     case 'proposal_upsert': {
       const p = env.payload as Proposal

@@ -13,7 +13,7 @@ import Viewer from './screens/Viewer'
 import { usePageVisible } from './lib/useMarkSeen'
 import { isNative } from './lib/native'
 import { frames } from './lib/frames'
-import { CLEAR, centreNav, centreOf, type Centre, type Nav, type Tab, type TermNav } from './lib/nav'
+import { CLEAR, centreNav, centreOf, meetingLink, type Centre, type Nav, type Tab, type TermNav } from './lib/nav'
 import { useLayout } from './lib/useLayout'
 import AppShell from './components/shell/AppShell'
 import LazyBoundary from './components/LazyBoundary'
@@ -30,6 +30,7 @@ const ProjectTickets = lazy(() => import('./screens/ProjectTickets'))
 const TicketDetail = lazy(() => import('./components/TicketDetail'))
 const Terminal = lazy(() => import('./screens/Terminal'))
 const Starting = lazy(() => import('./screens/Starting'))
+const MeetingPage = lazy(() => import('./components/meetings/MeetingPage'))
 
 /** Forgets the local event cache (unpair / logout); loaded on demand like the session view. */
 const clearLocalCache = () => import('./lib/cache').then((c) => c.clearCache()).catch(() => { /* no storage */ })
@@ -59,7 +60,17 @@ const devMode = (): FixtureMode | null => {
   return (FIXTURE_MODES as readonly string[]).includes(m ?? '') ? (m as FixtureMode) : null
 }
 
+/** A ?meeting=<id> link (from a GitHub issue) opens that meeting: it becomes the history entry and leaves the URL. */
+function takeMeetingLink() {
+  const id = meetingLink(location.search)
+  if (!id) return
+  const u = new URL(location.href)
+  u.searchParams.delete('meeting')
+  history.replaceState({ ...navNow(), ...centreNav({ kind: 'meeting', id }) }, '', u.toString())
+}
+
 function Main() {
+  useState(takeMeetingLink) // before every state read from history.state
   const [mode] = useState(devMode)
   const [dev, setDev] = useState<{ Toggle: Toggle } | null>(null)
   const [state, setState] = useState(initialState)
@@ -75,6 +86,7 @@ function Main() {
   const [starting, setStarting] = useState(() => !!navNow().starting)
   const [terminal, setTerminal] = useState<TermNav | null>(() => navNow().terminal ?? null)
   const [viewer, setViewer] = useState<Nav['viewer']>(() => navNow().viewer ?? null)
+  const [meeting, setMeeting] = useState<string | null>(() => navNow().meeting ?? null)
   // the launch dialog, with its scope (the sidebar's job + or a project's "Start one")
   const [launching, setLaunching] = useState<{ projectId?: string; workspaceId?: string } | null>(null)
   const [pending, setPending] = useState<Pending | null>(null)
@@ -125,6 +137,7 @@ function Main() {
     setStarting(!!n.starting)
     setTerminal(n.terminal ?? null)
     setViewer(n.viewer ?? null)
+    setMeeting(n.meeting ?? null)
     setViewKey(n.session ?? '')
   }
   useEffect(() => {
@@ -132,7 +145,7 @@ function Main() {
     window.addEventListener('popstate', h)
     return () => window.removeEventListener('popstate', h)
   }, [])
-  const cur: Nav = { tab, project, projectTickets, checkouts: checkoutsOpen, ticket, config, session: selected, starting, terminal, viewer }
+  const cur: Nav = { tab, project, projectTickets, checkouts: checkoutsOpen, ticket, config, session: selected, starting, terminal, viewer, meeting }
   // Desktop: what the centre pane shows (the open session follows /clear through `current` below).
   const centre = centreOf(cur)
   /** Goes to another view: pushes a history entry (so Back returns), or replaces the current one. */
@@ -157,6 +170,7 @@ function Main() {
     else if (viewer) go({ viewer: null }, true)
     else if (terminal) go({ terminal: null }, true)
     else if (starting) go({ starting: false }, true)
+    else if (meeting) go({ meeting: null }, true)
     else if (selected) go({ session: null }, true)
     else if (config !== null) go({ config: null }, true)
     else if (ticket) go({ ticket: null }, true)
@@ -276,7 +290,7 @@ function Main() {
     let off = false
     Promise.all([import('./dev/fixtures'), import('./dev/DataToggle')]).then(([f, t]) => {
       if (off) return
-      setDevApi({ listConversations: f.fixtureConversations(mode), listEvents: f.fixtureEvents(mode), history: f.fixtureHistory(mode), listCommands: f.fixtureCommands(mode), briefing: f.fixtureBriefing(mode) })
+      setDevApi({ listConversations: f.fixtureConversations(mode), listEvents: f.fixtureEvents(mode), history: f.fixtureHistory(mode), listCommands: f.fixtureCommands(mode), briefing: f.fixtureBriefing(mode), meetings: f.fixtureMeetings(mode) })
       setState(f.fixtureState(mode))
       setConnected(true)
       setDev({ Toggle: t.default })
@@ -323,6 +337,7 @@ function Main() {
     go({ terminal: { machine, pane: r.pane, root, label } })
   }
   const onViewTerminal = (machine: string, pane: string) => go({ terminal: { machine, pane } })
+  const openMeeting = (id: string) => (wide ? goCentre({ kind: 'meeting', id }) : go({ meeting: id }))
   const openConfig = (id: string) => go({ config: id, starting: false })
   const dialog = launching && <LaunchDialog state={shown} projectId={launching.projectId} workspaceId={launching.workspaceId} onClose={() => setLaunching(null)} onLaunched={onLaunched} />
   const terminalView = terminal && (
@@ -338,17 +353,18 @@ function Main() {
   const sessionView = current && vanished.current !== current ? <LazyBoundary><Session key={viewKey} state={shown} id={current} onBack={wide ? undefined : back} onEvents={onEvents} onTrim={onTrim} onSeen={onSeen} onCommands={onCommands} reconnects={reconnects} onGuard={guardLaunch} busy={launchBusy} onViewTerminal={onViewTerminal} onOpenFile={(machine, path, o) => current && go({ viewer: { machine, sessionId: current, path, ...(o && 'images' in o ? { images: true } : o && 'read' in o ? { read: true } : o && 'upload' in o ? { upload: true } : {}) } })} /></LazyBoundary> : null
   const sessionsList = <Inbox state={shown} connected={connected} onOpen={openSession} onLaunch={() => openLaunch()} />
   const projectsView = <Projects state={shown} wide={wide} selected={project} onOpen={(id) => (wide ? goCentre({ kind: 'project', id }) : go({ project: id, projectTickets: null, checkouts: false, ticket: null }))} onOpenSession={openSession} onConfig={() => openConfig('')} />
-  const configView = config !== null && <LazyBoundary><Config key={config} state={shown} editProject={config || null} onBack={back} /></LazyBoundary>
+  const configView = config !== null && <LazyBoundary><Config key={config} state={shown} editProject={config || null} onBack={back} onOpenMeeting={openMeeting} /></LazyBoundary>
   const projectView = project && (
     <LazyBoundary><Project key={project} state={shown} id={project} onBack={back}
       onOpenTickets={(id) => go({ projectTickets: id })} onOpenSession={openSession} onEdit={openConfig} onTickets={onTickets} onCheckouts={onCheckouts} onConversations={onConversations}
       checkoutsOpen={checkoutsOpen} onCheckoutsOpenChange={(o) => (o ? go({ checkouts: true }) : back())}
-      pending={launchBusy} onLaunched={onLaunched} onGuard={guardLaunch} onTerminal={onTerminal} /></LazyBoundary>
+      pending={launchBusy} onLaunched={onLaunched} onGuard={guardLaunch} onTerminal={onTerminal} onOpenMeeting={openMeeting} /></LazyBoundary>
   )
   const ticketsView = projectTickets && (
     <LazyBoundary><ProjectTickets key={projectTickets} state={shown} id={projectTickets} selectedTicket={ticket} onBack={back}
       onOpenTicket={(id) => go({ ticket: id })} onTickets={onTickets} /></LazyBoundary>
   )
+  const meetingView = meeting && <LazyBoundary><MeetingPage key={meeting} state={shown} id={meeting} onBack={back} /></LazyBoundary>
   const ticketView = ticket && (
     <LazyBoundary><TicketDetail key={ticket} state={shown} ticketId={ticket} onBack={back} onOpenSession={openSession} onLoaded={onTicket} onCheckouts={onCheckouts} onLaunched={onLaunched} /></LazyBoundary>
   )
@@ -370,6 +386,7 @@ function Main() {
       case 'settings': page = <ScrollArea className="min-h-0 flex-1">{configView}</ScrollArea>; break
       // project pages keep a readable line length in a wide centre
       case 'tickets': page = <ScrollArea className="min-h-0 flex-1"><div className="mx-auto w-full max-w-3xl">{ticketView || ticketsView}</div></ScrollArea>; break
+      case 'meeting': page = <ScrollArea className="min-h-0 flex-1"><div className="mx-auto w-full max-w-3xl">{meetingView}</div></ScrollArea>; break
       case 'project': page = <ScrollArea className="min-h-0 flex-1"><div className="mx-auto w-full max-w-3xl">{projectView}</div></ScrollArea>; break
       case 'session': page = <div className="min-h-0 flex-1">{sessionView}</div>; break
       default: page = <ScrollArea className="min-h-0 flex-1" horizontal>{projectsView}</ScrollArea>
@@ -388,7 +405,7 @@ function Main() {
   // the bottom nav: Sessions and Projects replace the root page; Settings opens general settings
   const onNav = (n: NavTab) => {
     if (n === 'settings') { if (config !== '') openConfig(''); return }
-    go({ tab: n, project: null, projectTickets: null, checkouts: false, ticket: null, config: null, starting: false, terminal: null, viewer: null, session: null }, true)
+    go({ tab: n, project: null, projectTickets: null, checkouts: false, ticket: null, config: null, starting: false, terminal: null, viewer: null, session: null, meeting: null }, true)
   }
   let view
   // the bottom nav is hidden only in a session and the Viewer
@@ -399,6 +416,8 @@ function Main() {
   else if (terminalView) view = withNav(terminalView, tab, false)
   else if (startingView) view = withNav(startingView, tab, false)
   else if (sessionView) view = <div className="h-full">{sessionView}</div>
+  // a meeting takes the whole screen, like a session
+  else if (meetingView) view = <div className="flex h-full flex-col"><ScrollArea className="min-h-0 flex-1">{meetingView}</ScrollArea></div>
   else if (configView) view = withNav(configView, 'settings')
   else if (ticketView) view = withNav(ticketView, tab)
   else if (ticketsView) view = withNav(ticketsView, tab)
