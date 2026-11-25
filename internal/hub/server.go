@@ -84,6 +84,7 @@ func NewServer(st *store.Store, opts ...Options) *Server {
 	s.mux.HandleFunc("POST /api/pair", s.handlePair)
 	s.mux.HandleFunc("POST /api/link", s.handleLink)
 	s.mux.Handle("GET /api/machine/ws", s.requireMachine(http.HandlerFunc(s.handleMachineWS)))
+	s.machinePendingRoutes()
 	s.live = newLive(s)
 	s.hub.SetBroadcaster(s.live)
 	s.sync = connectors.NewSyncer(st, s.hub.publish)
