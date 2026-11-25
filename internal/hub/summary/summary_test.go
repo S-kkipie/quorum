@@ -41,7 +41,7 @@ func setup(t *testing.T, tk []proto.Ticket) (*store.Store, proto.Project, *fakeM
 	w, _ := st.CreateWorkspace(proto.Workspace{Name: "w"})
 	p, err := st.CreateProject(proto.Project{WorkspaceID: w.ID, Name: "Proj"})
 	require.NoError(t, err)
-	require.NoError(t, st.ReplaceTickets(p.ID, tk))
+	require.NoError(t, replaceTk(st, p.ID, tk))
 	m := &fakeModel{out: "  \"Going well.\nQA missing.\"  "}
 	var pubs []proto.Envelope
 	s := New(st, m, func(e proto.Envelope) { pubs = append(pubs, e) })
@@ -67,7 +67,7 @@ func TestThrottle30Min(t *testing.T) {
 	s.Touch(p.ID)
 	s.RunOnce(ctx)
 	require.Equal(t, 1, m.calls)
-	require.NoError(t, st.ReplaceTickets(p.ID, []proto.Ticket{{ExternalID: "b", Title: "Tb", Status: "todo", UpdatedAt: now.UnixMilli()}}))
+	require.NoError(t, replaceTk(st, p.ID, []proto.Ticket{{ExternalID: "b", Title: "Tb", Status: "todo", UpdatedAt: now.UnixMilli()}}))
 	*now = now.Add(21 * time.Minute)
 	s.RunOnce(ctx) // still pending
 	require.Equal(t, 2, m.calls)
@@ -89,7 +89,7 @@ func TestModelErrorKeepsSummary(t *testing.T) {
 	s.Touch(p.ID)
 	s.RunOnce(ctx)
 	*now = now.Add(31 * time.Minute)
-	require.NoError(t, st.ReplaceTickets(p.ID, []proto.Ticket{{ExternalID: "c", Title: "Tc", Status: "todo", UpdatedAt: now.UnixMilli()}}))
+	require.NoError(t, replaceTk(st, p.ID, []proto.Ticket{{ExternalID: "c", Title: "Tc", Status: "todo", UpdatedAt: now.UnixMilli()}}))
 	s.Touch(p.ID)
 	m.err = errors.New("boom")
 	s.RunOnce(ctx)
@@ -166,7 +166,7 @@ func TestUnchangedInputsSkipModel(t *testing.T) {
 	got, _ := st.GetProject(p.ID)
 	require.Equal(t, now.UnixMilli(), got.SummaryAt)
 	// a new ticket does regenerate
-	require.NoError(t, st.ReplaceTickets(p.ID, []proto.Ticket{{ExternalID: "2", Title: "New", Status: "todo", UpdatedAt: now.UnixMilli()}}))
+	require.NoError(t, replaceTk(st, p.ID, []proto.Ticket{{ExternalID: "2", Title: "New", Status: "todo", UpdatedAt: now.UnixMilli()}}))
 	*now = now.Add(31 * time.Minute)
 	s.Touch(p.ID)
 	s.RunOnce(ctx)
@@ -252,7 +252,7 @@ func TestDeletedProjectIsPruned(t *testing.T) {
 	s.Touch(p.ID)
 	s.RunOnce(ctx) // leaves a hash
 	*now = now.Add(31 * time.Minute)
-	require.NoError(t, st.ReplaceTickets(p.ID, []proto.Ticket{{ExternalID: "c", Title: "Tc", Status: "todo", UpdatedAt: now.UnixMilli()}}))
+	require.NoError(t, replaceTk(st, p.ID, []proto.Ticket{{ExternalID: "c", Title: "Tc", Status: "todo", UpdatedAt: now.UnixMilli()}}))
 	s.Touch(p.ID)
 	m.err = errors.New("boom")
 	s.RunOnce(ctx) // leaves retry and dirty

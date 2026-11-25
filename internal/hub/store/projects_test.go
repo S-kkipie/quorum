@@ -30,13 +30,13 @@ func mkProject(t *testing.T, s *Store) proto.Project {
 func TestReplaceTicketsKeepsMissing(t *testing.T) {
 	s := openMem(t)
 	p := mkProject(t, s)
-	require.NoError(t, s.ReplaceTickets(p.ID, []proto.Ticket{
+	require.NoError(t, replaceTk(s, p.ID, []proto.Ticket{
 		{ExternalID: "1", Title: "a", Status: "done", Comments: []proto.TicketComment{{Author: "x", Body: "hi", At: 1}}},
 		{ExternalID: "2", Title: "b", Status: "todo"},
 	}))
 	first, _ := s.ListTickets(p.ID)
 	require.Len(t, first, 2)
-	require.NoError(t, s.ReplaceTickets(p.ID, []proto.Ticket{{ExternalID: "1", Title: "a2", Status: "done"}}))
+	require.NoError(t, replaceTk(s, p.ID, []proto.Ticket{{ExternalID: "1", Title: "a2", Status: "done"}}))
 	ts, err := s.ListTickets(p.ID)
 	require.NoError(t, err)
 	require.Len(t, ts, 2)
@@ -97,7 +97,7 @@ func TestDeleteProjectCleansUp(t *testing.T) {
 	require.NoError(t, s.SetConnectorToken(p.ID, "t"))
 	_, err := s.UpsertCheckout(proto.Checkout{ProjectID: p.ID, Machine: "m", Root: "/r"})
 	require.NoError(t, err)
-	require.NoError(t, s.ReplaceTickets(p.ID, []proto.Ticket{{ExternalID: "1", Status: "todo"}}))
+	require.NoError(t, replaceTk(s, p.ID, []proto.Ticket{{ExternalID: "1", Status: "todo"}}))
 	ts, _ := s.ListTickets(p.ID)
 	require.NoError(t, s.LinkSessionTicket(proto.SessionTicket{SessionID: "s", TicketID: ts[0].ID}))
 	_, err = s.CreateProposal(proto.Proposal{TicketID: ts[0].ID, Kind: "comment", Body: "x"})
@@ -172,11 +172,11 @@ func TestMigratePlan1DB(t *testing.T) {
 func TestTicketValidation(t *testing.T) {
 	s := openMem(t)
 	p := mkProject(t, s)
-	err := s.ReplaceTickets(p.ID, []proto.Ticket{{ExternalID: "1", Status: "done"}, {ExternalID: "2", Status: "weird"}})
+	err := replaceTk(s, p.ID, []proto.Ticket{{ExternalID: "1", Status: "done"}, {ExternalID: "2", Status: "weird"}})
 	require.ErrorContains(t, err, "weird")
 	ts, _ := s.ListTickets(p.ID)
 	require.Empty(t, ts, "rollback total")
-	require.Error(t, s.ReplaceTickets(p.ID, []proto.Ticket{{Title: "x", Status: "done"}}))
+	require.Error(t, replaceTk(s, p.ID, []proto.Ticket{{Title: "x", Status: "done"}}))
 	require.True(t, ValidStatus("in_review"))
 	require.False(t, ValidStatus("pending"))
 }
@@ -213,13 +213,13 @@ func TestReplaceTicketsNilCommentsKeepsStored(t *testing.T) {
 	s := openMem(t)
 	p := mkProject(t, s)
 	cm := []proto.TicketComment{{Author: "x", Body: "hi", At: 1}}
-	require.NoError(t, s.ReplaceTickets(p.ID, []proto.Ticket{{ExternalID: "1", Title: "a", Status: "todo", Comments: cm}}))
-	require.NoError(t, s.ReplaceTickets(p.ID, []proto.Ticket{{ExternalID: "1", Title: "b", Status: "todo"}}))
+	require.NoError(t, replaceTk(s, p.ID, []proto.Ticket{{ExternalID: "1", Title: "a", Status: "todo", Comments: cm}}))
+	require.NoError(t, replaceTk(s, p.ID, []proto.Ticket{{ExternalID: "1", Title: "b", Status: "todo"}}))
 	ts, err := s.ListTickets(p.ID)
 	require.NoError(t, err)
 	require.Equal(t, "b", ts[0].Title)
 	require.Equal(t, cm, ts[0].Comments)
-	require.NoError(t, s.ReplaceTickets(p.ID, []proto.Ticket{{ExternalID: "1", Title: "b", Status: "todo", Comments: []proto.TicketComment{}}}))
+	require.NoError(t, replaceTk(s, p.ID, []proto.Ticket{{ExternalID: "1", Title: "b", Status: "todo", Comments: []proto.TicketComment{}}}))
 	ts, _ = s.ListTickets(p.ID)
 	require.Empty(t, ts[0].Comments)
 }
@@ -229,7 +229,7 @@ func TestProgressWindow30Days(t *testing.T) {
 	p := mkProject(t, s)
 	now := time.Now().UnixMilli()
 	old := now - 40*24*3600*1000
-	require.NoError(t, s.ReplaceTickets(p.ID, []proto.Ticket{
+	require.NoError(t, replaceTk(s, p.ID, []proto.Ticket{
 		{ExternalID: "1", Title: "a", Status: "done", UpdatedAt: now - 1000},
 		{ExternalID: "2", Title: "b", Status: "todo", UpdatedAt: now - 2000},
 		{ExternalID: "3", Title: "c", Status: "done", UpdatedAt: old},
@@ -246,13 +246,13 @@ func TestProgressFallbackAndUndated(t *testing.T) {
 	p := mkProject(t, s)
 	now := time.Now().UnixMilli()
 	old := now - 40*24*3600*1000
-	require.NoError(t, s.ReplaceTickets(p.ID, []proto.Ticket{
+	require.NoError(t, replaceTk(s, p.ID, []proto.Ticket{
 		{ExternalID: "1", Title: "a", Status: "done", UpdatedAt: old},
 		{ExternalID: "2", Title: "b", Status: "todo", UpdatedAt: old},
 	}))
 	got, _ := s.GetProject(p.ID)
 	require.Equal(t, proto.Progress{Done: 1, Total: 2}, got.Progress) // empty window: all
-	require.NoError(t, s.ReplaceTickets(p.ID, []proto.Ticket{{ExternalID: "3", Title: "c", Status: "done"}}))
+	require.NoError(t, replaceTk(s, p.ID, []proto.Ticket{{ExternalID: "3", Title: "c", Status: "done"}}))
 	got, _ = s.GetProject(p.ID)
 	require.Equal(t, proto.Progress{Done: 1, Total: 1}, got.Progress) // no date counts as recent
 }
@@ -262,7 +262,7 @@ func TestProjectActivityIncludesLiveSessions(t *testing.T) {
 	p := mkProject(t, s)
 	now := time.Now().UnixMilli()
 	old := now - 10*24*3600*1000
-	require.NoError(t, s.ReplaceTickets(p.ID, []proto.Ticket{{ExternalID: "1", Title: "a", Status: "todo", UpdatedAt: old}}))
+	require.NoError(t, replaceTk(s, p.ID, []proto.Ticket{{ExternalID: "1", Title: "a", Status: "todo", UpdatedAt: old}}))
 	_, err := s.UpsertCheckout(proto.Checkout{ProjectID: p.ID, Machine: "m", Root: "/r", RepoURL: "git@x:o/r.git"})
 	require.NoError(t, err)
 	require.NoError(t, s.UpsertSession(proto.SessionInfo{ID: "s1", Machine: "m", Root: "/r", State: proto.StateWorking, UpdatedAt: now}))
@@ -278,7 +278,7 @@ func TestProjectActivityIncludesLiveSessions(t *testing.T) {
 func TestProgressBogusTimestampsCountAsUndated(t *testing.T) {
 	s := openMem(t)
 	p := mkProject(t, s)
-	require.NoError(t, s.ReplaceTickets(p.ID, []proto.Ticket{
+	require.NoError(t, replaceTk(s, p.ID, []proto.Ticket{
 		{ExternalID: "1", Title: "a", Status: "done", UpdatedAt: 1},
 		{ExternalID: "2", Title: "b", Status: "todo", UpdatedAt: 2},
 		{ExternalID: "3", Title: "c", Status: "todo", UpdatedAt: time.Now().UnixMilli()},

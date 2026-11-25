@@ -104,7 +104,7 @@ func TestProjectAPICRUD(t *testing.T) {
 
 	// tickets and links (switching to github deleted those of the previous source: they are seeded again)
 	f.mach.CloseNow()
-	require.NoError(t, f.st.ReplaceTickets(p.ID, []proto.Ticket{
+	require.NoError(t, replaceTk(f.st, p.ID, []proto.Ticket{
 		{ExternalID: "41", Title: "login", Status: "todo"}, {ExternalID: "42", Title: "other", Status: "todo"},
 		{ExternalID: "x1", Title: "[ACME-12] payments", Status: "todo"},
 	}))

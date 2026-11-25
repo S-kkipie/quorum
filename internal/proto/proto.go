@@ -540,6 +540,42 @@ type Ticket struct {
 	Body       string          `json:"body"`
 	Comments   []TicketComment `json:"comments"`
 	UpdatedAt  int64           `json:"updatedAt"`
+	// Optional fields filled by sources that have them (Moontech): planned dates in Unix ms and the
+	// title of the meeting note the ticket came from.
+	PlannedStart int64  `json:"plannedStart,omitempty"`
+	PlannedEnd   int64  `json:"plannedEnd,omitempty"`
+	NoteTitle    string `json:"noteTitle,omitempty"`
+}
+
+// MeetingNote is a meeting note of a ticket source, stored per project. Date is YYYY-MM-DD;
+// Decisions, OpenPoints and Actions are text with one "- " bullet per line.
+type MeetingNote struct {
+	ExternalID string `json:"externalId"`
+	Title      string `json:"title"`
+	Date       string `json:"date"`
+	Summary    string `json:"summary"`
+	Decisions  string `json:"decisions"`
+	OpenPoints string `json:"openPoints"`
+	Actions    string `json:"actions"`
+	URL        string `json:"url"`
+	UpdatedAt  int64  `json:"updatedAt"`
+}
+
+// TicketChange is a row of the change log written when a sync alters a ticket. Kind = new|status|assigned;
+// From and To hold the old and new status or assignee ("" for new).
+type TicketChange struct {
+	ExternalID string `json:"externalId"`
+	Kind       string `json:"kind"`
+	From       string `json:"from"`
+	To         string `json:"to"`
+	At         int64  `json:"at"`
+}
+
+// PinnedNote is a short free-text note the owner pins to a project.
+type PinnedNote struct {
+	ID   string `json:"id"`
+	Text string `json:"text"`
+	At   int64  `json:"at"`
 }
 
 type SessionTicket struct {

@@ -181,6 +181,9 @@ func migrate(s *Store) error {
 	if _, err := s.db.Exec(schemaPush); err != nil {
 		return err
 	}
+	if err := migrateBriefing(s); err != nil {
+		return err
+	}
 	return migrateEnglishStatuses(s)
 }
 

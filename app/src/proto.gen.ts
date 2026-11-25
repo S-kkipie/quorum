@@ -613,6 +613,47 @@ export interface Ticket {
   body: string;
   comments: TicketComment[];
   updatedAt: number /* int64 */;
+  /**
+   * Optional fields filled by sources that have them (Moontech): planned dates in Unix ms and the
+   * title of the meeting note the ticket came from.
+   */
+  plannedStart?: number /* int64 */;
+  plannedEnd?: number /* int64 */;
+  noteTitle?: string;
+}
+/**
+ * MeetingNote is a meeting note of a ticket source, stored per project. Date is YYYY-MM-DD;
+ * Decisions, OpenPoints and Actions are text with one "- " bullet per line.
+ */
+export interface MeetingNote {
+  externalId: string;
+  title: string;
+  date: string;
+  summary: string;
+  decisions: string;
+  openPoints: string;
+  actions: string;
+  url: string;
+  updatedAt: number /* int64 */;
+}
+/**
+ * TicketChange is a row of the change log written when a sync alters a ticket. Kind = new|status|assigned;
+ * From and To hold the old and new status or assignee ("" for new).
+ */
+export interface TicketChange {
+  externalId: string;
+  kind: string;
+  from: string;
+  to: string;
+  at: number /* int64 */;
+}
+/**
+ * PinnedNote is a short free-text note the owner pins to a project.
+ */
+export interface PinnedNote {
+  id: string;
+  text: string;
+  at: number /* int64 */;
 }
 export interface SessionTicket {
   sessionId: string;

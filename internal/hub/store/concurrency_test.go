@@ -32,7 +32,7 @@ func TestTwoStoresConcurrentWriteTx(t *testing.T) {
 			defer wg.Done()
 			for i := 0; i < n; i++ {
 				ts := []proto.Ticket{{ExternalID: fmt.Sprint(i % 5), Title: "t", Status: "todo", UpdatedAt: time.Now().UnixMilli()}}
-				if err := st.ReplaceTickets(p.ID, ts); err != nil {
+				if err := replaceTk(st, p.ID, ts); err != nil {
 					errs <- err
 				}
 			}

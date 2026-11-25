@@ -481,55 +481,115 @@ func (s *Store) CheckoutForRoot(machine, root string) (proto.Checkout, error) {
 
 // ---- Tickets ----
 
+const ticketCols = `id,project_id,external_id,title,status,raw_status,assignee,url,body,comments,updated_at,planned_start,planned_end,note_title`
+
 // ReplaceTickets upserts by (project_id, external_id) in one transaction.
 // Does not delete the missing ones; with Comments == nil keeps the stored comments ([] deletes them). Recomputes the project's progress.
-func (s *Store) ReplaceTickets(projectID string, ts []proto.Ticket) (err error) {
+// It diffs against the stored rows into the change log (new, status, assigned) stamped now and returns the new rows.
+// A project with no stored tickets is being seeded: it records no "new" rows (nor any other) so the first sync does not
+// flood "new since". Log rows older than 60 days are pruned.
+func (s *Store) ReplaceTickets(projectID string, ts []proto.Ticket, now int64) (changes []proto.TicketChange, err error) {
 	tx, err := s.db.Begin()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer func() {
 		if err != nil {
 			tx.Rollback()
+			changes = nil
 		}
 	}()
 	var n int
 	if err = tx.QueryRow(`SELECT count(*) FROM projects WHERE id=?`, projectID).Scan(&n); err != nil {
-		return err
+		return nil, err
 	}
 	if n == 0 {
-		return ErrNotFound
+		return nil, ErrNotFound
 	}
+	type prev struct{ status, assignee string }
+	stored := map[string]prev{}
+	rows, err := tx.Query(`SELECT external_id,status,assignee FROM tickets WHERE project_id=?`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var id string
+		var p prev
+		if err = rows.Scan(&id, &p.status, &p.assignee); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		stored[id] = p
+	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+	seeding := len(stored) == 0
+	changes = []proto.TicketChange{}
 	for _, t := range ts {
 		if t.ExternalID == "" {
 			err = fmt.Errorf("ticket without ExternalID (%q)", t.Title)
-			return err
+			return nil, err
 		}
 		if !ValidStatus(t.Status) {
 			err = fmt.Errorf("invalid ticket status %q (ticket %s)", t.Status, t.ExternalID)
-			return err
+			return nil, err
 		}
 		cj := []byte("[]")
 		if t.Comments != nil {
 			if cj, err = json.Marshal(t.Comments); err != nil {
-				return err
+				return nil, err
 			}
 		}
-		if _, err = tx.Exec(`INSERT INTO tickets(id,project_id,external_id,title,status,raw_status,assignee,url,body,comments,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+		if _, err = tx.Exec(`INSERT INTO tickets(id,project_id,external_id,title,status,raw_status,assignee,url,body,comments,updated_at,planned_start,planned_end,note_title) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 			ON CONFLICT(project_id,external_id) DO UPDATE SET title=excluded.title,status=excluded.status,raw_status=excluded.raw_status,
-			assignee=excluded.assignee,url=excluded.url,body=excluded.body,comments=CASE WHEN ? THEN excluded.comments ELSE tickets.comments END,updated_at=excluded.updated_at`,
-			newID(), projectID, t.ExternalID, t.Title, t.Status, t.RawStatus, t.Assignee, t.URL, t.Body, string(cj), t.UpdatedAt, t.Comments != nil); err != nil {
-			return err
+			assignee=excluded.assignee,url=excluded.url,body=excluded.body,comments=CASE WHEN ? THEN excluded.comments ELSE tickets.comments END,updated_at=excluded.updated_at,
+			planned_start=excluded.planned_start,planned_end=excluded.planned_end,note_title=excluded.note_title`,
+			newID(), projectID, t.ExternalID, t.Title, t.Status, t.RawStatus, t.Assignee, t.URL, t.Body, string(cj), t.UpdatedAt,
+			t.PlannedStart, t.PlannedEnd, t.NoteTitle, t.Comments != nil); err != nil {
+			return nil, err
+		}
+		if seeding {
+			continue
+		}
+		old, ok := stored[t.ExternalID]
+		var add []proto.TicketChange
+		switch {
+		case !ok:
+			add = append(add, proto.TicketChange{ExternalID: t.ExternalID, Kind: "new", To: t.Status, At: now})
+		default:
+			if old.status != t.Status {
+				add = append(add, proto.TicketChange{ExternalID: t.ExternalID, Kind: "status", From: old.status, To: t.Status, At: now})
+			}
+			if old.assignee != t.Assignee {
+				add = append(add, proto.TicketChange{ExternalID: t.ExternalID, Kind: "assigned", From: old.assignee, To: t.Assignee, At: now})
+			}
+		}
+		stored[t.ExternalID] = prev{t.Status, t.Assignee} // a duplicate id in one batch logs once
+		for _, c := range add {
+			if _, err = tx.Exec(`INSERT INTO ticket_changes(project_id,external_id,kind,from_val,to_val,at) VALUES(?,?,?,?,?,?)`,
+				projectID, c.ExternalID, c.Kind, c.From, c.To, c.At); err != nil {
+				return nil, err
+			}
+			changes = append(changes, c)
 		}
 	}
-	if err = recomputeProgress(tx, projectID, time.Now().UnixMilli()); err != nil {
-		return err
+	if _, err = tx.Exec(`DELETE FROM ticket_changes WHERE at<?`, now-changeRetentionMs); err != nil {
+		return nil, err
 	}
-	return tx.Commit()
+	if err = recomputeProgress(tx, projectID, time.Now().UnixMilli()); err != nil {
+		return nil, err
+	}
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
+	return changes, nil
 }
 
 func (s *Store) ListTickets(projectID string) ([]proto.Ticket, error) {
-	rows, err := s.db.Query(`SELECT id,project_id,external_id,title,status,raw_status,assignee,url,body,comments,updated_at FROM tickets WHERE project_id=? ORDER BY updated_at DESC, external_id`, projectID)
+	rows, err := s.db.Query(`SELECT `+ticketCols+` FROM tickets WHERE project_id=? ORDER BY updated_at DESC, external_id`, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -538,7 +598,7 @@ func (s *Store) ListTickets(projectID string) ([]proto.Ticket, error) {
 	for rows.Next() {
 		var t proto.Ticket
 		var cj string
-		if err := rows.Scan(&t.ID, &t.ProjectID, &t.ExternalID, &t.Title, &t.Status, &t.RawStatus, &t.Assignee, &t.URL, &t.Body, &cj, &t.UpdatedAt); err != nil {
+		if err := rows.Scan(&t.ID, &t.ProjectID, &t.ExternalID, &t.Title, &t.Status, &t.RawStatus, &t.Assignee, &t.URL, &t.Body, &cj, &t.UpdatedAt, &t.PlannedStart, &t.PlannedEnd, &t.NoteTitle); err != nil {
 			return nil, err
 		}
 		t.Comments = []proto.TicketComment{}
@@ -554,8 +614,8 @@ func (s *Store) ListTickets(projectID string) ([]proto.Ticket, error) {
 func (s *Store) Ticket(id string) (proto.Ticket, error) {
 	var t proto.Ticket
 	var cj string
-	err := s.db.QueryRow(`SELECT id,project_id,external_id,title,status,raw_status,assignee,url,body,comments,updated_at FROM tickets WHERE id=?`, id).
-		Scan(&t.ID, &t.ProjectID, &t.ExternalID, &t.Title, &t.Status, &t.RawStatus, &t.Assignee, &t.URL, &t.Body, &cj, &t.UpdatedAt)
+	err := s.db.QueryRow(`SELECT `+ticketCols+` FROM tickets WHERE id=?`, id).
+		Scan(&t.ID, &t.ProjectID, &t.ExternalID, &t.Title, &t.Status, &t.RawStatus, &t.Assignee, &t.URL, &t.Body, &cj, &t.UpdatedAt, &t.PlannedStart, &t.PlannedEnd, &t.NoteTitle)
 	if errors.Is(err, sql.ErrNoRows) {
 		return t, ErrNotFound
 	}

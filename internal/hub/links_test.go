@@ -21,7 +21,7 @@ func linkFx(t *testing.T) (*appFx, proto.Project, map[string]string) {
 	require.Equal(t, 201, f.postJSON(t, "/api/workspaces", `{"name":"w"}`, &ws))
 	var p proto.Project
 	require.Equal(t, 201, f.postJSON(t, "/api/projects", `{"workspaceId":"`+ws.ID+`","name":"p","repoURL":"`+linkRepo+`"}`, &p))
-	require.NoError(t, f.st.ReplaceTickets(p.ID, []proto.Ticket{
+	require.NoError(t, replaceTk(f.st, p.ID, []proto.Ticket{
 		{ExternalID: "41", Title: "login", Status: "todo"}, {ExternalID: "42", Title: "other", Status: "todo"},
 		{ExternalID: "x1", Title: "[ACME-12] payments", Status: "todo"},
 	}))
@@ -247,7 +247,7 @@ func TestSuggestOnAdoptWithExistingTickets(t *testing.T) {
 	require.Equal(t, 201, f.postJSON(t, "/api/workspaces", `{"name":"w"}`, &ws))
 	var p proto.Project
 	require.Equal(t, 201, f.postJSON(t, "/api/projects", `{"workspaceId":"`+ws.ID+`","name":"p"}`, &p))
-	require.NoError(t, f.st.ReplaceTickets(p.ID, []proto.Ticket{{ExternalID: "41", Title: "login", Status: "todo"}}))
+	require.NoError(t, replaceTk(f.st, p.ID, []proto.Ticket{{ExternalID: "41", Title: "login", Status: "todo"}}))
 	code, _ := f.req(t, "PATCH", "/api/projects/"+p.ID, `{"repoURL":"`+linkRepo+`"}`)
 	require.Equal(t, 200, code)
 	require.Eventually(t, func() bool { return len(f.linked("s1")) == 1 }, 3*time.Second, 20*time.Millisecond)

@@ -20,7 +20,7 @@ type Store interface {
 	GetProject(id string) (proto.Project, error)
 	ConnectorToken(projectID string) (string, error)
 	ListWorkspaces() ([]proto.Workspace, error)
-	ReplaceTickets(projectID string, ts []proto.Ticket) error
+	ReplaceTickets(projectID string, ts []proto.Ticket, now int64) ([]proto.TicketChange, error)
 	ListTickets(projectID string) ([]proto.Ticket, error)
 	SetSyncResult(projectID, syncErr string, at int64) error
 }
@@ -258,7 +258,7 @@ func (s *Syncer) fetch(ctx context.Context, p proto.Project, g int) (err error) 
 		return errStale
 	}
 	before, _ := s.st.ListTickets(p.ID)
-	err = s.st.ReplaceTickets(p.ID, out)
+	_, err = s.st.ReplaceTickets(p.ID, out, s.now().UnixMilli())
 	s.wmu.Unlock()
 	if err != nil {
 		return err
