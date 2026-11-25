@@ -59,7 +59,7 @@ notes and pinned notes. A read-only Moontech connector brings the employer's tic
    The first sync seeds the log without `new` entries, or marks them before `prevSeenAt`.
 3. **Two devices open the same project.** The visit rollover is stable within 30 minutes, and "New since" does not
    empty itself while the owner reads.
-4. **A titlePrefix with different case, spacing or punctuation** ("ornamel ·", "Ornamel:"). Matching is
+4. **A titlePrefix with different case, spacing or punctuation** ("atlas ·", "Atlas:"). Matching is
    case-insensitive on the trimmed prefix. A note mentioning the prefix in its actions counts.
 5. **A project with no ticket source, no sessions and no notes.** The page shows only the hint and the Sessions
    section, with no empty cards and no errors.
@@ -258,6 +258,6 @@ notes and pinned notes. A read-only Moontech connector brings the employer's tic
 - [ ] On the dev fixtures, check the briefing at 390, 1024 and 1600 px, light and dark.
 - [ ] Do one real check against Moontech, with the owner's authorisation already given.
   - Confirm the login field names from the site's JS bundle.
-  - Configure the Ornamel project in the deployed hub, with the password typed into the form by the controller.
+  - Configure the target project in the deployed hub, with the password typed into the form by the controller.
   - Sync, and check that the briefing shows Adrian's tickets and the meeting items.
 - [ ] Report to the owner.

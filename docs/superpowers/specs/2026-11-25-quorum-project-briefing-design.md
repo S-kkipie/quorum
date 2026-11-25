@@ -10,7 +10,7 @@ to make that load manageable, and the ticket system is part of it. The hardest m
 after days in another job.
 
 The owner asked for help remembering context per project. The context is **for the owner**, not for Claude: they
-want to be up to date in about 30 seconds. The unit is the **project**, for example Moonchat or Ornamel, not the
+want to be up to date in about 30 seconds. The unit is the **project**, for example Moonchat or Atlas, not the
 whole employer.
 
 ## Goals
@@ -38,7 +38,7 @@ whole employer.
    - It reads tickets, people and meeting notes through the site's JSON API, after logging in.
    - Each Quorum project gets a filter, set once in its connector settings:
      - **product**, for example Moontecx or MUVO;
-     - an optional **title prefix**, for example "Ornamel";
+     - an optional **title prefix**, for example "Atlas";
      - **you are**: the person name used for "your tickets", here `Adrian`.
 3. **Last visit per project.** The hub records when the owner last looked at a project. "New since" is computed from
    the previous visit.
