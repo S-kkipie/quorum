@@ -644,3 +644,69 @@ type Proposal struct {
 	Error     string `json:"error"`
 	CreatedAt int64  `json:"createdAt"`
 }
+
+// Meeting is an uploaded recording, transcribed on a machine with the transcribe capability and
+// summarised. Status = uploaded|queued|transcribing|summarising|ready|failed; ProjectID "" = unassigned.
+// HasAudio is false once the audio was deleted (30 days after the meeting became ready). The detail
+// (GET /api/meetings/{id}) also fills Summary, Segments, Actions and Speakers.
+type Meeting struct {
+	ID         string `json:"id"`
+	ProjectID  string `json:"projectId"`
+	Title      string `json:"title"`
+	StartedAt  int64  `json:"startedAt"`
+	DurationS  int64  `json:"durationS"`
+	Language   string `json:"language"`
+	Status     string `json:"status"`
+	Progress   int    `json:"progress"`
+	Error      string `json:"error"`
+	Provider   string `json:"provider"`
+	CreatedAt  int64  `json:"createdAt"`
+	UpdatedAt  int64  `json:"updatedAt"`
+	HasAudio   bool   `json:"hasAudio"`
+	AudioBytes int64  `json:"audioBytes"`
+	// Channels is the recorder's channel layout ("me|others" for two-channel Quorum recordings, else "").
+	Channels string           `json:"channels"`
+	Summary  *MeetingSummary  `json:"summary,omitempty"`
+	Segments []MeetingSegment `json:"segments,omitempty"`
+	Actions  []MeetingAction  `json:"actions,omitempty"`
+	// Speakers maps a speaker label of the segments ("Speaker 2") to the name the owner gave it.
+	Speakers map[string]string `json:"speakers,omitempty"`
+}
+
+// MeetingSegment is one transcript segment; Speaker is a stable label per meeting ("Me", "Others",
+// "Speaker 1", …) or "".
+type MeetingSegment struct {
+	StartMs int64  `json:"startMs"`
+	EndMs   int64  `json:"endMs"`
+	Speaker string `json:"speaker"`
+	Text    string `json:"text"`
+}
+
+// MeetingPoint is a decision or an open point of a summary; TsMs cites the transcript (0 = none).
+type MeetingPoint struct {
+	Text string `json:"text"`
+	TsMs int64  `json:"tsMs,omitempty"`
+}
+
+// MeetingSummary is the summary of a ready meeting, in the meeting's language. The actions live
+// in their own rows (Meeting.Actions).
+type MeetingSummary struct {
+	Title      string         `json:"title"`
+	Summary    string         `json:"summary"`
+	Topics     []string       `json:"topics"`
+	Decisions  []MeetingPoint `json:"decisions"`
+	OpenPoints []MeetingPoint `json:"openPoints"`
+	Attendees  []string       `json:"attendees"`
+}
+
+// MeetingAction is an action of a meeting with a stable id. Owner and Due are "" when the transcript
+// does not state them; IssueURL is set once a GitHub issue was created from it.
+type MeetingAction struct {
+	ID       string `json:"id"`
+	Text     string `json:"text"`
+	Owner    string `json:"owner"`
+	Due      string `json:"due"`
+	Mine     bool   `json:"mine"`
+	TsMs     int64  `json:"tsMs,omitempty"`
+	IssueURL string `json:"issueUrl,omitempty"`
+}

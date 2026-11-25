@@ -101,9 +101,11 @@ func (s *Store) TicketChanges(projectID string, since int64) ([]proto.TicketChan
 	return out, rows.Err()
 }
 
-// ReplaceMeetingNotes makes the stored notes of the project equal to ns (upsert by external id, delete the
-// rest) and reports whether anything really changed. A note stored for the first time gets first_seen_at = now,
-// except while the project has no stored notes (the seeding sync: 0, so it is never "new since").
+// ReplaceMeetingNotes makes the stored connector notes of the project equal to ns (upsert by external id,
+// delete the rest) and reports whether anything really changed. A note stored for the first time gets
+// first_seen_at = now, except while the project has no stored connector notes (the seeding sync: 0, so it
+// is never "new since"). The rows of Quorum's own meetings (source quorum) are never touched; a connector
+// note that collides with one is ignored.
 func (s *Store) ReplaceMeetingNotes(projectID string, ns []proto.MeetingNote, now int64) (changed bool, err error) {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -123,7 +125,7 @@ func (s *Store) ReplaceMeetingNotes(projectID string, ns []proto.MeetingNote, no
 		return false, ErrNotFound
 	}
 	stored := map[string]proto.MeetingNote{}
-	rows, err := tx.Query(`SELECT `+noteCols+` FROM meeting_notes WHERE project_id=?`, projectID)
+	rows, err := tx.Query(`SELECT `+noteCols+` FROM meeting_notes WHERE project_id=? AND source='connector'`, projectID)
 	if err != nil {
 		return false, err
 	}
@@ -160,7 +162,8 @@ func (s *Store) ReplaceMeetingNotes(projectID string, ns []proto.MeetingNote, no
 		same := ok && o == m // only updatedAt moved: stored, but not a change
 		if _, err = tx.Exec(`INSERT INTO meeting_notes(project_id,`+noteCols+`,first_seen_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)
 			ON CONFLICT(project_id,external_id) DO UPDATE SET title=excluded.title,date=excluded.date,summary=excluded.summary,
-			decisions=excluded.decisions,open_points=excluded.open_points,actions=excluded.actions,url=excluded.url,updated_at=excluded.updated_at`,
+			decisions=excluded.decisions,open_points=excluded.open_points,actions=excluded.actions,url=excluded.url,updated_at=excluded.updated_at
+			WHERE meeting_notes.source='connector'`,
 			projectID, m.ExternalID, m.Title, m.Date, m.Summary, m.Decisions, m.OpenPoints, m.Actions, m.URL, m.UpdatedAt, firstSeen); err != nil {
 			return false, err
 		}
@@ -172,7 +175,7 @@ func (s *Store) ReplaceMeetingNotes(projectID string, ns []proto.MeetingNote, no
 		if seen[id] {
 			continue
 		}
-		if _, err = tx.Exec(`DELETE FROM meeting_notes WHERE project_id=? AND external_id=?`, projectID, id); err != nil {
+		if _, err = tx.Exec(`DELETE FROM meeting_notes WHERE project_id=? AND external_id=? AND source='connector'`, projectID, id); err != nil {
 			return false, err
 		}
 		changed = true

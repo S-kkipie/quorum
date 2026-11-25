@@ -1,0 +1,259 @@
+package hub
+
+import (
+	"encoding/json"
+	"errors"
+	"log"
+	"net/http"
+	"os"
+	"time"
+
+	"github.com/S-kkipie/quorum/internal/hub/store"
+	"github.com/S-kkipie/quorum/internal/proto"
+)
+
+// meetingAudioURLTTL is how long a playback link of a meeting's audio works.
+const meetingAudioURLTTL = time.Hour
+
+// meetingRoutes registers the meetings API (device auth) and the signed audio route (the token is the auth).
+// There is no GET /api/meetings/uploads/{id}: it would clash with GET /api/meetings/{id}/audio-url in the
+// mux; a client that lost track sends an empty PUT and reads the offset from the 409.
+func (s *Server) meetingRoutes(dev func(string, http.HandlerFunc)) {
+	dev("POST /api/meetings/uploads", s.handleMeetingUploadBegin)
+	dev("PUT /api/meetings/uploads/{id}", s.handleMeetingUploadChunk)
+	dev("POST /api/meetings/uploads/{id}/complete", s.handleMeetingUploadComplete)
+	dev("GET /api/meetings", s.handleMeetings)
+	dev("GET /api/meetings/disk", s.handleMeetingDisk)
+	dev("GET /api/meetings/{id}", s.handleMeeting)
+	dev("PATCH /api/meetings/{id}", s.handlePatchMeeting)
+	dev("DELETE /api/meetings/{id}", s.handleDeleteMeeting)
+	dev("GET /api/meetings/{id}/audio-url", s.handleMeetingAudioURL)
+	s.mux.HandleFunc("GET /api/meeting-audio/{token}", s.handleMeetingAudio)
+}
+
+// publishMeeting sends meeting_changed {id, projectId, status} to the devices.
+func (s *Server) publishMeeting(id, projectID, status string) {
+	p, _ := json.Marshal(map[string]string{"id": id, "projectId": projectID, "status": status})
+	s.hub.publish(proto.Envelope{Type: "meeting_changed", Payload: p})
+}
+
+// queueMeeting moves an uploaded meeting to queued and announces it. The job dispatcher picks queued
+// meetings up from the store.
+func (s *Server) queueMeeting(id string) (proto.Meeting, error) {
+	if err := s.st.SetMeetingStatus(id, "queued", "", 0); err != nil {
+		return proto.Meeting{}, err
+	}
+	m, err := s.st.Meeting(id)
+	if err != nil {
+		return m, err
+	}
+	s.publishMeeting(m.ID, m.ProjectID, m.Status)
+	return m, nil
+}
+
+// handleMeetings: GET /api/meetings?projectId=<id> (one project), ?unassigned=1 (the inbox) or all.
+func (s *Server) handleMeetings(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	ms, err := s.st.Meetings(store.MeetingFilter{ProjectID: q.Get("projectId"), Unassigned: q.Get("unassigned") == "1"})
+	if err != nil {
+		apiErr(w, 500, "internal error")
+		return
+	}
+	writeJSON(w, 200, ms)
+}
+
+// handleMeeting: GET /api/meetings/{id} with its summary, segments, actions and speakers.
+func (s *Server) handleMeeting(w http.ResponseWriter, r *http.Request) {
+	m, err := s.st.MeetingDetail(r.PathValue("id"))
+	if errors.Is(err, store.ErrNotFound) {
+		apiErr(w, 404, "no such meeting")
+		return
+	}
+	if err != nil {
+		apiErr(w, 500, "internal error")
+		return
+	}
+	writeJSON(w, 200, m)
+}
+
+// handlePatchMeeting: PATCH /api/meetings/{id} {title?, projectId?, language?}; projectId "" unassigns.
+func (s *Server) handlePatchMeeting(w http.ResponseWriter, r *http.Request) {
+	var b struct {
+		Title     *string `json:"title"`
+		ProjectID *string `json:"projectId"`
+		Language  *string `json:"language"`
+	}
+	if !decode(w, r, &b) {
+		return
+	}
+	if b.Title != nil {
+		t, ok := meetingTitle(*b.Title)
+		if !ok {
+			apiErr(w, 400, "the title is too long")
+			return
+		}
+		b.Title = &t
+	}
+	if b.Language != nil && !validMeetingLanguage(*b.Language) {
+		apiErr(w, 400, "invalid language")
+		return
+	}
+	m, oldProject, err := s.st.PatchMeeting(r.PathValue("id"), store.MeetingPatch{Title: b.Title, ProjectID: b.ProjectID, Language: b.Language})
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		apiErr(w, 404, "no such meeting")
+		return
+	case errors.Is(err, store.ErrNoProject):
+		apiErr(w, 400, "no such project")
+		return
+	case err != nil:
+		apiErr(w, 500, "internal error")
+		return
+	}
+	s.publishMeeting(m.ID, m.ProjectID, m.Status)
+	if oldProject != m.ProjectID {
+		// the meeting's briefing projection moved with it
+		s.hub.briefingChanged(oldProject)
+		s.hub.briefingChanged(m.ProjectID)
+	}
+	writeJSON(w, 200, m)
+}
+
+// handleDeleteMeeting: DELETE /api/meetings/{id} removes the meeting, its audio file and its projection.
+func (s *Server) handleDeleteMeeting(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	gone, err := s.st.DeleteMeeting(id)
+	if errors.Is(err, store.ErrNotFound) {
+		apiErr(w, 404, "no such meeting")
+		return
+	}
+	if err != nil {
+		apiErr(w, 500, "internal error")
+		return
+	}
+	if gone.AudioPath != "" {
+		if err := os.Remove(gone.AudioPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			log.Printf("hub: meetings: delete audio of %s: %v", id, err)
+		}
+	}
+	s.publishMeeting(id, gone.ProjectID, "deleted")
+	s.hub.briefingChanged(gone.ProjectID)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleMeetingDisk: GET /api/meetings/disk → {audioBytes, freeBytes} for Settings.
+func (s *Server) handleMeetingDisk(w http.ResponseWriter, r *http.Request) {
+	used, err := s.st.MeetingAudioBytes()
+	if err != nil {
+		apiErr(w, 500, "internal error")
+		return
+	}
+	free, err := s.meetingDisk()
+	if err != nil {
+		free = 0
+	}
+	writeJSON(w, 200, map[string]any{"audioBytes": used, "freeBytes": free})
+}
+
+// handleMeetingAudioURL: GET /api/meetings/{id}/audio-url → {url, expiresAt}, a playback link valid for
+// an hour that needs no device token (an <audio> element sends none). url is relative to the hub.
+func (s *Server) handleMeetingAudioURL(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, _, _, ok, err := s.st.MeetingAudio(id); err != nil {
+		apiErr(w, 500, "internal error")
+		return
+	} else if !ok {
+		apiErr(w, 404, "the meeting has no audio")
+		return
+	}
+	tok, err := s.st.CreateMeetingToken("audio", id, "", meetingAudioURLTTL)
+	if err != nil {
+		apiErr(w, 500, "internal error")
+		return
+	}
+	writeJSON(w, 200, map[string]any{"url": "/api/meeting-audio/" + tok, "expiresAt": time.Now().Add(meetingAudioURLTTL).UnixMilli()})
+}
+
+// handleMeetingAudio: GET /api/meeting-audio/{token} streams the audio a signed token grants, with Range
+// support for seeking. A bad or expired token gives 403; audio deleted since gives 404.
+func (s *Server) handleMeetingAudio(w http.ResponseWriter, r *http.Request) {
+	info, ok, err := s.st.MeetingToken("audio", r.PathValue("token"))
+	if err != nil {
+		apiErr(w, 500, "internal error")
+		return
+	}
+	if !ok {
+		apiErr(w, 403, "this link expired; open the meeting again")
+		return
+	}
+	s.serveMeetingAudio(w, r, info.MeetingID)
+}
+
+// serveMeetingAudio streams the meeting's audio file.
+func (s *Server) serveMeetingAudio(w http.ResponseWriter, r *http.Request, id string) {
+	path, mime, _, ok, err := s.st.MeetingAudio(id)
+	if err != nil {
+		apiErr(w, 500, "internal error")
+		return
+	}
+	if !ok {
+		apiErr(w, 404, "the meeting has no audio")
+		return
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		apiErr(w, 404, "the meeting has no audio")
+		return
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		apiErr(w, 500, "internal error")
+		return
+	}
+	if mime == "" {
+		mime = "application/octet-stream"
+	}
+	w.Header().Set("Content-Type", mime)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "private, no-store")
+	http.ServeContent(w, r, "", st.ModTime(), f)
+}
+
+// pruneMeetingFiles is the meetings part of the daily retention: the audio of meetings ready for more
+// than 30 days (the transcript and summary stay), abandoned uploads and expired signed tokens.
+func pruneMeetingFiles(st *store.Store, now time.Time) {
+	ms := now.UnixMilli()
+	audio, err := st.ExpiredMeetingAudio(ms)
+	if err != nil {
+		log.Printf("hub: retention: meeting audio: %v", err)
+	}
+	for _, a := range audio {
+		if err := os.Remove(a.Path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			log.Printf("hub: retention: meeting audio %s: %v", a.MeetingID, err)
+			continue // kept in the store, so the next run tries again
+		}
+		if err := st.DropMeetingAudio(a.MeetingID); err != nil {
+			log.Printf("hub: retention: meeting audio %s: %v", a.MeetingID, err)
+		}
+	}
+	ups, err := st.ExpiredMeetingUploads(ms)
+	if err != nil {
+		log.Printf("hub: retention: meeting uploads: %v", err)
+	}
+	for _, u := range ups {
+		// a done upload's path is its meeting's audio: only the marker goes
+		if !u.Done && u.Path != "" {
+			if err := os.Remove(u.Path); err != nil && !errors.Is(err, os.ErrNotExist) {
+				log.Printf("hub: retention: meeting upload %s: %v", u.ID, err)
+				continue
+			}
+		}
+		if err := st.DeleteMeetingUpload(u.ID); err != nil {
+			log.Printf("hub: retention: meeting upload %s: %v", u.ID, err)
+		}
+	}
+	if _, err := st.PruneMeetingTokens(ms); err != nil {
+		log.Printf("hub: retention: meeting tokens: %v", err)
+	}
+}

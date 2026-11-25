@@ -341,7 +341,7 @@ func (s *Store) UpdateProjectResetConnector(p proto.Project) (out ConnectorReset
 		`DELETE FROM session_ticket_dismissed WHERE ticket_id IN ` + tk,
 		`DELETE FROM tickets WHERE project_id=?`,
 		`DELETE FROM ticket_changes WHERE project_id=?`,
-		`DELETE FROM meeting_notes WHERE project_id=?`,
+		`DELETE FROM meeting_notes WHERE project_id=? AND source='connector'`,
 	} {
 		if _, err = tx.Exec(q, p.ID); err != nil {
 			return out, err
@@ -375,6 +375,7 @@ func (s *Store) DeleteProject(id string) (err error) {
 		`DELETE FROM project_visits WHERE project_id=?`,
 		`DELETE FROM pinned_notes WHERE project_id=?`,
 		`DELETE FROM meeting_notes WHERE project_id=?`,
+		`UPDATE meetings SET project_id='' WHERE project_id=?`, // its meetings become unassigned
 	} {
 		if _, err = tx.Exec(q, id); err != nil {
 			return err

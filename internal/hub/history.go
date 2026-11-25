@@ -182,6 +182,7 @@ func runRetention(ctx context.Context, st *store.Store, now func() time.Time, af
 		if _, err := st.PruneUploads(now().Add(-uploadKeep).UnixMilli()); err != nil {
 			log.Printf("hub: retention: uploads: %v", err)
 		}
+		pruneMeetingFiles(st, now())
 		wait = 24 * time.Hour
 	}
 }

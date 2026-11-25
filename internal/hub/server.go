@@ -26,6 +26,12 @@ type Server struct {
 	asks  *askTracker
 	fails *failLimiter
 	views *viewLinks
+
+	// meetings: where the audio is stored, how the free disk space is read (tests fake it) and the
+	// uploads a request is writing
+	audioDir    string
+	diskFree    func(path string) (uint64, error)
+	meetUploads uploadBusy
 }
 
 // Options configures the server; all fields are optional.
@@ -37,6 +43,8 @@ type Options struct {
 	// FCMKeyFile is the Firebase service-account key that turns phone push on ("" = push off,
 	// silently; quorum-hub serve passes DefaultFCMKeyFile, and a missing file there is logged once).
 	FCMKeyFile string
+	// AudioDir holds the meeting recordings ("" = ~/.local/share/quorum/audio).
+	AudioDir string
 }
 
 func NewServer(st *store.Store, opts ...Options) *Server {
@@ -44,7 +52,11 @@ func NewServer(st *store.Store, opts ...Options) *Server {
 	if len(opts) > 0 {
 		o = opts[0]
 	}
-	s := &Server{st: st, mux: http.NewServeMux(), hub: newHub(st), asks: newAskTracker(), fails: newFailLimiter(), views: newViewLinks()}
+	s := &Server{st: st, mux: http.NewServeMux(), hub: newHub(st), asks: newAskTracker(), fails: newFailLimiter(), views: newViewLinks(),
+		audioDir: o.AudioDir, diskFree: freeSpace}
+	if s.audioDir == "" {
+		s.audioDir = defaultAudioDir()
+	}
 	// After a restart nobody is connected: each machine comes back online with its hello.
 	if err := st.MarkAllMachinesOffline(); err != nil {
 		log.Printf("hub: mark machines offline: %v", err)

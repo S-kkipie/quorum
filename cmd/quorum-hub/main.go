@@ -68,7 +68,8 @@ func run(args []string) error {
 
 	switch args[0] {
 	case "serve":
-		return serve(st, *addr, hub.Options{CCAPIURL: *ccURL, CCAPITokenFile: *ccTok})
+		return serve(st, *addr, hub.Options{CCAPIURL: *ccURL, CCAPITokenFile: *ccTok,
+			AudioDir: filepath.Join(filepath.Dir(*db), "audio")})
 	case "pair", "link-code":
 		kind := "pair"
 		if args[0] == "link-code" {

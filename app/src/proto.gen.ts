@@ -735,3 +735,78 @@ export interface Proposal {
   error: string;
   createdAt: number /* int64 */;
 }
+/**
+ * Meeting is an uploaded recording, transcribed on a machine with the transcribe capability and
+ * summarised. Status = uploaded|queued|transcribing|summarising|ready|failed; ProjectID "" = unassigned.
+ * HasAudio is false once the audio was deleted (30 days after the meeting became ready). The detail
+ * (GET /api/meetings/{id}) also fills Summary, Segments, Actions and Speakers.
+ */
+export interface Meeting {
+  id: string;
+  projectId: string;
+  title: string;
+  startedAt: number /* int64 */;
+  durationS: number /* int64 */;
+  language: string;
+  status: string;
+  progress: number /* int */;
+  error: string;
+  provider: string;
+  createdAt: number /* int64 */;
+  updatedAt: number /* int64 */;
+  hasAudio: boolean;
+  audioBytes: number /* int64 */;
+  /**
+   * Channels is the recorder's channel layout ("me|others" for two-channel Quorum recordings, else "").
+   */
+  channels: string;
+  summary?: MeetingSummary;
+  segments?: MeetingSegment[];
+  actions?: MeetingAction[];
+  /**
+   * Speakers maps a speaker label of the segments ("Speaker 2") to the name the owner gave it.
+   */
+  speakers?: { [key: string]: string};
+}
+/**
+ * MeetingSegment is one transcript segment; Speaker is a stable label per meeting ("Me", "Others",
+ * "Speaker 1", …) or "".
+ */
+export interface MeetingSegment {
+  startMs: number /* int64 */;
+  endMs: number /* int64 */;
+  speaker: string;
+  text: string;
+}
+/**
+ * MeetingPoint is a decision or an open point of a summary; TsMs cites the transcript (0 = none).
+ */
+export interface MeetingPoint {
+  text: string;
+  tsMs?: number /* int64 */;
+}
+/**
+ * MeetingSummary is the summary of a ready meeting, in the meeting's language. The actions live
+ * in their own rows (Meeting.Actions).
+ */
+export interface MeetingSummary {
+  title: string;
+  summary: string;
+  topics: string[];
+  decisions: MeetingPoint[];
+  openPoints: MeetingPoint[];
+  attendees: string[];
+}
+/**
+ * MeetingAction is an action of a meeting with a stable id. Owner and Due are "" when the transcript
+ * does not state them; IssueURL is set once a GitHub issue was created from it.
+ */
+export interface MeetingAction {
+  id: string;
+  text: string;
+  owner: string;
+  due: string;
+  mine: boolean;
+  tsMs?: number /* int64 */;
+  issueUrl?: string;
+}
