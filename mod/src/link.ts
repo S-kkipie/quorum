@@ -3,7 +3,7 @@ import { Version } from './proto.gen'
 
 export type LinkIO = {
   run(argv: string[]): Promise<{ exitCode: number; stdout: string; stderr?: string }>
-  fetch(url: string, init: { method: string; headers: Record<string, string>; body?: string }): Promise<{ status: number }>
+  fetch(url: string, init: { method: string; headers: Record<string, string>; body?: string }): Promise<{ status: number; text?: string }>
   spawn(argv: string[]): AsyncIterable<{ stream: string; text: string }>
   sleep(ms: number): Promise<void>
   /** Clock in ms (optional; Date.now by default). */
@@ -18,6 +18,7 @@ export type OutEvent = Omit<Event, 'seq' | 'session' | 'ts'>
 export const BACKOFF_MS = [1000, 2000, 5000, 10000]
 export const FLUSH_MS = 150
 export const POST_TIMEOUT_MS = 2000
+export const REQUEST_TIMEOUT_MS = 10_000
 export const MAX_QUEUE = 2000
 export const HEALTHY_MS = 30_000
 
@@ -321,6 +322,31 @@ export class Link {
     const batch = this.queue.map(e => ({ ...e, session: id }))
     this.queue = []
     await this.post(`/v1/sessions/${id}/events`, batch)
+  }
+
+  /**
+   * A request to the local daemon with the link's address and token (pending items). Never throws:
+   * no connection, timeout or network failure resolve to `{ status: 0, json: null }`.
+   */
+  async request(method: 'GET' | 'POST', path: string, body?: unknown): Promise<{ status: number; json: any }> {
+    if (!this.conn) return { status: 0, json: null }
+    const url = `http://127.0.0.1:${this.conn.port}${path}`
+    try {
+      const res = await Promise.race([
+        this.io.fetch(url, {
+          method,
+          headers: { Authorization: `Bearer ${this.conn.token}`, 'Content-Type': 'application/json' },
+          body: body === undefined ? undefined : JSON.stringify(body),
+        }),
+        this.io.sleep(REQUEST_TIMEOUT_MS).then(() => undefined),
+      ])
+      if (!res) return { status: 0, json: null }
+      let json: any = null
+      try { json = res.text ? JSON.parse(res.text) : null } catch { /* not JSON */ }
+      return { status: res.status, json }
+    } catch {
+      return { status: 0, json: null }
+    }
   }
 
   /** POST with a 2 s timeout; never throws. Returns the status or 0. */

@@ -512,3 +512,31 @@ test('a task-notification turn sets neither the recap\'s first prompt nor its la
   expect(prompts[0]).toContain('fix the login bug')
   expect(prompts[0]).not.toContain('task-notification')
 })
+
+// Plan 15: the pending-item tools are registered at session.start and served at tool.run.
+test('pending tools are registered at session.start and tool.run answers through the daemon', async ($, on) => {
+  const o = on as unknown as (...a: unknown[]) => void
+  mock.env(on as never, { CCAPI_SERVER: '1' })
+  mock.clock(on as never)
+  const names: string[] = []
+  const posts: Array<{ url: string; body: any }> = []
+  o('command.register', async () => ({ value: undefined }))
+  o('tool.register', async (_$: unknown, e: { name?: string }) => { names.push(String(e.name)); return { value: { tool: `mcp__quorum__${e.name}` } } })
+  o('session.start', async () => ({ cwd: '/x' }))
+  o('process.run', async () => ({ value: { exitCode: 0, stdout: JSON.stringify({ ok: true, port: 1, token: 't', machine: 'm' }), stderr: '' } }))
+  o('http.fetch', async (_$: unknown, e: { url?: string; init?: { body?: string } }) => {
+    const url = String(e.url)
+    if (url.endsWith('/pendings')) {
+      posts.push({ url, body: JSON.parse(String(e.init?.body)) })
+      return { value: { status: 200, text: JSON.stringify({ projectName: 'Zorvan', created: true, item: { id: 'p1', text: 'Ask Quillon' } }) } }
+    }
+    return { value: { status: 204, text: '' } }
+  })
+  await ($ as never as { session: { start(x: unknown): Promise<unknown> } }).session.start({ cwd: '/x', surface: null, interactive: false })
+  for (let i = 0; i < 50 && quorum.link?.state !== 'connected'; i++) await new Promise(r => setTimeout(r, 0))
+  expect(names.sort()).toEqual(['pending_add', 'pending_done', 'pending_list'])
+  const r = await ($ as never as { tool: { call(x: unknown): Promise<{ result?: unknown }> } }).tool.call({ tool: 'mcp__quorum__pending_add', text: 'Ask Quillon' })
+  expect(String(r.result)).toBe('Added to Zorvan: "Ask Quillon" (id p1)')
+  expect(posts[0]!.body.text).toBe('Ask Quillon')
+  expect(typeof posts[0]!.body.clientKey).toBe('string')
+})

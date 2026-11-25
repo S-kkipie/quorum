@@ -10,7 +10,7 @@ export function makeIO($: EngineInterface): LinkIO {
     },
     fetch: async (url, init) => {
       const r = await $.http.fetch(url, init)
-      return { status: r.status }
+      return { status: r.status, text: String(r.text ?? '') }
     },
     async *spawn(argv) {
       for await (const c of $.process.spawn({ argv })) {

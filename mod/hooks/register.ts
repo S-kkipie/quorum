@@ -11,6 +11,7 @@ import { fromPlugin, makeHandlers, stepHook, toolHook } from '../src/events'
 import { imageIds, makeImageFinder } from '../src/images'
 import { makeIO } from '../src/io'
 import { Link } from '../src/link'
+import { PENDING_TOOLS, runPendingTool } from '../src/pendings'
 import { contextOf, Meters } from '../src/meters'
 import { Recap } from '../src/recap'
 import { detectRepo, makeBranchRefresher, type RepoDeps } from '../src/repo'
@@ -166,6 +167,12 @@ export const register: Register = on => {
       })
     }
     await $.command.register({ name: 'quorum', description: 'Connection status with quorumd' })
+    // pending-item tools (mcp__quorum__pending_*), served by the tool.run hooks below; not awaited
+    for (const spec of PENDING_TOOLS) {
+      void Promise.resolve($.tool.register(spec)).catch(err => {
+        void Promise.resolve($.ui.log(`quorum: tool.register ${spec.name} failed: ${String((err as Error)?.message ?? err)}`, { to: 'debug' })).catch(() => {})
+      })
+    }
     // not awaited: ensure+register can be slow and session.start blocks the first prompt
     void link.start({
       id, previousId: '', machine: '', name: '', cwd, root: root || cwd, model: String(model ?? ''),
@@ -232,6 +239,17 @@ export const register: Register = on => {
     }).catch(() => {})
     return started
   })
+
+  // the pending-item tools answer through the local daemon; a failure is an error result the model reads
+  for (const spec of PENDING_TOOLS) {
+    on('tool.run', { tool: `mcp__quorum__${spec.name}` }, async ($, e) => {
+      const link = quorum.link
+      if (!link) return { deny: 'Quorum is not connected; the item was not saved' }
+      const key = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`
+      const r = await runPendingTool(link, link.sessionId, spec.name, e as unknown as Record<string, unknown>, key)
+      return r.ok ? { result: r.text } : { deny: r.text }
+    })
+  }
 
   const h = makeHandlers(() => quorum.link, {
     fromDevice: t => quorum.control?.takeFromDevice(t) ?? false,
