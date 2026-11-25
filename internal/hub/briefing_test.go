@@ -143,7 +143,7 @@ func TestBriefingEmptyProject(t *testing.T) {
 	require.NoError(t, err)
 	code, body := f.req(t, "GET", "/api/projects/"+p.ID+"/briefing", "")
 	require.Equal(t, 200, code, body)
-	require.JSONEq(t, `{"whereLeftOff":null,"newSince":[],"myTickets":[],"meetings":{"decisions":[],"openPoints":[],"actions":[]},
+	require.JSONEq(t, `{"whereLeftOff":null,"newSince":[],"myTickets":[],"meetings":{"decisions":[],"openPoints":[],"actions":[]},"pendings":[],
 		"pinned":[],"sessions":[],"seenAt":0,"prevSeenAt":0}`, body)
 	code, _ = f.req(t, "GET", "/api/projects/nope/briefing", "")
 	require.Equal(t, 404, code)

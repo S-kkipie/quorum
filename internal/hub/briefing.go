@@ -206,6 +206,9 @@ func (s *Server) briefing(projectID string, now time.Time) (proto.Briefing, erro
 	if b.Pinned, err = s.st.Pinned(projectID); err != nil {
 		return b, err
 	}
+	if b.Pendings, err = s.st.Pendings(projectID, false); err != nil {
+		return b, err
+	}
 	tickets, err := s.st.ListTickets(projectID)
 	if err != nil {
 		return b, err
