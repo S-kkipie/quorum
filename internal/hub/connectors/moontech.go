@@ -24,9 +24,8 @@ import (
 // meeting notes from the site's JSON API.
 
 const (
-	mtDefaultBase = "https://moontecx-admin.pages.dev"
-	mtTimeout     = 15 * time.Second
-	mtMaxBody     = 8 << 20
+	mtTimeout = 15 * time.Second
+	mtMaxBody = 8 << 20
 )
 
 // errReadOnly is returned by every write of a read-only source.
@@ -63,7 +62,7 @@ func (m *moontechConnector) Reusable() bool { return true }
 func newMoontech(cfg proto.ConnectorConfig, password string, timeout time.Duration) (*moontechConnector, error) {
 	base := strings.TrimRight(strings.TrimSpace(cfg.Settings["baseUrl"]), "/")
 	if base == "" {
-		base = mtDefaultBase
+		return nil, errors.New("Moontech: missing baseUrl")
 	}
 	u, err := url.Parse(base)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {

@@ -49,7 +49,7 @@ export function validateConnector(d: ConnectorDraft): string {
     if (!s('companyId')) return 'missing company id'
   }
   if (d.kind === 'moontech') {
-    if (s('baseUrl') && !/^https?:\/\/\S+$/.test(s('baseUrl'))) return 'the base URL must start with http:// or https://'
+    if (!/^https?:\/\/\S+$/.test(s('baseUrl'))) return 'the base URL must start with http:// or https://'
     if (!s('product')) return 'missing product'
     if (!s('username')) return 'missing username'
   }
@@ -107,7 +107,7 @@ export default function ConnectorForm({ value, onChange, hasToken }: { value: Co
       )}
       {d.kind === 'moontech' && (
         <>
-          {text('baseUrl', 'Base URL', '', 'Empty uses the default admin site.')}
+          {text('baseUrl', 'Base URL', 'https://admin.example.com', 'The admin site address.')}
           {text('product', 'Product', 'Acme')}
           {text('titlePrefix', 'Title prefix (optional)', '', 'Only tickets whose title starts with it (any case).')}
           {text('person', 'You are', '', 'Your name in the ticket system: "your tickets" and "your actions".')}

@@ -62,7 +62,7 @@ describe('ConnectorForm', () => {
     render(<Harness c={{ kind: 'none', settings: {}, hasToken: false, intervalMin: 0 }} />)
     fireEvent.change(screen.getByLabelText('Connector'), { target: { value: 'moontech' } })
     expect(screen.getByText(/Read-only/)).toBeTruthy()
-    expect(validateConnector(last)).toBe('missing product')
+    expect(validateConnector(last)).toMatch(/base URL/)
     fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'https://tickets.example' } })
     fireEvent.change(screen.getByLabelText('Product'), { target: { value: 'Acme' } })
     fireEvent.change(screen.getByLabelText('Title prefix (optional)'), { target: { value: 'Acme ·' } })

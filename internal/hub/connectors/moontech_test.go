@@ -282,15 +282,14 @@ func TestAdminSiteReadOnly(t *testing.T) {
 }
 
 func TestAdminSiteSettings(t *testing.T) {
-	_, err := New(proto.ConnectorConfig{Kind: "moontech", Settings: map[string]string{"product": "Acme"}}, mtPass, nil)
+	_, err := New(proto.ConnectorConfig{Kind: "moontech", Settings: map[string]string{"baseUrl": "https://admin.example", "product": "Acme"}}, mtPass, nil)
 	require.ErrorContains(t, err, "username")
-	_, err = New(proto.ConnectorConfig{Kind: "moontech", Settings: map[string]string{"username": "ana"}}, mtPass, nil)
+	_, err = New(proto.ConnectorConfig{Kind: "moontech", Settings: map[string]string{"baseUrl": "https://admin.example", "username": "ana"}}, mtPass, nil)
 	require.ErrorContains(t, err, "product")
 	_, err = New(mtCfg("ftp://x"), mtPass, nil)
 	require.ErrorContains(t, err, "http")
-	c, err := New(proto.ConnectorConfig{Kind: "moontech", Settings: map[string]string{"product": "Acme", "username": "ana"}}, mtPass, nil)
-	require.NoError(t, err)
-	require.Equal(t, mtDefaultBase, c.(*moontechConnector).baseURL)
+	_, err = New(proto.ConnectorConfig{Kind: "moontech", Settings: map[string]string{"product": "Acme", "username": "ana"}}, mtPass, nil)
+	require.ErrorContains(t, err, "baseUrl")
 	require.Contains(t, Kinds(), "moontech")
 }
 
