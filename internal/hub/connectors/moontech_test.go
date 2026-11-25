@@ -22,18 +22,21 @@ const mtPass = "pw-Very$ecret"
 
 // fakeMoontech is an httptest fake of the admin site's JSON API (made-up data only).
 type fakeMoontech struct {
-	mu        sync.Mutex
-	srv       *httptest.Server
-	logins    int
-	session   string // valid cookie value; "" = no valid session
-	expire    bool   // drop the session after the next authorized request
-	deny      bool   // every API call answers 401, even after login
-	down      bool   // every call answers 503
-	notesDown bool   // /api/notes answers 500 echoing the password
-	wrapped   bool   // answer {"tickets":[...]} instead of a bare array
-	tickets   []map[string]any
-	notes     []map[string]any
-	lastBody  map[string]string
+	mu         sync.Mutex
+	srv        *httptest.Server
+	logins     int
+	session    string // valid cookie value; "" = no valid session
+	expire     bool   // drop the session after the next authorized request
+	deny       bool   // every API call answers 401, even after login
+	down       bool   // every call answers 503
+	notesDown  bool   // /api/notes answers 500 echoing the password
+	authCode   int    // status for a missing or expired session (default 401)
+	ticketsRaw string // when set, /api/tickets answers this body with 200
+	notesRaw   string // when set, /api/notes answers this body with 200
+	wrapped    bool   // answer {"tickets":[...]} instead of a bare array
+	tickets    []map[string]any
+	notes      []map[string]any
+	lastBody   map[string]string
 }
 
 func newFakeMoontech(t *testing.T) *fakeMoontech {
@@ -86,7 +89,11 @@ func newFakeMoontech(t *testing.T) *fakeMoontech {
 		}
 		c, err := r.Cookie("session")
 		if f.deny || err != nil || f.session == "" || c.Value != f.session {
-			w.WriteHeader(401)
+			code := f.authCode
+			if code == 0 {
+				code = 401
+			}
+			w.WriteHeader(code)
 			return false
 		}
 		if f.expire {
@@ -101,6 +108,10 @@ func newFakeMoontech(t *testing.T) *fakeMoontech {
 		}
 		f.mu.Lock()
 		defer f.mu.Unlock()
+		if f.ticketsRaw != "" {
+			_, _ = w.Write([]byte(f.ticketsRaw))
+			return
+		}
 		if f.wrapped {
 			_ = json.NewEncoder(w).Encode(map[string]any{"tickets": f.tickets})
 			return
@@ -113,6 +124,10 @@ func newFakeMoontech(t *testing.T) *fakeMoontech {
 		}
 		f.mu.Lock()
 		defer f.mu.Unlock()
+		if f.notesRaw != "" {
+			_, _ = w.Write([]byte(f.notesRaw))
+			return
+		}
 		if f.notesDown {
 			w.WriteHeader(500)
 			_, _ = w.Write([]byte("boom " + mtPass))
@@ -422,4 +437,79 @@ func TestSyncMoontechNotesFailureKeepsNotesSavesTickets(t *testing.T) {
 	require.Contains(t, buf.String(), "notes")
 	require.NotContains(t, buf.String(), mtPass)
 	require.True(t, strings.Contains(buf.String(), "***"), "the echoed password is redacted")
+}
+
+func TestMoontechRelogin403(t *testing.T) {
+	f := newFakeMoontech(t)
+	f.authCode = 403
+	c := newMT(t, f)
+	_, err := c.List(context.Background(), 0)
+	require.NoError(t, err)
+	f.set(func(f *fakeMoontech) { f.session = "" })
+	_, err = c.List(context.Background(), 0)
+	require.NoError(t, err, "a 403 on an expired session logs in again")
+	require.Equal(t, 2, f.loginCount())
+	f.set(func(f *fakeMoontech) { f.deny = true })
+	_, err = c.ListNotes(context.Background())
+	require.ErrorContains(t, err, "not authorized")
+	require.Equal(t, 3, f.loginCount())
+}
+
+func TestMoontechUnexpectedObjectIsError(t *testing.T) {
+	f := newFakeMoontech(t)
+	f.ticketsRaw = `{"error":"oops ` + mtPass + `"}`
+	f.notesRaw = `{"items":[]}`
+	c := newMT(t, f)
+	_, err := c.List(context.Background(), 0)
+	require.ErrorContains(t, err, "unexpected response")
+	require.NotContains(t, err.Error(), mtPass)
+	_, err = c.ListNotes(context.Background())
+	require.ErrorContains(t, err, "unexpected response")
+
+	// The expected key with null is an empty list.
+	f.set(func(f *fakeMoontech) { f.ticketsRaw = `{"tickets":null}`; f.notesRaw = `{"notes":null}` })
+	ts, err := c.List(context.Background(), 0)
+	require.NoError(t, err)
+	require.Empty(t, ts)
+	ns, err := c.ListNotes(context.Background())
+	require.NoError(t, err)
+	require.Empty(t, ns)
+}
+
+func TestSyncMoontechUnexpectedObjectKeepsState(t *testing.T) {
+	f := newFakeMoontech(t)
+	st, sy, p, calls := newMTSync(t, f)
+	buf := captureLog(t)
+	require.NoError(t, sy.SyncNow(p.ID))
+	before, _ := st.ListTickets(p.ID)
+	notesBefore, _ := st.MeetingNotes(p.ID, "")
+	require.NotEmpty(t, before)
+	require.NotEmpty(t, notesBefore)
+
+	// Tickets: an object without "tickets" fails the sync and keeps everything.
+	f.set(func(f *fakeMoontech) { f.ticketsRaw = `{"error":"session for ` + mtPass + `"}` })
+	err := sy.SyncNow(p.ID)
+	require.ErrorContains(t, err, "unexpected response")
+	require.NotContains(t, err.Error(), mtPass)
+	after, _ := st.ListTickets(p.ID)
+	require.ElementsMatch(t, before, after)
+	notesAfter, _ := st.MeetingNotes(p.ID, "")
+	require.ElementsMatch(t, notesBefore, notesAfter)
+	require.Len(t, calls(), 1)
+	pr, _ := st.GetProject(p.ID)
+	require.NotContains(t, pr.SyncError, mtPass)
+
+	// Notes: an object without "notes" keeps the notes; tickets still sync with no changes.
+	f.set(func(f *fakeMoontech) { f.ticketsRaw = ""; f.notesRaw = `{"error":"denied ` + mtPass + `"}` })
+	require.NoError(t, sy.SyncNow(p.ID))
+	notesAfter, _ = st.MeetingNotes(p.ID, "")
+	require.ElementsMatch(t, notesBefore, notesAfter)
+	after, _ = st.ListTickets(p.ID)
+	require.ElementsMatch(t, before, after)
+	c := calls()
+	require.Len(t, c, 2)
+	require.Empty(t, c[1].changes)
+	require.False(t, c[1].notesChanged)
+	require.Contains(t, buf.String(), "unexpected response")
+	require.NotContains(t, buf.String(), mtPass)
 }

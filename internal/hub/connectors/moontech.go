@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -137,13 +138,13 @@ func (m *moontechConnector) get(ctx context.Context, path string) ([]byte, error
 		}
 	}
 	data, status, err := m.getOnce(ctx, path)
-	if err == nil && status == 401 {
+	if err == nil && mtAuthFail(status) {
 		m.loggedIn = false
 		if err := m.login(ctx); err != nil {
 			return nil, err
 		}
 		data, status, err = m.getOnce(ctx, path)
-		if err == nil && status == 401 {
+		if err == nil && mtAuthFail(status) {
 			m.loggedIn = false
 			return nil, errors.New("Moontech: not authorized after a new login")
 		}
@@ -152,13 +153,14 @@ func (m *moontechConnector) get(ctx context.Context, path string) ([]byte, error
 		return nil, err
 	}
 	switch {
-	case status == 403:
-		return nil, errors.New("Moontech: not authorized")
 	case status < 200 || status > 299:
 		return nil, m.errf("HTTP %d on %s: %s", status, path, clip(string(data), 300))
 	}
 	return data, nil
 }
+
+// mtAuthFail: the session is missing or expired (both trigger one new login).
+func mtAuthFail(status int) bool { return status == 401 || status == 403 }
 
 func (m *moontechConnector) getOnce(ctx context.Context, path string) ([]byte, int, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", m.baseURL+path, nil)
@@ -203,7 +205,17 @@ func (m *moontechConnector) getList(ctx context.Context, path, key string) ([]js
 		return nil, fmt.Errorf("Moontech: invalid response on %s: %v", path, err)
 	}
 	raw, ok := obj[key]
-	if !ok || string(raw) == "null" {
+	if !ok {
+		// e.g. {"error": "..."} or a renamed wrapper: never read it as an empty list, which would wipe
+		// the stored tickets or notes.
+		keys := make([]string, 0, len(obj))
+		for k := range obj {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		return nil, m.errf("unexpected response on %s: no %q list (keys: %s)", path, key, clip(strings.Join(keys, ","), 100))
+	}
+	if string(bytes.TrimSpace(raw)) == "null" {
 		return nil, nil
 	}
 	if err := json.Unmarshal(raw, &items); err != nil {
