@@ -12,11 +12,12 @@ const ViewerCode = lazy(() => import('./ViewerCode'))
 const SANDBOX = 'allow-scripts allow-popups allow-forms allow-modals'
 const ZOOMS = [25, 50, 75, 100, 150, 200, 300, 400]
 
-type Kind = 'frame' | 'md' | 'image' | 'pdf' | 'code'
+type Kind = 'frame' | 'md' | 'image' | 'pdf' | 'video' | 'code'
 function kindOf(name: string): Kind {
   if (/\.(html?|svg)$/i.test(name)) return 'frame'
   if (/\.md$/i.test(name)) return 'md'
   if (/\.pdf$/i.test(name)) return 'pdf'
+  if (/\.(mp4|m4v|mov|webm|ogv)$/i.test(name)) return 'video'
   if (/\.(png|jpe?g|gif|webp|bmp|ico|avif)$/i.test(name)) return 'image'
   return 'code'
 }
@@ -58,7 +59,7 @@ export function viewErrorText(msg: string): string {
 }
 
 /** Full-screen viewer of a file of a session, served by the hub through a short-lived /v/ link. */
-export default function Viewer({ machine, sessionId, path, base = '', worktrees, images = false, read = false, onBack }: {
+export default function Viewer({ machine, sessionId, path, base = '', worktrees, images = false, read = false, upload = false, onBack }: {
   machine: string
   sessionId: string
   path: string
@@ -66,13 +67,17 @@ export default function Viewer({ machine, sessionId, path, base = '', worktrees,
   images?: boolean
   /** an image Claude read with the Read tool: the link comes from the image's own folder */
   read?: boolean
+  /** a file attached to a message of the session: the link comes from its uploads folder */
+  upload?: boolean
   /** session base, only used to show the folder relative to it */
   base?: string
   /** the git worktrees of the session's repo: a file in one shows its folder relative to it */
   worktrees?: readonly string[]
   onBack: () => void
 }) {
-  const name = path.split(/[\\/]/).pop() || path
+  const file = path.split(/[\\/]/).pop() || path
+  // an upload is shown without the 6-hex prefix the machine gave it
+  const name = upload ? file.replace(/^[0-9a-f]{6}-/, '') || file : file
   const kind = kindOf(name)
   const [src, setSrc] = useState('')
   const [error, setError] = useState('')
@@ -86,7 +91,7 @@ export default function Viewer({ machine, sessionId, path, base = '', worktrees,
     setSrc(''); setError(''); setText(''); setCut(false)
     ;(async () => {
       try {
-        const mode = images ? 'images' : read ? 'read' : undefined
+        const mode = images ? 'images' : read ? 'read' : upload ? 'upload' : undefined
         const { url } = await (mode ? createView(machine, sessionId, path, mode) : createView(machine, sessionId, path))
         const full = hubUrl() + url
         if (kind === 'md' || kind === 'code') {
@@ -106,7 +111,7 @@ export default function Viewer({ machine, sessionId, path, base = '', worktrees,
       }
     })()
     return () => { live = false }
-  }, [machine, sessionId, path, kind, nonce, images, read])
+  }, [machine, sessionId, path, kind, nonce, images, read, upload])
 
   const openTab = useCallback(() => { if (src) window.open(src, '_blank', 'noopener') }, [src])
   const where = [machine, folderOf(path, baseOf(path, base, worktrees) || path.replace(/[\\/]+[^\\/]*$/, ''))].filter(Boolean).join(' · ')
@@ -146,6 +151,8 @@ export default function Viewer({ machine, sessionId, path, base = '', worktrees,
         ) : kind === 'pdf' ? (
           // the browser's PDF viewer does not work inside a sandbox; a PDF does not run app code
           <iframe key={nonce} title={name} src={src} className="h-full w-full border-0" />
+        ) : kind === 'video' ? (
+          <video key={nonce} src={src} controls playsInline className="block h-full max-h-full w-full bg-background" />
         ) : kind === 'md' ? (
           <div className="p-4"><Markdown text={text} /></div>
         ) : kind === 'code' ? (

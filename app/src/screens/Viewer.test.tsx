@@ -21,6 +21,16 @@ afterEach(cleanup)
 beforeEach(() => { createView.mockReset(); vi.unstubAllGlobals() })
 
 describe('Viewer', () => {
+  it('an uploaded video plays in a <video> through an upload link, named without its prefix', async () => {
+    createView.mockResolvedValue({ url: '/v/tok/abc123-clip.mp4' })
+    const { container } = render(<Viewer {...props} upload path="/home/u/.config/quorum/uploads/2026-11-25/abc123-clip.mp4" />)
+    await waitFor(() => expect(container.querySelector('video')).toBeTruthy())
+    const v = container.querySelector('video')!
+    expect(v.getAttribute('src')).toBe('http://h:1/v/tok/abc123-clip.mp4')
+    expect(v.hasAttribute('controls')).toBe(true)
+    expect(createView).toHaveBeenCalledWith('vps-1', 's1', '/home/u/.config/quorum/uploads/2026-11-25/abc123-clip.mp4', 'upload')
+    expect(screen.getByText('clip.mp4')).toBeTruthy()
+  })
   it('html viewer iframe has sandbox without allow-same-origin', async () => {
     createView.mockResolvedValue({ url: '/v/tok/page.html' })
     render(<Viewer {...props} path="/p/docs/page.html" />)

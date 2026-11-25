@@ -14,6 +14,8 @@ import { buildTimeline, itemKey, type Item, type OpenOpts } from '../lib/timelin
 import ArtifactCard from './timeline/ArtifactCard'
 import CommandCard from './timeline/CommandCard'
 import PastedImages from './timeline/PastedImages'
+import UploadedFiles from './timeline/UploadedFiles'
+import { splitUploads } from '../lib/attachments'
 import ToolItem from './timeline/ToolItem'
 import TaskCard from './TaskCard'
 
@@ -211,24 +213,33 @@ export default function Transcript({ events, base = '', worktrees, machine = '',
   open.current = onOpenFile
   const openPath = useCallback((p: string) => open.current?.(p), [])
   const openImage = useCallback((p: string, o: { images: true }) => open.current?.(p, o), [])
+  const openUpload = useCallback((p: string, o: { upload: true }) => open.current?.(p, o), [])
   const linkBase = onOpenFile ? base : ''
 
   const renderItem = (r: Item): ReactNode => {
     switch (r.t) {
-      case 'user': return r.command ? (
-        <Message from="user" role="article" aria-label="You" className="my-3 max-w-[85%]">
-          <MessageContent data-testid="command-prompt" className="whitespace-pre-wrap break-all font-mono text-xs text-ink group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:bg-bubble group-[.is-user]:px-3 group-[.is-user]:py-1.5">
-            {r.command.args ? `/${r.command.name} ${r.command.args}` : `/${r.command.name}`}
-          </MessageContent>
-        </Message>
-      ) : (
-        <Message from="user" role="article" aria-label="You" className="my-3 max-w-[85%]">
-          <MessageContent className="whitespace-pre-wrap break-words text-ink group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:bg-bubble group-[.is-user]:px-3.5 group-[.is-user]:py-2">
-            {r.text}
-            {r.images && <PastedImages machine={machine} sessionId={sessionId} images={r.images} onOpen={onOpenFile ? openImage : undefined} />}
-          </MessageContent>
-        </Message>
-      )
+      case 'user': {
+        // files attached from a device are mentioned as @<path> of the machine's uploads folder: shown as chips
+        const cmdText = r.command ? (r.command.args ? `/${r.command.name} ${r.command.args}` : `/${r.command.name}`) : ''
+        const { text: shown, files } = splitUploads(r.command ? cmdText : r.text)
+        const attached = files.length > 0 && <UploadedFiles machine={machine} sessionId={sessionId} files={files} onOpen={onOpenFile ? openUpload : undefined} />
+        return r.command ? (
+          <Message from="user" role="article" aria-label="You" className="my-3 max-w-[85%]">
+            <MessageContent data-testid="command-prompt" className="whitespace-pre-wrap break-all font-mono text-xs text-ink group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:bg-bubble group-[.is-user]:px-3 group-[.is-user]:py-1.5">
+              {shown}
+              {attached}
+            </MessageContent>
+          </Message>
+        ) : (
+          <Message from="user" role="article" aria-label="You" className="my-3 max-w-[85%]">
+            <MessageContent className="whitespace-pre-wrap break-words text-ink group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:bg-bubble group-[.is-user]:px-3.5 group-[.is-user]:py-2">
+              {shown}
+              {attached}
+              {r.images && <PastedImages machine={machine} sessionId={sessionId} images={r.images} onOpen={onOpenFile ? openImage : undefined} />}
+            </MessageContent>
+          </Message>
+        )
+      }
       case 'assistant': return (
         <Message from="assistant" role="article" aria-label={r.agent ? 'Subagent' : 'Claude'} className={`my-2 max-w-full ${r.agent ? 'ml-5 w-auto opacity-70' : ''}`}>
           <MessageContent className={answer}><MessageResponse>{r.text}</MessageResponse></MessageContent>

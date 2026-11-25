@@ -24,7 +24,7 @@ export type CompactItem = { t: 'compact'; seq: number; at?: number; trigger: str
 export type TaskEndItem = { t: 'task_end'; seq: number; taskId: string; kind: string; summary: string; status: string; exitCode?: number; outputTail?: string }
 export type TurnItem = { t: 'turn'; seq: number; tokens?: { in: number; out: number; cache: number }; model: string }
 /** How the Viewer asks for a file's link: an image pasted in the terminal, or an image Claude read. */
-export type OpenOpts = { images: true } | { read: true }
+export type OpenOpts = { images: true } | { read: true } | { upload: true }
 
 /** An image the owner pasted in the terminal (`[Image #n]`), stored at `path` on the session's machine. */
 export type PastedImage = { n: number; path: string }

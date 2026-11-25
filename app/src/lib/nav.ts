@@ -1,7 +1,7 @@
 /** Open terminal; root/label (if they come from "Terminal") let the screen offer "Open another". */
 export interface TermNav { machine: string; pane: string; root?: string; label?: string }
 /** Open local artifact of a session. */
-export interface ViewNav { machine: string; sessionId: string; path: string; images?: boolean; read?: boolean }
+export interface ViewNav { machine: string; sessionId: string; path: string; images?: boolean; read?: boolean; upload?: boolean }
 
 export type Tab = 'projects' | 'sessions'
 /** Navigation saved in history.state, so the browser's Back goes back. `tab` is only used by the phone. */
