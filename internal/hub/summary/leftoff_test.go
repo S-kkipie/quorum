@@ -47,9 +47,10 @@ func (f *leftFx) session(t *testing.T, id, recap, answer string, at time.Time) {
 	}
 }
 
-// run triggers and lets the quiet period pass.
+// run triggers with the briefing open and lets the quiet period pass.
 func (f *leftFx) run() {
 	f.s.TouchLeftOff(f.p.ID)
+	f.s.RequestLeftOff(f.p.ID)
 	*f.now = f.now.Add(leftQuiet)
 	f.s.RunOnce(context.Background())
 }
@@ -112,6 +113,7 @@ func TestLeftOffAtMostOncePer10Minutes(t *testing.T) {
 	for i := range 9 { // a new turn end every minute keeps triggering
 		f.session(t, "s1", "Login", fmt.Sprintf("answer %d", i), *f.now)
 		f.s.TouchLeftOff(f.p.ID)
+		f.s.RequestLeftOff(f.p.ID) // the open page refetches on each change
 		*f.now = f.now.Add(time.Minute)
 		f.s.RunOnce(context.Background())
 	}
@@ -126,7 +128,9 @@ func TestLeftOffAtMostOncePer10Minutes(t *testing.T) {
 func TestLeftOffDebounces(t *testing.T) {
 	f := newLeftFx(t)
 	f.session(t, "s1", "Login", "first", *f.now)
+	require.NoError(t, f.st.SetWhereLeftOff(f.p.ID, "old", 1, 1)) // not a first look
 	f.s.TouchLeftOff(f.p.ID)
+	f.s.RequestLeftOff(f.p.ID)
 	f.s.RunOnce(context.Background())
 	require.Zero(t, f.leftOffCalls(), "waits for the quiet period")
 	*f.now = f.now.Add(leftQuiet / 2)
@@ -162,7 +166,7 @@ func TestLeftOffNoSessionsIsNull(t *testing.T) {
 	text, n, at, _ := f.st.WhereLeftOff(f.p.ID)
 	require.Empty(t, text)
 	require.Zero(t, n)
-	require.Equal(t, int64(seededAt), at, "cleared, and never seeded again")
+	require.Zero(t, at, "cleared")
 	require.Equal(t, []string{f.p.ID}, f.changed)
 }
 
@@ -178,48 +182,105 @@ func TestLeftOffModelErrorRetriesLater(t *testing.T) {
 	require.Equal(t, 1, f.leftOffCalls(), "no retry before 5 minutes")
 	f.m.err = nil
 	*f.now = f.now.Add(retryGap)
+	f.s.RequestLeftOff(f.p.ID) // the open page refetches
 	f.s.RunOnce(context.Background())
 	require.Equal(t, 2, f.leftOffCalls())
 	text, _, _, _ := f.st.WhereLeftOff(f.p.ID)
 	require.NotEmpty(t, text)
 }
 
-func TestLeftOffStartSeedsOnlyMissing(t *testing.T) {
+// Lazy (quota): triggers with no page open cost nothing; opening the page generates once; reopening within
+// 10 minutes does not generate again.
+func TestLeftOffLazy(t *testing.T) {
 	f := newLeftFx(t)
-	w, _ := f.st.ListWorkspaces()
-	other, err := f.st.CreateProject(proto.Project{WorkspaceID: w[0].ID, Name: "Other"})
-	require.NoError(t, err)
-	require.NoError(t, f.st.SetWhereLeftOff(other.ID, "done", 1, 5))
+	f.session(t, "s1", "Login", "first", *f.now)
+	require.NoError(t, f.st.SetWhereLeftOff(f.p.ID, "Older text.", 1, f.now.Add(-time.Hour).UnixMilli()))
+	for i := range 10 {
+		f.session(t, "s1", "Login", fmt.Sprintf("answer %d", i), *f.now)
+		f.s.TouchLeftOff(f.p.ID)
+		*f.now = f.now.Add(time.Minute)
+		f.s.RunOnce(context.Background())
+	}
+	require.Zero(t, f.leftOffCalls(), "10 turn ends with no page open")
+	require.True(t, f.s.LeftOffPending(f.p.ID), "dirty")
+
+	f.s.RequestLeftOff(f.p.ID) // the page opens
+	f.s.RunOnce(context.Background())
+	require.Equal(t, 1, f.leftOffCalls())
+	require.Equal(t, []string{f.p.ID}, f.changed)
+
+	f.session(t, "s1", "Login", "one more", *f.now)
+	f.s.TouchLeftOff(f.p.ID)
+	*f.now = f.now.Add(5 * time.Minute)
+	f.s.RequestLeftOff(f.p.ID) // reopened within 10 minutes
+	f.s.RunOnce(context.Background())
+	require.Equal(t, 1, f.leftOffCalls())
+
+	*f.now = f.now.Add(10 * time.Minute) // the page was closed: lwant is old
+	f.s.RunOnce(context.Background())
+	require.Equal(t, 1, f.leftOffCalls(), "nobody looking")
+}
+
+// The one-time seed is gone: a project without a text gets its first one when its briefing is first requested.
+func TestLeftOffFirstRequestGenerates(t *testing.T) {
+	f := newLeftFx(t)
+	f.session(t, "s1", "Login", "first", *f.now)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	f.s.Start(ctx)
-	require.True(t, f.s.LeftOffPending(f.p.ID))
-	require.False(t, f.s.LeftOffPending(other.ID))
+	require.False(t, f.s.LeftOffPending(f.p.ID), "nothing seeded on start")
+	f.s.RunOnce(context.Background())
+	require.Zero(t, f.leftOffCalls())
+
+	f.s.RequestLeftOff(f.p.ID)
+	f.s.RunOnce(context.Background())
+	require.Equal(t, 1, f.leftOffCalls(), "no quiet period to wait for")
+
+	// a second request (same run) with the text in place does nothing
+	*f.now = f.now.Add(time.Hour)
+	f.s.RequestLeftOff(f.p.ID)
+	f.s.RunOnce(context.Background())
+	require.Equal(t, 1, f.leftOffCalls())
 }
 
-func TestLeftOffSeedOncePerProjectEver(t *testing.T) {
-	for _, fail := range []bool{false, true} {
-		f := newLeftFx(t)
-		f.session(t, "s1", "Login", "first", *f.now)
-		if fail {
-			f.m.err = errors.New("quota")
-		}
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
-		f.s.Start(ctx)
-		*f.now = f.now.Add(leftQuiet)
-		f.s.RunOnce(context.Background())
-		require.Equal(t, 1, f.leftOffCalls(), "fail=%v", fail)
-
-		// a restart: a new summarizer on the same store
-		s2 := New(f.st, f.m, func(proto.Envelope) {})
-		s2.now = f.s.now
-		s2.Start(ctx)
-		require.False(t, s2.LeftOffPending(f.p.ID), "fail=%v: never seeded twice", fail)
-		*f.now = f.now.Add(time.Hour)
-		s2.RunOnce(context.Background())
-		require.Equal(t, 1, f.leftOffCalls(), "fail=%v", fail)
+func TestLeftOffRequestRunsInBackground(t *testing.T) {
+	f := newLeftFx(t)
+	f.session(t, "s1", "Login", "first", *f.now)
+	done := make(chan string, 1)
+	f.s.OnLeftOff = func(id string) { done <- id }
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f.s.Start(ctx)
+	f.s.RequestLeftOff(f.p.ID)
+	select {
+	case id := <-done:
+		require.Equal(t, f.p.ID, id)
+	case <-time.After(5 * time.Second):
+		t.Fatal("no background generation")
 	}
+}
+
+// After 3 failed or empty results in a row it stops retrying until the next real trigger.
+func TestLeftOffStopsAfterThreeFailures(t *testing.T) {
+	f := newLeftFx(t)
+	f.session(t, "s1", "Login", "first", *f.now)
+	f.m.out = "   "
+	f.run()
+	f.m.err = errors.New("quota")
+	for range 5 {
+		*f.now = f.now.Add(retryGap + time.Second)
+		f.s.RequestLeftOff(f.p.ID)
+		f.s.RunOnce(context.Background())
+	}
+	require.Equal(t, 3, f.leftOffCalls(), "1 empty + 2 failed, then it waits")
+	require.False(t, f.s.LeftOffPending(f.p.ID))
+
+	f.m.err = nil
+	f.m.out = "Back to it."
+	f.run() // a real trigger
+	require.Equal(t, 4, f.leftOffCalls())
+	text, _, _, _ := f.st.WhereLeftOff(f.p.ID)
+	require.Equal(t, "Back to it.", text)
 }
 
 func TestLeftOffMaxTokens(t *testing.T) {

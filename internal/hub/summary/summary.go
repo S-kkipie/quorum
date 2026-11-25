@@ -47,13 +47,18 @@ type Summarizer struct {
 	ldirty map[string]time.Time
 	lretry map[string]time.Time
 	lhash  map[string]string
+	lwant  map[string]time.Time // last briefing request
+	lasked map[string]bool      // requested at least once since the hub started
+	lfails map[string]int       // failed or empty results in a row
+	lctx   context.Context      // set by Start: RequestLeftOff regenerates in the background
 	// OnLeftOff is called after a project's "where you left off" text changed (set before Start).
 	OnLeftOff func(projectID string)
 }
 
 func New(st *store.Store, m Model, pub func(proto.Envelope)) *Summarizer {
 	return &Summarizer{st: st, model: m, pub: pub, now: time.Now, dirty: map[string]bool{}, retry: map[string]time.Time{}, hash: map[string]string{},
-		ldirty: map[string]time.Time{}, lretry: map[string]time.Time{}, lhash: map[string]string{}}
+		ldirty: map[string]time.Time{}, lretry: map[string]time.Time{}, lhash: map[string]string{},
+		lwant: map[string]time.Time{}, lasked: map[string]bool{}, lfails: map[string]int{}}
 }
 
 // Touch marks the project as changed; the loop will summarize it when due.
@@ -75,6 +80,9 @@ func (s *Summarizer) Forget(projectID string) {
 	delete(s.ldirty, projectID)
 	delete(s.lretry, projectID)
 	delete(s.lhash, projectID)
+	delete(s.lwant, projectID)
+	delete(s.lasked, projectID)
+	delete(s.lfails, projectID)
 	s.mu.Unlock()
 }
 
@@ -91,15 +99,17 @@ func (s *Summarizer) Pending(projectID string) bool {
 }
 
 // Start launches the loop (every minute) and returns right away; stops when ctx is cancelled.
-// On startup it marks projects without a summary (or without a "where you left off" text) as pending.
+// On startup it marks projects without a summary as pending ("where you left off" is lazy: RequestLeftOff).
 func (s *Summarizer) Start(ctx context.Context) {
+	s.mu.Lock()
+	s.lctx = ctx
+	s.mu.Unlock()
 	if ps, err := s.st.ListProjects(); err == nil {
 		for _, p := range ps {
 			if p.SummaryAt == 0 {
 				s.Touch(p.ID)
 			}
 		}
-		s.seedLeftOff(ps)
 	}
 	go func() {
 		t := time.NewTicker(loopInterval)
