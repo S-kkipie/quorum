@@ -215,6 +215,8 @@ func (s *Server) routes() {
 	dev("GET /api/machines", s.handleMachines)
 	dev("GET /api/sessions", s.handleSessions)
 	dev("GET /api/usage", s.handleUsage)
+	dev("POST /api/devices/push", s.handleAddPush)
+	dev("DELETE /api/devices/push", s.handleDeletePush)
 	dev("GET /api/sessions/{id}/events", s.handleEvents)
 	dev("GET /api/sessions/{id}/history", s.handleHistory)
 	dev("POST /api/sessions/{id}/prompt", s.handlePrompt)

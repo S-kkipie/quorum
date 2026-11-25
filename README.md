@@ -44,6 +44,8 @@ quorum-hub pair
 
 Open your tailnet URL on the phone and type the code (single use). Devices are listed with `quorum-hub devices` and revoked with `quorum-hub revoke device <name>`.
 
+For the Android app with push notifications (Firebase setup, `make apk`, sideloading), see [docs/android.md](docs/android.md).
+
 ## Link machines
 
 On each work machine:

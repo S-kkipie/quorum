@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -104,6 +105,12 @@ func run(args []string) error {
 }
 
 func serve(st *store.Store, addr string, opts hub.Options) error {
+	if opts.FCMKeyFile == "" {
+		opts.FCMKeyFile = hub.DefaultFCMKeyFile()
+		if opts.FCMKeyFile == "" {
+			log.Printf("hub: push is off (no config dir for fcm.json)")
+		}
+	}
 	hs := hub.NewServer(st, opts)
 	srv := &http.Server{Addr: addr, Handler: hs.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

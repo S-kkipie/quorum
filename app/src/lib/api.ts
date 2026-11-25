@@ -100,6 +100,12 @@ export async function pair(hub: string, code: string, deviceName: string): Promi
 export const listSessions = () => apiFetch<SessionInfo[]>('/api/sessions?closed=1')
 export const listUsage = () => apiFetch<AccountUsage[]>('/api/usage')
 export const listMachines = () => apiFetch<Machine[]>('/api/machines')
+/** Stores this phone's FCM token on the paired device (the hub pushes every attention to it). */
+export const registerPush = (token: string) =>
+  apiFetch<void>('/api/devices/push', { method: 'POST', body: JSON.stringify({ token, platform: 'android' }) })
+/** Removes this phone's FCM token from the paired device. */
+export const unregisterPush = (token: string) =>
+  apiFetch<void>('/api/devices/push', { method: 'DELETE', body: JSON.stringify({ token }) })
 
 /** Short device name, e.g. "Chrome · Android". */
 export function defaultDeviceName(ua: string = typeof navigator !== 'undefined' ? navigator.userAgent : ''): string {

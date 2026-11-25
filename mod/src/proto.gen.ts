@@ -227,11 +227,16 @@ export interface AccountUsage {
 }
 /**
  * Attention is the payload of an attention envelope: Kind is "needs_you" or "done", At Unix ms.
+ * Title and Body are the notification text, built once by the hub (clients show them as they are):
+ * Title "<session name> · <machine>" (or "Session · <machine>"), cut to 80 runes; Body "Needs you",
+ * "Needs you: permission for <Tool>", "Needs you: question" or "Finished", cut to 120 runes.
  */
 export interface Attention {
   session: string;
   kind: string;
   at: number /* int64 */;
+  title?: string;
+  body?: string;
 }
 export type EventKind = string;
 /**

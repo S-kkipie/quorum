@@ -1,0 +1,20 @@
+id = "quorum"
+name = "Quorum"
+version = "0.1.0"
+min_herdr_version = "0.9.5"
+description = "Every Claude Code session on every machine, one key away"
+platforms = ["linux"]
+
+# The board: sessions from all machines grouped by attention; Enter jumps to the session's pane.
+[[panes]]
+id = "board"
+title = "Quorum"
+placement = "overlay"
+command = ["quorum", "board"]
+
+# Opens the board pane (bind it to a key, see README.md).
+[[actions]]
+id = "board"
+title = "Quorum board"
+contexts = ["global"]
+command = ["sh", "-c", "exec \"${HERDR_BIN_PATH:-herdr}\" plugin pane open --plugin quorum --entrypoint board"]

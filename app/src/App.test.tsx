@@ -27,10 +27,12 @@ const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
   return new Response('[]')
 })
 vi.stubGlobal('fetch', fetchMock)
+const { startPush } = vi.hoisted(() => ({ startPush: vi.fn(async (_open: (id: string) => void) => {}) }))
+vi.mock('./lib/push', () => ({ startPush, stopPush: vi.fn() }))
 import App from './App'
 
 const info = (id: string, previousId = '') => ({ id, previousId, machine: 'm', name: 'session-' + id, cwd: '/x', root: '/x', model: '', role: 'work', state: 'idle', contextPct: 0, startedAt: 0, updatedAt: 0, transcriptPath: '' })
-afterEach(() => { isWide = true; cleanup(); restSessions = []; FakeWS.all = []; history.replaceState(null, '') })
+afterEach(() => { delete (window as any).Capacitor; startPush.mockClear(); isWide = true; cleanup(); restSessions = []; FakeWS.all = []; history.replaceState(null, '') })
 const setVisibility = (v: 'visible' | 'hidden') => {
   Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => v })
   act(() => { document.dispatchEvent(new Event('visibilitychange')) })
@@ -244,6 +246,25 @@ describe('App', () => {
     send({ type: 'session_upsert', payload: info('new') })
     send({ type: 'launch_session', payload: { reqId: 'r1', sessionId: 'new' } })
     await waitFor(() => expect(screen.queryByText('Starting Claude on vps-1…')).toBeNull())
+    await screen.findByPlaceholderText('Type a message or / for commands')
+  })
+
+  it('the web build never loads the push layer', async () => {
+    render(<App />)
+    await waitFor(() => expect(FakeWS.all.length).toBeGreaterThan(0))
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)) })
+    expect(startPush).not.toHaveBeenCalled()
+  })
+
+  it('in the Android app, a notification tap opens its session', async () => {
+    ;(window as any).Capacitor = { isNativePlatform: () => true }
+    isWide = false
+    render(<App />)
+    await waitFor(() => expect(startPush).toHaveBeenCalledTimes(1))
+    const ws = () => FakeWS.all[FakeWS.all.length - 1]
+    await waitFor(() => expect(FakeWS.all.length).toBeGreaterThan(0))
+    act(() => ws().onmessage({ data: JSON.stringify({ type: 'session_upsert', payload: info('a') }) }))
+    act(() => { startPush.mock.calls[0][0]('a') })
     await screen.findByPlaceholderText('Type a message or / for commands')
   })
 })

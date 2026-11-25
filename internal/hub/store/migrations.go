@@ -176,8 +176,29 @@ func migrate(s *Store) error {
 			}
 		}
 	}
+	if _, err := s.db.Exec(schemaPush); err != nil {
+		return err
+	}
 	return migrateEnglishStatuses(s)
 }
+
+// schemaPush (Plan 11): the phones' FCM tokens, one row per token, owned by a device. Revoking the
+// device (here or from `quorum-hub revoke`, another process) deletes its tokens through the trigger;
+// the DELETE at the end drops rows left by a device revoked before the trigger existed.
+const schemaPush = `
+CREATE TABLE IF NOT EXISTS push_tokens (
+	device_id TEXT NOT NULL,
+	token TEXT PRIMARY KEY,
+	platform TEXT NOT NULL DEFAULT '',
+	at INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS push_tokens_device ON push_tokens(device_id);
+CREATE TRIGGER IF NOT EXISTS push_tokens_revoke AFTER DELETE ON tokens WHEN old.kind='device'
+BEGIN
+	DELETE FROM push_tokens WHERE device_id=old.name;
+END;
+DELETE FROM push_tokens WHERE device_id NOT IN (SELECT name FROM tokens WHERE kind='device');
+`
 
 // Status values were stored in Spanish before the repository was translated.
 var (

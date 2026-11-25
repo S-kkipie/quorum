@@ -3,6 +3,7 @@ import ConnectorForm, { KINDS, connectorInput, draftFrom, validateConnector } fr
 import WorkspaceForm from '../components/WorkspaceForm'
 import { createProject, deleteProject, listSuggestions, setProjectToken, syncProject, updateProject, type ProjectSuggestion } from '../lib/api'
 import type { AppState } from '../lib/store'
+import { isNative } from '../lib/native'
 import { useThemePref, type ThemePref } from '../lib/theme'
 import type { Project } from '../proto.gen'
 import { Button } from '@/components/ui/button'
@@ -79,6 +80,13 @@ export default function Config({ state, onBack, editProject }: { state: AppState
       <div className="px-3">
         <h3 className={h2}>Appearance</h3>
         <Appearance />
+
+        {isNative() && (
+          <>
+            <h3 className={h2}>Hub</h3>
+            <Button variant="secondary" onClick={() => { void import('../lib/push').then((p) => p.changeHub()) }} className="min-h-11 text-sm">Change hub</Button>
+          </>
+        )}
 
         <h3 className={h2}>Workspaces</h3>
         <ul className="space-y-2">

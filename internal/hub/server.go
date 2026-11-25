@@ -34,6 +34,9 @@ type Options struct {
 	Model          summary.Model
 	CCAPIURL       string
 	CCAPITokenFile string
+	// FCMKeyFile is the Firebase service-account key that turns phone push on ("" = push off,
+	// silently; quorum-hub serve passes DefaultFCMKeyFile, and a missing file there is logged once).
+	FCMKeyFile string
 }
 
 func NewServer(st *store.Store, opts ...Options) *Server {
@@ -71,6 +74,16 @@ func NewServer(st *store.Store, opts ...Options) *Server {
 	s.sync.OnChange = func(id string) {
 		s.sum.Touch(id)
 		s.hub.suggestProject(id) // the branch ticket of an open session may have arrived by now
+	}
+	if o.FCMKeyFile != "" {
+		gone := func(token string) {
+			if err := st.ForgetPushToken(token); err != nil {
+				log.Printf("hub: push: forget token: %v", err)
+			}
+		}
+		if p := loadPusher(o.FCMKeyFile, gone, log.Printf); p != nil {
+			s.hub.setPusher(p)
+		}
 	}
 	s.hub.startupGrace()
 	s.routes()

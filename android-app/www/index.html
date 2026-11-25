@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <title>Quorum</title>
+  <style>
+    /* Plan 9 "quiet paper" tokens, light and dark. Inline, with no other files: offline.html is served in place
+       of the hub, where Capacitor serves only that one bundled file. The platform sans-serif stack stands in for
+       Geist, so nothing needs the network. Keep this block the same in index.html and offline.html. */
+    :root {
+      color-scheme: light dark;
+      --background: #FAF9F6;
+      --surface: #FFFFFF;
+      --ink: #1D1C1A;
+      --muted: #6E6A64;
+      --line: #E8E5DF;
+      --accent: #1F5F5B;
+      --on-accent: #FFFFFF;
+      --danger: #B3261E;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --background: #1B1A18;
+        --surface: #232220;
+        --ink: #ECEAE5;
+        --muted: #A19D96;
+        --line: #33312E;
+        --accent: #6FB8B1;
+        --on-accent: #0F1F1E;
+        --danger: #F2B8B5;
+      }
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; }
+    body {
+      background: var(--background);
+      color: var(--ink);
+      font: 16px/1.5 "Geist", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      -webkit-text-size-adjust: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: max(24px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
+    }
+    main {
+      width: 100%;
+      max-width: 400px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 24px 20px;
+    }
+    h1 { font-size: 22px; line-height: 1.3; font-weight: 600; margin: 0 0 4px; }
+    p { margin: 0; }
+    .muted { color: var(--muted); font-size: 15px; }
+    form { margin-top: 20px; display: grid; gap: 8px; }
+    label { font-size: 15px; font-weight: 500; }
+    input {
+      font: inherit;
+      font-size: 16px;
+      min-height: 48px;
+      width: 100%;
+      padding: 10px 12px;
+      color: var(--ink);
+      background: var(--background);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+    input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
+    .actions { display: grid; gap: 8px; margin-top: 20px; }
+    form .actions { margin-top: 12px; }
+    button {
+      font: inherit;
+      font-weight: 500;
+      min-height: 48px;
+      padding: 10px 16px;
+      border-radius: 8px;
+      border: 1px solid transparent;
+      cursor: pointer;
+    }
+    button.primary { background: var(--accent); color: var(--on-accent); }
+    button.secondary { background: transparent; color: var(--ink); border-color: var(--line); }
+    button:disabled { opacity: 0.6; cursor: default; }
+    button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .status { min-height: 24px; font-size: 15px; color: var(--muted); }
+    .status.error { color: var(--danger); }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Connect to your hub</h1>
+    <p class="muted">Enter the address of your Quorum hub. This phone must be on the same Tailscale network.</p>
+    <form id="form" novalidate>
+      <label for="hub">Hub URL</label>
+      <input id="hub" name="hub" type="url" inputmode="url" autocomplete="url" autocapitalize="off"
+             autocorrect="off" spellcheck="false" placeholder="http://vps-1:7420" required>
+      <p id="status" class="status" role="status" aria-live="polite"></p>
+      <div class="actions">
+        <button id="connect" class="primary" type="submit">Connect</button>
+      </div>
+    </form>
+  </main>
+  <script>
+    // The shell's own plugin (MainActivity.java). It is called through the raw bridge so this page needs no bundle.
+    const shell = (method, options) => window.Capacitor.nativePromise('HubShell', method, options || {})
+    const form = document.getElementById('form')
+    const input = document.getElementById('hub')
+    const status = document.getElementById('status')
+    const connect = document.getElementById('connect')
+
+    function say(text, error) {
+      status.textContent = text
+      status.classList.toggle('error', !!error)
+    }
+
+    // The hub URL must start with http:// or https://; only its origin is kept (the hub serves the app at /).
+    function normalize(raw) {
+      const value = raw.trim()
+      if (!/^https?:\/\//i.test(value)) return null
+      try {
+        const u = new URL(value)
+        return u.hostname ? u.origin : null
+      } catch { return null }
+    }
+
+    if (!window.Capacitor || !window.Capacitor.nativePromise) {
+      say('This page only works inside the Quorum app.', true)
+      connect.disabled = true
+    } else {
+      shell('get').then((r) => { if (r && r.last && !input.value) input.value = r.last }).catch(() => {})
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault()
+      const hub = normalize(input.value)
+      if (!hub) { say('The URL must start with http:// or https://', true); input.focus(); return }
+      connect.disabled = true
+      say('Checking ' + hub + '…')
+      try {
+        const r = await shell('check', { url: hub })
+        if (!r.ok) {
+          say(r.status ? 'That address answered, but not like a Quorum hub (HTTP ' + r.status + ').'
+                       : "Can't reach the hub. Is Tailscale connected?", true)
+          connect.disabled = false
+          return
+        }
+        say('Connected. Opening Quorum…')
+        await shell('save', { url: hub })
+      } catch (err) {
+        say((err && err.message) || "Can't reach the hub. Is Tailscale connected?", true)
+        connect.disabled = false
+      }
+    })
+  </script>
+</body>
+</html>

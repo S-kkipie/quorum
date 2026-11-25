@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { act, fireEvent, render, screen } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { Appearance } from './Config'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import Config, { Appearance } from './Config'
+import { initialState } from '../lib/store'
 import { THEME_KEY, setTheme } from '../lib/theme'
 
 beforeEach(() => {
@@ -9,6 +10,30 @@ beforeEach(() => {
   document.documentElement.className = ''
   vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener() {}, removeEventListener() {} }))
   setTheme('system') // the choice in effect is module state: start every test from System
+})
+
+const { changeHub } = vi.hoisted(() => ({ changeHub: vi.fn(async () => {}) }))
+vi.mock('../lib/push', () => ({ changeHub }))
+
+describe('Change hub', () => {
+  beforeEach(() => { vi.stubGlobal('fetch', vi.fn(async () => new Response('[]'))); changeHub.mockClear() })
+  afterEach(() => { delete (window as any).Capacitor })
+
+  it('is hidden on the web', async () => {
+    render(<Config state={initialState()} />)
+    await act(async () => {})
+    expect(screen.queryByRole('button', { name: 'Change hub' })).toBeNull()
+  })
+
+  it('in the Android app it is a 44 px button that runs the shell reset', async () => {
+    ;(window as any).Capacitor = { isNativePlatform: () => true }
+    render(<Config state={initialState()} />)
+    const b = await screen.findByRole('button', { name: 'Change hub' })
+    expect(b.className).toContain('min-h-11')
+    fireEvent.click(b)
+    await act(async () => {})
+    expect(changeHub).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('Appearance', () => {

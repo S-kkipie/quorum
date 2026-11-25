@@ -18,6 +18,7 @@ import Starting from './screens/Starting'
 import Terminal from './screens/Terminal'
 import Viewer from './screens/Viewer'
 import { usePageVisible } from './lib/useMarkSeen'
+import { isNative } from './lib/native'
 import { frames } from './lib/frames'
 import LazyBoundary from './components/LazyBoundary'
 import { Button } from './components/ui/button'
@@ -170,6 +171,16 @@ function Main() {
     else go({ session: id })
     setViewKey(id)
   }
+  // Android app: push registration and notification taps. The Capacitor code is a lazy chunk the web build never loads.
+  const openRef = useRef(openSession)
+  openRef.current = openSession
+  useEffect(() => {
+    if (!isNative()) return
+    let off = false
+    const push = import('./lib/push')
+    push.then((p) => { if (!off) return p.startPush((id) => openRef.current(id)) }).catch(() => { /* no push: the app still works */ })
+    return () => { off = true; push.then((p) => p.stopPush()).catch(() => {}) }
+  }, [])
   onOpenNew.current = (id: string) => {
     pendingRef.current = null
     setPending(null)

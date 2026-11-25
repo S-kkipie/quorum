@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Cleartext (plain http) is allowed for every host. Quorum is a personal app that only talks to its owner's
+  hub over a private Tailscale network, and the hub's host is only known at runtime (the first-run page asks
+  for it), so it cannot be listed here. Tailscale encrypts the traffic between the phone and the hub.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

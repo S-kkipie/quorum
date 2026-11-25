@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log"
@@ -61,9 +62,56 @@ func (h *Hub) scheduleDone(machine, id string) {
 	})
 }
 
+// publishAttention publishes the attention with its notification text and pushes it to the phones.
 func (h *Hub) publishAttention(machine, id, kind string) {
-	p, _ := json.Marshal(proto.Attention{Session: id, Kind: kind, At: h.now().UnixMilli()})
+	var name string
+	if si, err := h.st.Session(id); err == nil {
+		name = attentionName(si)
+	}
+	var ask *proto.Event
+	if kind == "needs_you" {
+		var err error
+		if ask, err = h.st.SessionOpenAsk(id); err != nil {
+			log.Printf("hub: attention of %s: %v", id, err)
+		}
+	}
+	title, body := attentionText(name, machine, kind, ask)
+	p, _ := json.Marshal(proto.Attention{Session: id, Kind: kind, At: h.now().UnixMilli(), Title: title, Body: body})
 	h.publish(proto.Envelope{Type: "attention", Machine: machine, Session: id, Payload: p})
+	h.push(id, kind, title, body)
+}
+
+func (h *Hub) setPusher(p Pusher) { h.pusher.Store(&p) }
+
+func (h *Hub) getPusher() Pusher {
+	if p := h.pusher.Load(); p != nil {
+		return *p
+	}
+	return nil
+}
+
+// push sends the attention to every registered phone, asynchronously (the pusher bounds the call
+// with its own timeout). The data payload is exactly {session, kind}.
+func (h *Hub) push(id, kind, title, body string) {
+	p := h.getPusher()
+	if p == nil {
+		return
+	}
+	go func() {
+		toks, err := h.st.PushTokens()
+		if err != nil {
+			log.Printf("hub: push: tokens: %v", err)
+			return
+		}
+		if len(toks) == 0 {
+			return
+		}
+		targets := make([]PushTarget, len(toks))
+		for i, t := range toks {
+			targets[i] = PushTarget{Device: t.Device, Token: t.Token}
+		}
+		p.Push(context.Background(), targets, title, body, map[string]string{"session": id, "kind": kind})
+	}()
 }
 
 // publishStored publishes the session as the store has it (with the hub's unread). Read and publish

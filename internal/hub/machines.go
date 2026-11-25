@@ -89,6 +89,8 @@ type Hub struct {
 	// so a seen that lands meanwhile is always published after (never undone by) a stale upsert.
 	upsertLocks sync.Map
 	upsertHook  atomic.Pointer[func(id string)] // tests: runs between the unread read and the publish
+	// pusher sends each attention to the phones (nil: push is off).
+	pusher atomic.Pointer[Pusher]
 
 	pmu sync.Mutex // serializes the creation/update of drafts
 	// pending: launches from a ticket waiting for the session to register (by reqId).

@@ -1,0 +1,16 @@
+[Unit]
+Description=Quorum watch: attention notifications for herdr and Windows
+After=network-online.target
+
+[Service]
+ExecStart=%h/.local/bin/quorum watch
+# A user service gets a bare PATH; herdr lives in ~/.local/bin. Under WSL, quorum finds
+# powershell.exe and the interop socket by itself.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Restart=always
+RestartSec=5
+# Exit status 2: not paired, broken client.json or a revoked token; restarting will not help.
+RestartPreventExitStatus=2
+
+[Install]
+WantedBy=default.target

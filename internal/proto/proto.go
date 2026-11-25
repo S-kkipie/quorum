@@ -187,10 +187,15 @@ type AccountUsage struct {
 }
 
 // Attention is the payload of an attention envelope: Kind is "needs_you" or "done", At Unix ms.
+// Title and Body are the notification text, built once by the hub (clients show them as they are):
+// Title "<session name> · <machine>" (or "Session · <machine>"), cut to 80 runes; Body "Needs you",
+// "Needs you: permission for <Tool>", "Needs you: question" or "Finished", cut to 120 runes.
 type Attention struct {
 	Session string `json:"session"`
 	Kind    string `json:"kind"`
 	At      int64  `json:"at"`
+	Title   string `json:"title,omitempty"`
+	Body    string `json:"body,omitempty"`
 }
 
 type EventKind string

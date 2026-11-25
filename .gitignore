@@ -6,3 +6,11 @@ mod/node_modules
 internal/hub/web/dist/*
 !internal/hub/web/dist/.keep
 *.tsbuildinfo
+# Plan 11 secrets: never commit
+fcm.json
+android-app/**/google-services.json
+*.keystore
+*.jks
+android-app/node_modules
+android-app/quorum.apk
+keystore.properties

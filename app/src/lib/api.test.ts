@@ -6,7 +6,7 @@ vi.stubGlobal('localStorage', {
   setItem: (k: string, v: string) => { mem[k] = v },
   removeItem: (k: string) => { delete mem[k] },
 })
-import { apiFetch, setHub, getToken, seen, history, eventsAfter, listCommands, runCommand, setModel } from './api'
+import { apiFetch, setHub, getToken, seen, history, eventsAfter, listCommands, runCommand, setModel, registerPush, unregisterPush } from './api'
 
 beforeEach(() => { for (const k in mem) delete mem[k]; setHub('http://h:1/', 'tok') })
 
@@ -172,5 +172,27 @@ describe('history and delta', () => {
     await eventsAfter('s1', 7, 100)
     expect((f.mock.calls[0] as any)[0]).toBe('http://h:1/api/sessions/s1/events?after=42&limit=500')
     expect((f.mock.calls[1] as any)[0]).toBe('http://h:1/api/sessions/s1/events?after=7&limit=100')
+  })
+})
+
+describe('push tokens', () => {
+  it('registerPush posts the token as android, unregisterPush deletes it', async () => {
+    const f = vi.fn(async () => new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', f)
+    await expect(registerPush('fcm-1')).resolves.toBe(undefined)
+    await expect(unregisterPush('fcm-1')).resolves.toBe(undefined)
+    const [u1, i1] = f.mock.calls[0] as any
+    expect(u1).toBe('http://h:1/api/devices/push')
+    expect(i1.method).toBe('POST')
+    expect(JSON.parse(i1.body)).toEqual({ token: 'fcm-1', platform: 'android' })
+    expect(i1.headers.get('Authorization')).toBe('Bearer tok')
+    const [u2, i2] = f.mock.calls[1] as any
+    expect(u2).toBe('http://h:1/api/devices/push')
+    expect(i2.method).toBe('DELETE')
+    expect(JSON.parse(i2.body)).toEqual({ token: 'fcm-1' })
+  })
+  it('registerPush surfaces the hub error', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'invalid push token' }), { status: 400 })))
+    await expect(registerPush('a b')).rejects.toThrow('invalid push token')
   })
 })

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Quorum</string>
+    <string name="title_activity_main">Quorum</string>
+    <string name="package_name">dev.quorum.app</string>
+    <string name="custom_url_scheme">dev.quorum.app</string>
+</resources>
