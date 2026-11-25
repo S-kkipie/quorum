@@ -17,7 +17,7 @@ import (
 const fileReadMaxChunk = 1 << 20
 
 // fileReadMaxSize is the largest file file_read serves (a variable so tests can lower it).
-var fileReadMaxSize int64 = 50 << 20
+var fileReadMaxSize int64 = 100 << 20
 
 var (
 	errOutsideBase  = errors.New("outside the project folder")

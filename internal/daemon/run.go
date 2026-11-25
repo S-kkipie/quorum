@@ -40,6 +40,7 @@ func Serve(ctx context.Context, cfg Config) error {
 	if dir, err := ConfigDir(); err == nil {
 		reg.SetTranscriptIndex(loadTranscriptIndex(filepath.Join(dir, "transcripts.json"), maxIndexedTranscripts))
 	}
+	go runUploadSweep(ctx)
 	lk := &linker{reg: reg, parent: ctx}
 	lk.start(cfg)
 	reload := func() error {
