@@ -94,6 +94,10 @@ type Hub struct {
 	// so a seen that lands meanwhile is always published after (never undone by) a stale upsert.
 	upsertLocks sync.Map
 	upsertHook  atomic.Pointer[func(id string)] // tests: runs between the unread read and the publish
+	// onMeetingProgress receives each machine's meeting_progress; onMachineChanged runs after a hello or a
+	// caps change (the job dispatcher may have a machine to use). Both nil in bare hubs.
+	onMeetingProgress func(machine string, p proto.MeetingProgress)
+	onMachineChanged  func(machine string)
 	// pusher sends each attention to the phones (nil: push is off).
 	pusher atomic.Pointer[Pusher]
 
@@ -231,6 +235,9 @@ func (h *Hub) serve(ctx context.Context, name string, ws *websocket.Conn) {
 	if !ok {
 		ws.Close(websocket.StatusInternalError, "internal error")
 		return
+	}
+	if h.onMachineChanged != nil {
+		h.onMachineChanged(name)
 	}
 	go pingLoop(ctx, ws)
 	for {
@@ -636,7 +643,16 @@ func (h *Hub) onMessage(c *machineConn, env proto.Envelope) {
 			return
 		}
 		h.publishStatus(name)
+		if h.onMachineChanged != nil {
+			h.onMachineChanged(name)
+		}
 		return
+	case "meeting_progress":
+		var p proto.MeetingProgress
+		if json.Unmarshal(env.Payload, &p) == nil && h.onMeetingProgress != nil {
+			h.onMeetingProgress(name, p)
+		}
+		return // the hub publishes meeting_changed itself
 	case "rpc_result":
 		var res proto.RPCResult
 		if json.Unmarshal(env.Payload, &res) == nil {

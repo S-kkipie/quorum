@@ -442,6 +442,9 @@ export interface Command {
  * most once per needs_you period: closing keeps the mark (a session that drops and comes back with the same question
  * is not announced again); only moving to another live state re-arms it. Hook for native notifications.
  * launch_session (hub->app): Payload {reqId, sessionId}; the launched session has registered and the app can navigate to it.
+ * meeting_progress (daemon->hub): Payload MeetingProgress; a running meeting job's progress, re-sent as a heartbeat
+ * while the job runs. The hub keeps it to itself and publishes meeting_changed.
+ * meeting_changed (hub->app): Payload {id, projectId, status, progress, stage}; status "deleted" when it was removed.
  */
 export interface Envelope {
   type: string;
@@ -464,6 +467,16 @@ export interface MachineCaps {
   herdr: boolean;
   terminal: boolean;
   root: boolean;
+  /**
+   * Transcribe: the meeting worker is set up (`quorumd meetings setup`) and its CUDA check passed, so
+   * the hub may hand this machine meeting jobs.
+   */
+  transcribe: boolean;
+  /**
+   * MeetingWorker is the worker's state for Settings: "" (not set up), "incomplete" (the setup did not
+   * finish), "no_gpu" (set up, but the CUDA check failed) or "ready".
+   */
+  meetingWorker: string;
 }
 export interface LaunchRequest {
   reqId: string;
@@ -809,4 +822,83 @@ export interface MeetingAction {
   mine: boolean;
   tsMs?: number /* int64 */;
   issueUrl?: string;
+}
+/**
+ * Meeting job steps: transcribe (audio → segments) and summarize_local (segments → summary JSON through
+ * the machine's Ollama).
+ */
+export const MeetingStepTranscribe = "transcribe";
+/**
+ * Meeting job steps: transcribe (audio → segments) and summarize_local (segments → summary JSON through
+ * the machine's Ollama).
+ */
+export const MeetingStepSummarizeLocal = "summarize_local";
+/**
+ * MeetingJobStart is the params of the rpc meeting_job_start (hub->daemon). It returns at once (the daemon
+ * only starts the worker); progress comes back as meeting_progress envelopes and the result is POSTed to
+ * ResultURL. AudioURL and ResultURL are relative to the hub and carry a signed token of this job attempt
+ * (no device token needed). Settings depends on the step (MeetingTranscribeSettings for transcribe).
+ */
+export interface MeetingJobStart {
+  jobId: string;
+  attempt: number /* int */;
+  meetingId: string;
+  step: string;
+  audioURL: string;
+  resultURL: string;
+  settings: any /* json.RawMessage */;
+}
+/**
+ * MeetingJobCancel is the params of the rpc meeting_job_cancel: the daemon kills the worker of that job
+ * (any attempt when Attempt is 0) and posts no result.
+ */
+export interface MeetingJobCancel {
+  jobId: string;
+  attempt: number /* int */;
+}
+/**
+ * MeetingProgress is a meeting job's progress: Pct 0–100 within the step, Stage one of downloading,
+ * converting, transcribing, diarizing, summarizing.
+ */
+export interface MeetingProgress {
+  jobId: string;
+  attempt: number /* int */;
+  pct: number /* int */;
+  stage: string;
+}
+/**
+ * MeetingTranscribeSettings are the settings of a transcribe job. Language "" or "auto" detects it;
+ * Channels "me|others" splits a two-channel recording; Speakers > 0 is the number of people when the
+ * owner gave it (diarization clusters to that count).
+ */
+export interface MeetingTranscribeSettings {
+  language: string;
+  channels: string;
+  speakers: number /* int */;
+  model: string;
+}
+/**
+ * MeetingJobResult is the body the daemon POSTs to a job's result URL: Error when the worker failed
+ * (a readable message), else Result (MeetingTranscript for transcribe, the summary JSON for summarize_local).
+ */
+export interface MeetingJobResult {
+  error?: string;
+  result?: any /* json.RawMessage */;
+}
+/**
+ * MeetingTranscript is the result of a transcribe job, in the worker's snake_case.
+ */
+export interface MeetingTranscript {
+  segments: MeetingWorkerSegment[];
+  duration_s: number /* float64 */;
+  language: string;
+}
+/**
+ * MeetingWorkerSegment is one transcript segment as the worker writes it.
+ */
+export interface MeetingWorkerSegment {
+  start_ms: number /* int64 */;
+  end_ms: number /* int64 */;
+  speaker: string;
+  text: string;
 }

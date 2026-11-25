@@ -389,7 +389,7 @@ func TestReopenDoesNotReviveResolved(t *testing.T) {
 
 func TestMachineJSONKeys(t *testing.T) {
 	b, _ := json.Marshal(store.Machine{Name: "m"})
-	require.JSONEq(t, `{"name":"m","os":"","env":"","version":"","online":false,"lastSeen":0,"caps":{"herdr":false,"terminal":false,"root":false}}`, string(b))
+	require.JSONEq(t, `{"name":"m","os":"","env":"","version":"","online":false,"lastSeen":0,"caps":{"herdr":false,"terminal":false,"root":false,"transcribe":false,"meetingWorker":""}}`, string(b))
 }
 
 func TestLaunchCarriesFirstPrompt(t *testing.T) {

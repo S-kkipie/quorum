@@ -28,7 +28,11 @@ func (s *Server) meetingRoutes(dev func(string, http.HandlerFunc)) {
 	dev("PATCH /api/meetings/{id}", s.handlePatchMeeting)
 	dev("DELETE /api/meetings/{id}", s.handleDeleteMeeting)
 	dev("GET /api/meetings/{id}/audio-url", s.handleMeetingAudioURL)
+	dev("POST /api/meetings/{id}/retry", s.handleRetryMeeting)
 	s.mux.HandleFunc("GET /api/meeting-audio/{token}", s.handleMeetingAudio)
+	// the worker's per-job signed URLs (meetings_jobs.go): the token is the auth
+	s.mux.HandleFunc("GET /api/meeting-jobs/{token}/audio", s.handleMeetingJobAudio)
+	s.mux.HandleFunc("POST /api/meeting-jobs/{token}/result", s.handleMeetingJobResult)
 }
 
 // publishMeeting sends meeting_changed {id, projectId, status} to the devices.
@@ -37,12 +41,20 @@ func (s *Server) publishMeeting(id, projectID, status string) {
 	s.hub.publish(proto.Envelope{Type: "meeting_changed", Payload: p})
 }
 
-// queueMeeting moves an uploaded meeting to queued and announces it. The job dispatcher picks queued
-// meetings up from the store.
+// queueMeeting moves an uploaded meeting to queued with a transcribe job, announces it and starts a
+// dispatch.
 func (s *Server) queueMeeting(id string) (proto.Meeting, error) {
+	if act, err := s.st.ActiveMeetingJobs(id); err != nil {
+		return proto.Meeting{}, err
+	} else if len(act) == 0 {
+		if _, err := s.st.CreateMeetingJob(id, proto.MeetingStepTranscribe, ""); err != nil {
+			return proto.Meeting{}, err
+		}
+	}
 	if err := s.st.SetMeetingStatus(id, "queued", "", 0); err != nil {
 		return proto.Meeting{}, err
 	}
+	defer s.kickJobs()
 	m, err := s.st.Meeting(id)
 	if err != nil {
 		return m, err
@@ -122,6 +134,7 @@ func (s *Server) handlePatchMeeting(w http.ResponseWriter, r *http.Request) {
 // handleDeleteMeeting: DELETE /api/meetings/{id} removes the meeting, its audio file and its projection.
 func (s *Server) handleDeleteMeeting(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	s.cancelMeetingJobs(id) // stops a worker that is processing it
 	gone, err := s.st.DeleteMeeting(id)
 	if errors.Is(err, store.ErrNotFound) {
 		apiErr(w, 404, "no such meeting")

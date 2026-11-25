@@ -120,7 +120,7 @@ CREATE INDEX IF NOT EXISTS meeting_tokens_meeting ON meeting_tokens(meeting_id);
 // migrateMeetings (Plan 14): the meetings tables and the source of meeting_notes (connector rows come
 // from a ticket source's sync; quorum rows are the projection of Quorum's own meetings).
 func migrateMeetings(s *Store) error {
-	if _, err := s.db.Exec(schemaMeetings); err != nil {
+	if _, err := s.db.Exec(schemaMeetings + schemaMeetingJobs); err != nil {
 		return err
 	}
 	var n int
@@ -603,7 +603,7 @@ type DeletedMeeting struct {
 }
 
 // DeleteMeeting removes the meeting and everything that belongs to it (audio row, transcript, summary,
-// actions, speakers, upload markers, signed tokens and its briefing projection). The caller removes the
+// actions, speakers, upload markers, signed tokens, jobs and its briefing projection). The caller removes the
 // audio file.
 func (s *Store) DeleteMeeting(id string) (out DeletedMeeting, err error) {
 	tx, err := s.db.Begin()
@@ -634,6 +634,7 @@ func (s *Store) DeleteMeeting(id string) (out DeletedMeeting, err error) {
 		`DELETE FROM meeting_speakers WHERE meeting_id=?`,
 		`DELETE FROM meeting_uploads WHERE meeting_id=?`,
 		`DELETE FROM meeting_tokens WHERE meeting_id=?`,
+		`DELETE FROM meeting_jobs WHERE meeting_id=?`,
 		`DELETE FROM meetings WHERE id=?`,
 	} {
 		if _, err = tx.Exec(q, id); err != nil {

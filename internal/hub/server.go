@@ -32,6 +32,7 @@ type Server struct {
 	audioDir    string
 	diskFree    func(path string) (uint64, error)
 	meetUploads uploadBusy
+	jobs        meetingJobs
 }
 
 // Options configures the server; all fields are optional.
@@ -116,6 +117,7 @@ func NewServer(st *store.Store, opts ...Options) *Server {
 		}
 	}
 	s.hub.startupGrace()
+	s.initMeetingJobs()
 	s.routes()
 	return s
 }
@@ -128,6 +130,7 @@ func (s *Server) StartSync(ctx context.Context) {
 	s.sync.Start(ctx)
 	s.sum.Start(ctx)
 	s.startRetention(ctx)
+	s.startMeetingJobs(ctx)
 }
 
 func (s *Server) Handler() http.Handler { return s.viewHandler(s.mux) }
