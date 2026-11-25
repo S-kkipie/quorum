@@ -346,6 +346,7 @@ func promptToFile(req proto.LaunchRequest, rel bool) (proto.LaunchRequest, error
 		return req, err
 	}
 	cleanPromptFiles(dir, promptFilePre)
+	excludePromptDir(req.Dir)
 	id := unsafeID.ReplaceAllString(req.ReqID, "")
 	if id == "" {
 		id = suffix("")
@@ -373,6 +374,66 @@ func promptToFile(req proto.LaunchRequest, rel bool) (proto.LaunchRequest, error
 		req.Prompt = "Read the file " + shown + " and follow it."
 	}
 	return req, nil
+}
+
+// excludePromptDir keeps the prompt files out of git: it appends the prompt folder to the repository's
+// .git/info/exclude once (never .gitignore). Only a repository with a .git directory is touched (a worktree or
+// submodule, whose .git is a file, is left alone); best effort.
+func excludePromptDir(dir string) {
+	if dir == "" {
+		return
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return
+	}
+	for root := abs; ; {
+		st, err := os.Lstat(filepath.Join(root, ".git"))
+		if err == nil {
+			if !st.IsDir() {
+				return
+			}
+			rel, err := filepath.Rel(root, abs)
+			if err != nil {
+				return
+			}
+			line := ".claude/quorum/"
+			if rel != "." {
+				line = "/" + filepath.ToSlash(rel) + "/" + line
+			}
+			appendExclude(filepath.Join(root, ".git", "info", "exclude"), line)
+			return
+		}
+		parent := filepath.Dir(root)
+		if parent == root {
+			return
+		}
+		root = parent
+	}
+}
+
+func appendExclude(path, line string) {
+	data, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return
+	}
+	for _, l := range strings.Split(string(data), "\n") {
+		if t := strings.TrimSpace(l); t == line || (line == ".claude/quorum/" && (t == "/.claude/quorum/" || t == ".claude/quorum")) {
+			return
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	if len(data) > 0 && !strings.HasSuffix(string(data), "\n") {
+		line = "\n" + line
+	}
+	_, _ = f.WriteString(line + "\n")
 }
 
 func cleanPromptFiles(dir, prefix string) {
