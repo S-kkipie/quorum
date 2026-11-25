@@ -43,6 +43,12 @@ func NewLocalAPI(reg *Registry, token, version string) http.Handler {
 
 // NewLocalAPIWithReload adds POST /v1/reload, which rereads the config and restarts the hub link.
 func NewLocalAPIWithReload(reg *Registry, token, version string, reload func() error) http.Handler {
+	return NewLocalAPIFull(reg, token, version, reload, nil)
+}
+
+// NewLocalAPIFull also takes a getter for the current config (hub URL and machine token), used by the
+// pendings forwarder; a nil getter means no hub is configured.
+func NewLocalAPIFull(reg *Registry, token, version string, reload func() error, cfgFn func() Config) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/reload", auth(token, func(w http.ResponseWriter, r *http.Request) {
 		if reload == nil {
@@ -100,6 +106,7 @@ func NewLocalAPIWithReload(reg *Registry, token, version string, reload func() e
 		reg.Gone(r.PathValue("id"))
 		w.WriteHeader(http.StatusNoContent)
 	}))
+	mountPendings(mux, token, cfgFn)
 	mux.HandleFunc("GET /v1/sessions/{id}/attach", auth(token, attachHandler(reg)))
 	return mux
 }

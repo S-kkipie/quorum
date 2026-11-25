@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/S-kkipie/quorum/internal/proto"
@@ -45,15 +46,18 @@ func Serve(ctx context.Context, cfg Config) error {
 	SweepMeetingTmp()            // job folders of workers killed with an earlier daemon
 	lk := &linker{reg: reg, parent: ctx}
 	lk.start(cfg)
+	var curCfg atomic.Pointer[Config]
+	curCfg.Store(&cfg)
 	reload := func() error {
 		c, err := LoadConfig()
 		if err != nil {
 			return err
 		}
 		lk.start(c)
+		curCfg.Store(&c)
 		return nil
 	}
-	srv := &http.Server{Handler: NewLocalAPIWithReload(reg, cfg.LocalToken, proto.Version, reload)}
+	srv := &http.Server{Handler: NewLocalAPIFull(reg, cfg.LocalToken, proto.Version, reload, func() Config { return *curCfg.Load() })}
 	go func() { <-ctx.Done(); srv.Close() }()
 	defer reg.FlushTranscriptIndex()
 	if err := srv.Serve(ln); err != http.ErrServerClosed {
