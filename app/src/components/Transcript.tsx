@@ -2,7 +2,9 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { observeElementRect, useVirtualizer } from '@tanstack/react-virtual'
 import { ChevronsUp, Loader2 } from 'lucide-react'
 import { useStickToBottomContext } from 'use-stick-to-bottom'
-import { Conversation, ConversationContent, ConversationScrollButton } from '@/components/ai-elements/conversation'
+import { Conversation, ConversationScrollButton } from '@/components/ai-elements/conversation'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import { cn } from '@/lib/utils'
 import { Message, MessageContent, MessageResponse } from '@/components/ai-elements/message'
 import { PathLinksProvider } from '@/components/ai-elements/pathLinks'
 import { Shimmer } from '@/components/ai-elements/shimmer'
@@ -49,6 +51,19 @@ function HistoryLoader({ firstKey, hasMore, autoLoad, onLoadMore, onAtBottom }: 
   useEffect(() => { prevH.current = scrollRef.current?.scrollHeight ?? 0 })
   useEffect(() => { onAtBottom?.(isAtBottom) }, [isAtBottom, onAtBottom])
   return null
+}
+
+/**
+ * StickToBottom.Content with a ScrollArea as the scroll element: the Radix viewport takes the
+ * stick-to-bottom scroll ref, so the virtualizer, the loader and the stick all work on it.
+ */
+function TranscriptScroll({ className, children }: { className?: string; children: ReactNode }) {
+  const { scrollRef, contentRef } = useStickToBottomContext()
+  return (
+    <ScrollArea className="size-full" viewportRef={scrollRef}>
+      <div ref={contentRef} className={cn('flex flex-col', className)}>{children}</div>
+    </ScrollArea>
+  )
 }
 
 /** A row of the virtual list: a timeline item, the collapsed earlier conversation, or the top row. */
@@ -266,7 +281,7 @@ export default function Transcript({ events, base = '', worktrees, machine = '',
   return (
     <PathLinksProvider base={linkBase} worktrees={wts} onOpen={openPath}>
     <Conversation className="min-h-0" initial="instant">
-      <ConversationContent className="gap-0 px-3 py-2 sm:px-4">
+      <TranscriptScroll className="px-3 py-2 sm:px-4">
         <VirtualRows rows={rows} render={renderRow} focus={focus} />
         {live && (
           <Message from="assistant" role="article" aria-label="Claude" className="my-2 max-w-full">
@@ -277,7 +292,7 @@ export default function Transcript({ events, base = '', worktrees, machine = '',
           </Message>
         )}
         {indicator && <div role="status" className="my-2"><Shimmer as="span" className="text-xs">{indicator}</Shimmer></div>}
-      </ConversationContent>
+      </TranscriptScroll>
       <ConversationScrollButton aria-label="Scroll to bottom" className="size-11" />
       <HistoryLoader firstKey={firstKey} hasMore={hasMore} autoLoad={autoLoad && !collapsed && !notice && !loading} onLoadMore={loadOlder} onAtBottom={onAtBottom} />
     </Conversation>

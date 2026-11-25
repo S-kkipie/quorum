@@ -6,6 +6,7 @@ import type { AppState } from '../lib/store'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogFooter, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { ScrollArea } from '@/components/ui/scroll-area'
 
 export const ROOT_REASON = 'Skip permissions does not work as root'
 
@@ -71,6 +72,7 @@ export default function LaunchDialog({ state, onClose, onLaunched, projectId = '
         onEscapeKeyDown={(e) => { if (dir.trim()) e.preventDefault() }}
         className="top-auto bottom-0 left-0 max-w-none translate-x-0 translate-y-0 gap-0 rounded-b-none rounded-t-xl p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:top-[50%] sm:bottom-auto sm:left-[50%] sm:max-w-md sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-lg sm:pb-4 max-sm:motion-safe:starting:translate-y-full max-sm:motion-safe:starting:scale-100 max-sm:data-[state=closed]:slide-out-to-bottom max-sm:data-[state=closed]:zoom-out-100">
         <DialogTitle className="truncate text-base font-semibold">{scopeName ? `New session · ${scopeName}` : 'New session'}</DialogTitle>
+        <ScrollArea viewportClassName="max-h-[60dvh]"><div className="px-1">
         {online.length === 0 ? (
           <p className="mt-3 text-sm text-muted-foreground">No machines online.</p>
         ) : (
@@ -88,6 +90,7 @@ export default function LaunchDialog({ state, onClose, onLaunched, projectId = '
           </>
         )}
         {error && <p role="alert" className="mt-3 text-xs text-danger">{error}</p>}
+        </div></ScrollArea>
         <DialogFooter className="mt-4 flex-row justify-end gap-2 sm:flex-row">
           <Button variant="secondary" className="min-h-11" onClick={onClose}>Cancel</Button>
           <Button className="min-h-11" disabled={busy || !machine || !dir.trim()} onClick={go}>Start</Button>

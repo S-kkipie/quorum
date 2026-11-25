@@ -196,7 +196,7 @@ describe('AppShell sidebar', () => {
       expect(r.getAttribute('title')).toBe(name.textContent)
     }
     // the sidebar never scrolls sideways
-    expect(side.className).toContain('overflow-x-hidden')
+    expect(side.closest('[data-slot="scroll-area"]')).toBeTruthy()
   })
 
   it('the resize handle: arrows change the width within 220–380 px, and it persists', () => {

@@ -5,6 +5,7 @@ import { frames } from '../lib/frames'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area'
 
 const KEYS: [string, string][] = [
   ['Esc', 'esc'], ['Tab', 'tab'], ['Ctrl-C', 'ctrl+c'], ['↑', 'up'], ['↓', 'down'], ['←', 'left'], ['→', 'right'], ['Ctrl-D', 'ctrl+d'], ['Ctrl-L', 'ctrl+l'],
@@ -144,7 +145,7 @@ export default function Terminal({ machine, pane, root, label, onBack, onReopen 
           </DropdownMenu>
         )}
       </header>
-      <div ref={box} className="min-h-0 flex-1 dark overflow-auto bg-background p-2 text-ink">
+      <ScrollArea horizontal viewportRef={box} className="min-h-0 flex-1 dark bg-background text-ink" viewportClassName="p-2">
         {history !== null ? (
           <pre className="m-0 font-mono text-ink" style={{ fontSize: size, lineHeight: 1.25 }}><Screen ansi={history} /></pre>
         ) : closed ? (
@@ -157,14 +158,14 @@ export default function Terminal({ machine, pane, root, label, onBack, onReopen 
         ) : waited ? (
           <p className="p-4 text-sm text-muted-foreground">Connecting to the terminal…</p>
         ) : null}
-      </div>
+      </ScrollArea>
       {noSignal && <p role="status" className="shrink-0 bg-state-needs-soft px-3 py-1 text-xs text-state-needs">No signal: {watchErr || 'retrying…'}</p>}
       {err && <p role="alert" className="shrink-0 px-3 py-1 text-xs text-danger">{err}</p>}
       {!closed && history === null && (
         <footer className="shrink-0 border-t border-line bg-background pb-[env(safe-area-inset-bottom)]">
-          <div className="flex gap-1.5 overflow-x-auto px-2 pt-2">
+          <ScrollArea className="w-full"><div className="flex gap-1.5 px-2 pt-2">
             {KEYS.map(([name, k]) => <Button key={k} variant="secondary" {...noBlur} onClick={() => key1(k)} className={btn}>{name}</Button>)}
-          </div>
+          </div><ScrollBar orientation="horizontal" /></ScrollArea>
           <form className="flex gap-2 p-2" onSubmit={(e) => { e.preventDefault(); submit() }}>
             <Input value={text} onChange={(e) => setText(e.target.value)} placeholder="Type…" enterKeyHint="send"
               autoCapitalize="off" autoCorrect="off" autoComplete="off" spellCheck={false}

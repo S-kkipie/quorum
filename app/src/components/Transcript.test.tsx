@@ -83,10 +83,15 @@ describe('Transcript', () => {
     rerender(<Transcript events={evs} working live="typing" />)
     expect(screen.queryByRole('status')).toBeNull()
   })
+  it('scrolls inside a ScrollArea whose viewport is the scroll element', () => {
+    render(<Transcript events={evs} />)
+    const log = screen.getByRole('log')
+    expect(log.querySelector('[data-slot="scroll-area"] [data-slot="scroll-area-viewport"]')).toBeTruthy()
+  })
   it('scrolling near the top loads earlier events, unless autoLoad is off', () => {
     const onLoadMore = vi.fn()
     const { rerender } = render(<Transcript events={evs} hasMore onLoadMore={onLoadMore} />)
-    const scroller = screen.getByRole('log').firstElementChild as HTMLElement
+    const scroller = screen.getByRole('log').querySelector('[data-slot="scroll-area-viewport"]') as HTMLElement
     scroller.scrollTop = 0
     fireEvent.scroll(scroller)
     expect(onLoadMore).toHaveBeenCalledTimes(1)
@@ -357,7 +362,7 @@ describe('Transcript: compacts and earlier conversation', () => {
   it('with nothing loaded before the compact, the row loads older history; scrolling up does not while folded', () => {
     const onLoadMore = vi.fn()
     render(<Transcript events={convo.slice(2)} hasMore onLoadMore={onLoadMore} />)
-    const scroller = screen.getByRole('log').firstElementChild as HTMLElement
+    const scroller = screen.getByRole('log').querySelector('[data-slot="scroll-area-viewport"]') as HTMLElement
     scroller.scrollTop = 0
     fireEvent.scroll(scroller)
     expect(onLoadMore).not.toHaveBeenCalled()
@@ -376,7 +381,7 @@ describe('Transcript: compacts and earlier conversation', () => {
     render(<Transcript events={evs} hasMore notice="Older history is on laptop, which is offline." onLoadMore={onLoadMore} />)
     expect(screen.getByText('Older history is on laptop, which is offline.')).toBeTruthy()
     expect(screen.queryByRole('alert')).toBeNull()
-    const scroller = screen.getByRole('log').firstElementChild as HTMLElement
+    const scroller = screen.getByRole('log').querySelector('[data-slot="scroll-area-viewport"]') as HTMLElement
     scroller.scrollTop = 0
     fireEvent.scroll(scroller)
     expect(onLoadMore).not.toHaveBeenCalled()

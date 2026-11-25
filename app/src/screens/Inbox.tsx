@@ -8,6 +8,7 @@ import type { AppState } from '../lib/store'
 import { sessionTitle } from '../lib/title'
 import { useWakeClock } from '../lib/useWakeClock'
 import type { SessionInfo } from '../proto.gen'
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area'
 
 /** The phone home: sessions grouped by state (ATTENTION order), filtered by job with chips. */
 export default function Inbox({ state, connected, onOpen, onLaunch }: { state: AppState; connected: boolean; onOpen: (id: string) => void; onLaunch: () => void }) {
@@ -28,8 +29,8 @@ export default function Inbox({ state, connected, onOpen, onLaunch }: { state: A
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <PhoneHeader title="Sessions" connected={connected} onLaunch={onLaunch} />
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        {jobs.length > 0 && <div role="group" aria-label="Filter by job" className="flex gap-2 overflow-x-auto px-3 py-2">{chip('', 'All')}{jobs.map((j) => chip(j.id, j.name))}</div>}
+      <ScrollArea className="min-h-0 flex-1">
+        {jobs.length > 0 && <ScrollArea className="w-full whitespace-nowrap"><div role="group" aria-label="Filter by job" className="flex gap-2 px-3 py-2">{chip('', 'All')}{jobs.map((j) => chip(j.id, j.name))}</div><ScrollBar orientation="horizontal" /></ScrollArea>}
         {sections.length === 0 && (noMachines
           ? <p className="p-6 text-center text-sm text-muted-foreground">No machines yet. Connect a daemon to the hub.</p>
           : <p className="p-6 text-center text-sm text-muted-foreground">No sessions{job ? ' in this job' : ''}.</p>)}
@@ -41,7 +42,7 @@ export default function Inbox({ state, connected, onOpen, onLaunch }: { state: A
             </ul>
           </section>
         ))}
-      </div>
+      </ScrollArea>
     </div>
   )
 }

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { ago, hhmm, kindIcon } from '../lib/background'
 import type { BackgroundInfo } from '../proto.gen'
+import { ScrollArea } from '@/components/ui/scroll-area'
 
 /** True when there is anything to list: items, or a count from a mod too old to send them. */
 export const hasBackground = (b?: BackgroundInfo) => !!b && (!!b.items?.length || (b.items === undefined && b.tasks > 0))
@@ -53,14 +54,16 @@ export default function BackgroundSheet({ open, onOpenChange, background }: {
 }) {
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="bottom" className="max-h-[85dvh] gap-0 overflow-y-auto rounded-t-2xl border-line bg-surface pb-[max(1rem,env(safe-area-inset-bottom))]">
+      <SheetContent side="bottom" className="max-h-[85dvh] gap-0 overflow-hidden rounded-t-2xl border-line bg-surface">
+<ScrollArea viewportClassName="max-h-[85dvh]"><div className="flex flex-col pb-[max(1rem,env(safe-area-inset-bottom))]">
         <div aria-hidden className="mx-auto mt-2.5 h-1 w-9 rounded-full bg-line" />
         <SheetHeader className="px-4 pt-2 pb-1">
           <SheetTitle className="text-sm text-ink">Background</SheetTitle>
           <SheetDescription className="sr-only">Work this session left running in the background.</SheetDescription>
         </SheetHeader>
         <BackgroundContent background={background} />
-      </SheetContent>
+      </div></ScrollArea>
+</SheetContent>
     </Sheet>
   )
 }

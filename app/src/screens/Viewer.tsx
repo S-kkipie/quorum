@@ -5,6 +5,7 @@ import { folderOf } from '../components/timeline/ArtifactCard'
 import { createView, hubUrl } from '../lib/api'
 import { baseOf } from '../lib/timeline'
 import { Button } from '@/components/ui/button'
+import { ScrollArea } from '@/components/ui/scroll-area'
 
 const ViewerCode = lazy(() => import('./ViewerCode'))
 
@@ -132,7 +133,7 @@ export default function Viewer({ machine, sessionId, path, base = '', worktrees,
         <Button variant="ghost" size="icon" onClick={() => setNonce((n) => n + 1)} aria-label="Reload" title="Reload" className={btn}><RotateCw size={18} aria-hidden /></Button>
         <Button variant="ghost" size="icon" onClick={openTab} disabled={!src} aria-label="Open in new tab" title="Open in new tab" className={btn}><ExternalLink size={18} aria-hidden /></Button>
       </header>
-      <div className="min-h-0 flex-1 overflow-auto">
+      <ScrollArea horizontal className="min-h-0 flex-1" viewportClassName="[&>div]:h-full">
         {error ? (
           <div className="flex flex-col items-start gap-3 p-4">
             <p role="alert" className="text-sm text-danger">{error}</p>
@@ -154,7 +155,7 @@ export default function Viewer({ machine, sessionId, path, base = '', worktrees,
         ) : (
           <img key={nonce} src={src} alt={name} style={{ width: `${zoom}%` }} className="block max-w-none" />
         )}
-      </div>
+      </ScrollArea>
     </div>
   )
 }

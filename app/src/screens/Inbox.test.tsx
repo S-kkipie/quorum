@@ -151,7 +151,7 @@ describe('Inbox', () => {
     expect(row.parentElement!.className).toContain('min-w-0')
     expect(within(screen.getByRole('group', { name: 'Filter by job' })).getByRole('button', { name: long }).className).toMatch(/max-w-.*truncate|truncate.*max-w-/)
     // the chips scroll inside their own row, the page never does
-    expect(screen.getByRole('group', { name: 'Filter by job' }).className).toContain('overflow-x-auto')
+    expect(screen.getByRole('group', { name: 'Filter by job' }).closest('[data-slot="scroll-area"]')).toBeTruthy()
     expect(container.innerHTML).not.toMatch(/\bw-\[\d{3,}px\]|min-w-\[\d{3,}px\]/)
   })
 

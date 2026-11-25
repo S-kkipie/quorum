@@ -10,6 +10,7 @@ import { projectCheckouts, since } from '../lib/projects'
 import type { AppState } from '../lib/store'
 import type { SessionRow } from '../lib/sessions'
 import type { Checkout, Conversation } from '../proto.gen'
+import { ScrollArea } from '@/components/ui/scroll-area'
 
 export default function Project({ state, id, onBack, onOpenTickets, onOpenSession, onEdit, onTickets, onCheckouts, onConversations, checkoutsOpen, onCheckoutsOpenChange, pending = false, onLaunched, onGuard, onTerminal }: {
   state: AppState
@@ -95,7 +96,8 @@ export default function Project({ state, id, onBack, onOpenTickets, onOpenSessio
       <ProjectSessions state={state} projectId={id} busy={pending} onOpen={(sid) => onOpenSession?.(sid)} onResume={resume} onConversations={(m, r, l) => onConversations?.(m, r, l)} />
 
       <Sheet open={!!checkoutsOpen} onOpenChange={(o) => onCheckoutsOpenChange?.(o)}>
-        <SheetContent side="bottom" className="max-h-[80dvh] overflow-y-auto">
+        <SheetContent side="bottom" className="max-h-[80dvh] overflow-hidden">
+<ScrollArea viewportClassName="max-h-[80dvh]"><div className="flex flex-col gap-4">
           <SheetHeader>
             <SheetTitle>Checkouts</SheetTitle>
             <SheetDescription className="sr-only">Machines and folders where this project is checked out.</SheetDescription>
@@ -111,7 +113,8 @@ export default function Project({ state, id, onBack, onOpenTickets, onOpenSessio
           ) : (
             <p className="px-4 pb-4 text-xs text-muted-foreground">None yet: they appear on their own when there are sessions in the project's repo.</p>
           )}
-        </SheetContent>
+        </div></ScrollArea>
+</SheetContent>
       </Sheet>
     </div>
   )

@@ -322,7 +322,8 @@ describe('Composer: slash commands', () => {
   it('the list is capped at half the viewport and scrolls', () => {
     render(<Composer session={sess({})} commands={LIST} />)
     type('/')
-    expect(list()!.className).toMatch(/max-h-\[50dvh\]/)
-    expect(list()!.className).toMatch(/overflow-y-auto/)
+    const area = list()!.closest('[data-slot="scroll-area"]')!
+    expect(area).toBeTruthy()
+    expect(area.querySelector('[data-slot="scroll-area-viewport"]')!.className).toMatch(/max-h-\[50dvh\]/)
   })
 })

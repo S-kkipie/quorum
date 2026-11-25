@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { Check } from 'lucide-react'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import type { ModelOption } from '../proto.gen'
+import { ScrollArea } from '@/components/ui/scroll-area'
 
 /**
  * The header chips' bottom sheet (Plan 8, mockup B): the session's models, the current one checked,
@@ -37,7 +38,8 @@ export default function ModelEffortSheet({ open, onOpenChange, options, current,
   }
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="bottom" className="max-h-[85dvh] gap-0 overflow-y-auto rounded-t-2xl border-line bg-surface pb-[max(1rem,env(safe-area-inset-bottom))]">
+      <SheetContent side="bottom" className="max-h-[85dvh] gap-0 overflow-hidden rounded-t-2xl border-line bg-surface">
+<ScrollArea viewportClassName="max-h-[85dvh]"><div className="flex flex-col pb-[max(1rem,env(safe-area-inset-bottom))]">
         <div aria-hidden className="mx-auto mt-2.5 h-1 w-9 rounded-full bg-line" />
         <SheetHeader className="px-4 pt-2 pb-1">
           <SheetTitle className="text-sm text-ink">Model</SheetTitle>
@@ -85,7 +87,8 @@ export default function ModelEffortSheet({ open, onOpenChange, options, current,
           </div>
         )}
         <p className="px-4 pt-3 text-xs text-muted-foreground">A new model applies from the next turn.</p>
-      </SheetContent>
+      </div></ScrollArea>
+</SheetContent>
     </Sheet>
   )
 }

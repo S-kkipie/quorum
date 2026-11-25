@@ -5,6 +5,7 @@ import { Button } from '../ui/button'
 import type { AppState } from '../../lib/store'
 import { sessionTree } from '../../lib/tree'
 import SessionTree, { SessionItem } from './SessionTree'
+import { ScrollArea } from '@/components/ui/scroll-area'
 
 /** "Now", refreshed every minute so the rows' relative times ("7m") stay current. */
 function useMinuteClock(): number {
@@ -57,7 +58,7 @@ export default function Sidebar({ state, selected, connected, width, searchRef, 
           onKeyDown={(e) => { if (e.key === 'Escape' && q) { e.preventDefault(); setQ('') } }}
           className="min-h-9 w-full rounded-lg border border-line bg-surface px-2.5 text-[13px] text-ink placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11" />
       </div>
-      <nav aria-label="Sessions" className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-2 pb-2">
+      <ScrollArea className="min-h-0 flex-1"><nav aria-label="Sessions" className="px-2 pb-2">
         {tree.needsYou.length > 0 && (
           <section aria-label="Needs you" className="min-w-0">
             <h2 className="flex justify-between px-2 pb-1 pt-1 text-xs text-muted-foreground"><span>Needs you</span><span>{tree.needsYou.length}</span></h2>
@@ -72,6 +73,7 @@ export default function Sidebar({ state, selected, connected, width, searchRef, 
         <SessionTree tree={tree} selected={selected} filtering={filtering} now={now} onOpenSession={onOpenSession} onOpenProject={onOpenProject} onLaunch={onLaunch} />
         {empty && <p className="px-2 pt-3 text-[12.5px] text-muted-foreground">No matching sessions.</p>}
       </nav>
+      </ScrollArea>
       <div className="flex items-center gap-2 border-t border-line px-3 py-2.5 text-xs text-muted-foreground">
         <Button onClick={() => onLaunch({})} className="min-h-9 flex-1 text-[12.5px] font-semibold pointer-coarse:min-h-11">New session</Button>
         <span className={`h-2 w-2 shrink-0 rounded-full ${connected ? 'bg-success' : 'bg-warning'}`} aria-hidden />

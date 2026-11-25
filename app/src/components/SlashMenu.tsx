@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { Plug, Server, Sparkles, SquareSlash, Terminal } from 'lucide-react'
 import { selectable, type CommandGroup } from '../lib/slash'
 import type { SessionCommand } from '../proto.gen'
+import { ScrollArea } from '@/components/ui/scroll-area'
 
 const LOOK: Record<CommandGroup, { Icon: typeof Plug; tint: string }> = {
   session: { Icon: SquareSlash, tint: 'bg-accent-soft text-accent' },
@@ -41,7 +42,7 @@ export default function SlashMenu({ groups, reported, active, hint, onPick }: {
   const empty = !reported ? 'Update the Quorum plugin on this machine to see commands' : groups.length === 0 ? 'No matching commands' : ''
   return (
     <div className="absolute inset-x-2 bottom-full z-30 mb-1 overflow-hidden rounded-2xl border border-line bg-surface shadow-lg">
-      <div ref={ref} id="slash-menu" role="listbox" aria-label="Commands" className="max-h-[50dvh] overflow-y-auto overscroll-contain py-1">
+      <ScrollArea viewportClassName="max-h-[50dvh] overscroll-contain"><div ref={ref} id="slash-menu" role="listbox" aria-label="Commands" className="py-1">
         {empty && <p className="px-3 py-3 text-sm text-muted-foreground">{empty}</p>}
         {groups.map((g) => {
           const { Icon, tint } = LOOK[g.key]
@@ -80,7 +81,7 @@ export default function SlashMenu({ groups, reported, active, hint, onPick }: {
             </div>
           )
         })}
-      </div>
+      </div></ScrollArea>
       {hint && <p role="status" className="border-t border-line px-3 py-2 text-xs text-warning">{hint}</p>}
     </div>
   )

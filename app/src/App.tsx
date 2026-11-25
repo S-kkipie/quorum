@@ -19,6 +19,7 @@ import AppShell from './components/shell/AppShell'
 import LazyBoundary from './components/LazyBoundary'
 import BottomNav, { type NavTab } from './components/shell/BottomNav'
 import PhoneHeader from './components/shell/PhoneHeader'
+import { ScrollArea } from '@/components/ui/scroll-area'
 
 // The session view (AI Elements, markdown) is the heaviest screen: it loads on first open.
 const Session = lazy(() => import('./screens/Session'))
@@ -362,17 +363,16 @@ function Main() {
   if (wide) {
     // the Viewer covers the whole window, as on the phone
     if (viewerView) return <div className="app-shell">{viewerView}{dialog}{toggle}</div>
-    const scroll = 'min-h-0 flex-1 overflow-y-auto'
     let page
     switch (centre.kind) {
       case 'terminal': page = <div className="min-h-0 flex-1">{terminalView}</div>; break
       case 'starting': page = <div className="min-h-0 flex-1">{startingView}</div>; break
-      case 'settings': page = <div className={scroll}>{configView}</div>; break
+      case 'settings': page = <ScrollArea className="min-h-0 flex-1">{configView}</ScrollArea>; break
       // project pages keep a readable line length in a wide centre
-      case 'tickets': page = <div className={scroll}><div className="mx-auto w-full max-w-3xl">{ticketView || ticketsView}</div></div>; break
-      case 'project': page = <div className={scroll}><div className="mx-auto w-full max-w-3xl">{projectView}</div></div>; break
+      case 'tickets': page = <ScrollArea className="min-h-0 flex-1"><div className="mx-auto w-full max-w-3xl">{ticketView || ticketsView}</div></ScrollArea>; break
+      case 'project': page = <ScrollArea className="min-h-0 flex-1"><div className="mx-auto w-full max-w-3xl">{projectView}</div></ScrollArea>; break
       case 'session': page = <div className="min-h-0 flex-1">{sessionView}</div>; break
-      default: page = <div className="min-h-0 flex-1 overflow-auto">{projectsView}</div>
+      default: page = <ScrollArea className="min-h-0 flex-1" horizontal>{projectsView}</ScrollArea>
     }
     return (
       <>
@@ -393,7 +393,7 @@ function Main() {
   let view
   // the bottom nav is hidden only in a session and the Viewer
   const withNav = (page: ReactNode, active: NavTab, scroll = true) => (
-    <div className="flex h-full flex-col"><div className={`min-h-0 flex-1 ${scroll ? 'overflow-y-auto' : ''}`}>{page}</div><BottomNav active={active} attention={attention} onNav={onNav} /></div>
+    <div className="flex h-full flex-col">{scroll ? <ScrollArea className="min-h-0 flex-1">{page}</ScrollArea> : <div className="min-h-0 flex-1">{page}</div>}<BottomNav active={active} attention={attention} onNav={onNav} /></div>
   )
   if (viewerView) view = <div className="h-full">{viewerView}</div>
   else if (terminalView) view = withNav(terminalView, tab, false)
@@ -404,6 +404,6 @@ function Main() {
   else if (ticketsView) view = withNav(ticketsView, tab)
   else if (projectView) view = withNav(projectView, tab)
   else if (tab === 'sessions') view = <div className="flex h-full flex-col">{sessionsList}<BottomNav active="sessions" attention={attention} onNav={onNav} /></div>
-  else view = <div className="flex h-full flex-col"><PhoneHeader title="Projects" connected={connected} onLaunch={() => openLaunch()} /><div className="min-h-0 flex-1 overflow-y-auto">{projectsView}</div><BottomNav active="projects" attention={attention} onNav={onNav} /></div>
+  else view = <div className="flex h-full flex-col"><PhoneHeader title="Projects" connected={connected} onLaunch={() => openLaunch()} /><ScrollArea className="min-h-0 flex-1">{projectsView}</ScrollArea><BottomNav active="projects" attention={attention} onNav={onNav} /></div>
   return <div className="app-shell">{view}{dialog}{toggle}</div>
 }

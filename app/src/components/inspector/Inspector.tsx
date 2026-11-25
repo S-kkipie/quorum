@@ -12,6 +12,7 @@ import { hasBackground } from '../BackgroundSheet'
 import { shortcutBlocked } from '../../lib/shortcuts'
 import type { InspectorMode } from '../../lib/useLayout'
 import type { AccountUsage, Event, SessionInfo } from '../../proto.gen'
+import { ScrollArea } from '@/components/ui/scroll-area'
 
 export const INSPECTOR_WIDTH = 280
 
@@ -72,14 +73,16 @@ export default function Inspector({ placement, open, onClose, session, usage, ev
   if (placement === 'sheet') {
     return (
       <Sheet open={open} onOpenChange={(o) => { if (!o) onClose() }}>
-        <SheetContent side="bottom" className="max-h-[85dvh] gap-0 overflow-y-auto rounded-t-2xl border-line bg-background pb-[max(1rem,env(safe-area-inset-bottom))]">
+        <SheetContent side="bottom" className="max-h-[85dvh] gap-0 overflow-hidden rounded-t-2xl border-line bg-background">
+<ScrollArea viewportClassName="max-h-[85dvh]"><div className="flex flex-col pb-[max(1rem,env(safe-area-inset-bottom))]">
           <div aria-hidden className="mx-auto mt-2.5 h-1 w-9 rounded-full bg-line" />
           <SheetHeader className="px-4 pt-2 pb-0">
             <SheetTitle className="text-sm text-ink">Inspector</SheetTitle>
             <SheetDescription className="sr-only">Background work, usage, changed files and artifacts of this session.</SheetDescription>
           </SheetHeader>
           {cards}
-        </SheetContent>
+        </div></ScrollArea>
+</SheetContent>
       </Sheet>
     )
   }
@@ -87,8 +90,8 @@ export default function Inspector({ placement, open, onClose, session, usage, ev
   const docked = placement === 'docked'
   return (
     <aside ref={root} aria-label="Inspector" style={{ width: INSPECTOR_WIDTH }}
-      className={`${docked ? 'shrink-0 border-l' : 'absolute inset-y-0 right-0 z-30 border-l shadow-lg'} min-h-0 overflow-y-auto border-line bg-background`}>
-      {cards}
+      className={`${docked ? 'shrink-0 border-l' : 'absolute inset-y-0 right-0 z-30 border-l shadow-lg'} flex min-h-0 flex-col border-line bg-background`}>
+      <ScrollArea className="min-h-0 flex-1">{cards}</ScrollArea>
     </aside>
   )
 }
