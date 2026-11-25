@@ -121,7 +121,7 @@ export default function MeetingsSettings({ state, onOpenMeeting }: { state: AppS
             </select>
           </label>
           <label className="block min-w-0 text-xs text-muted-foreground">Names I go by
-            <Input value={aliases} onChange={(e) => setAliases(e.target.value)} placeholder="e.g. Alex, Al" className={field} />
+            <Input value={aliases} onChange={(e) => setAliases(e.target.value)} placeholder="e.g. Brax, Bri" className={field} />
             <span className="mt-1 block">Comma-separated. Actions owned by these names are yours.</span>
           </label>
         </div>

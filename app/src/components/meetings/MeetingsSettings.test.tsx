@@ -8,7 +8,7 @@ import MeetingsSettings, { workerState } from './MeetingsSettings'
 import { initialState, reduce, type AppState } from '../../lib/store'
 import type { Envelope } from '../../proto.gen'
 
-const settings = { provider: 'openai-compatible', model: 'some-model', baseUrl: 'https://llm.example.com/v1', language: 'es', aliases: ['Alex', 'Al'], hasKey: true }
+const settings = { provider: 'openai-compatible', model: 'some-model', baseUrl: 'https://llm.example.com/v1', language: 'es', aliases: ['Brax', 'Bri'], hasKey: true }
 const machine = (name: string, online: boolean, meetingWorker: string, transcribe = false) =>
   ({ name, os: 'linux', env: 'wsl', version: '', online, lastSeen: 0, caps: { herdr: false, terminal: false, root: false, transcribe, meetingWorker } })
 const state = (): AppState => ({ ...initialState(), machines: { laptop: machine('laptop', true, 'ready', true), vps: machine('vps', true, ''), old: machine('old', false, 'no_gpu') } })
@@ -33,7 +33,7 @@ describe('Settings → Meetings', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(api.putMeetingSettings).toHaveBeenCalledTimes(1))
     expect(api.putMeetingSettings.mock.calls[0][0]).not.toHaveProperty('key')
-    expect(api.putMeetingSettings.mock.calls[0][0]).toMatchObject({ provider: 'openai-compatible', model: 'some-model', baseUrl: 'https://llm.example.com/v1', language: 'es', aliases: ['Alex', 'Al'] })
+    expect(api.putMeetingSettings.mock.calls[0][0]).toMatchObject({ provider: 'openai-compatible', model: 'some-model', baseUrl: 'https://llm.example.com/v1', language: 'es', aliases: ['Brax', 'Bri'] })
     fireEvent.change(key, { target: { value: SECRET } })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(api.putMeetingSettings).toHaveBeenCalledTimes(2))
@@ -53,11 +53,11 @@ describe('Settings → Meetings', () => {
     await waitFor(() => expect((screen.getByLabelText('Summary provider') as HTMLSelectElement).value).toBe('local'))
     expect(screen.queryByLabelText(/API key/)).toBeNull()
     expect(screen.queryByLabelText('Base URL')).toBeNull()
-    fireEvent.change(screen.getByLabelText(/Names I go by/), { target: { value: ' Alex ,, Al, Alejandro ' } })
+    fireEvent.change(screen.getByLabelText(/Names I go by/), { target: { value: ' Brax ,, Bri, Braxelo ' } })
     fireEvent.change(screen.getByLabelText('Default language'), { target: { value: 'auto' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(api.putMeetingSettings).toHaveBeenCalled())
-    expect(api.putMeetingSettings.mock.calls[0][0]).toMatchObject({ provider: 'local', language: 'auto', aliases: ['Alex', 'Al', 'Alejandro'] })
+    expect(api.putMeetingSettings.mock.calls[0][0]).toMatchObject({ provider: 'local', language: 'auto', aliases: ['Brax', 'Bri', 'Braxelo'] })
     expect(await screen.findByRole('status')).toBeTruthy()
   })
 

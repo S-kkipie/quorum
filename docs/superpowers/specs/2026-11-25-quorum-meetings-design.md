@@ -101,7 +101,7 @@ can turn the owner's actions into tickets.
    - Prompt rules: never invent owners or dates; cite transcript timestamps for decisions and actions; use a project
      glossary (names, product terms) when provided.
 4. **Mine.** An action is the owner's when its owner matches the project's "You are" person or the owner's
-   configured aliases (Settings → Meetings → "Names I go by", e.g. "Adrian", "Adri").
+   configured aliases (Settings → Meetings → "Names I go by", e.g. "Zorvan", "Zorv").
 
 ### Hub data and API
 
@@ -265,7 +265,7 @@ can turn the owner's actions into tickets.
   - The engine is chosen by the spike between pyannote (community-1 or 3.1; needs a free Hugging Face token accepted
     once by the owner, then offline) and sherpa-onnx (no token), on public multi-speaker Spanish audio.
   - `MeetingSegment.speaker` holds a stable label per meeting.
-- **Naming speakers.** On the meeting page the owner renames a speaker label, for example "Speaker 2" to "Luis".
+- **Naming speakers.** On the meeting page the owner renames a speaker label, for example "Speaker 2" to "Bruno".
   - The rename applies to every segment of that meeting.
   - The rename is passed to a re-summary (owners in actions use the names).
   - Stored as `meeting_speakers(meeting_id, label, name)`, set with `POST /api/meetings/{id}/speakers {label: name}`

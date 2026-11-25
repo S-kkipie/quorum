@@ -131,7 +131,7 @@
      },
      {
       "text": "Book a room",
-      "owner": "Carlos",
+      "owner": "Carla",
       "due": "next Monday"
      },
      {
@@ -147,7 +147,7 @@
     "attendees": [
      "Ana",
      "Speaker 2",
-     "Carlos",
+     "Carla",
      "Me",
      "Persona 3"
     ]
@@ -222,7 +222,7 @@
   },
   {
    "name": "missing fields and wrong types",
-   "transcript": "[00:00] Luis: hola",
+   "transcript": "[00:00] Bruno: hola",
    "maxMs": -1,
    "raw": {
     "title": [
@@ -234,9 +234,9 @@
      "text": "x"
     },
     "attendees": [
-     "Luis",
-     "luis",
-     "Luis"
+     "Bruno",
+     "bruno",
+     "Bruno"
     ]
    },
    "want": {
@@ -247,27 +247,27 @@
     "openPoints": [],
     "actions": [],
     "attendees": [
-     "Luis",
-     "luis"
+     "Bruno",
+     "bruno"
     ]
    }
   },
   {
    "name": "long title and unicode",
-   "transcript": "[00:00] Señora Núñez: revisará el contrato el martes",
+   "transcript": "[00:00] Señora Rúñol: revisará el contrato el martes",
    "maxMs": -1,
    "raw": {
     "title": "TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT",
     "actions": [
      {
       "text": "Revisar el contrato",
-      "owner": "señora  núñez",
+      "owner": "señora  rúñol",
       "due": "el martes",
       "ts": 0
      }
     ],
     "attendees": [
-     "Señora Núñez"
+     "Señora Rúñol"
     ]
    },
    "want": {
@@ -279,19 +279,19 @@
     "actions": [
      {
       "text": "Revisar el contrato",
-      "owner": "señora  núñez",
+      "owner": "señora  rúñol",
       "due": "el martes",
       "ts_ms": 0
      }
     ],
     "attendees": [
-     "Señora Núñez"
+     "Señora Rúñol"
     ]
    }
   },
   {
    "name": "owners are matched by whole words, accents aside",
-   "transcript": "[00:01] Speaker 1: mañana lo revisa Jose Núñez\n[00:05] Speaker 2: Ok, Luis-Miguel envía el acta el lunes.",
+   "transcript": "[00:01] Speaker 1: mañana lo revisa Tade Rúñol\n[00:05] Speaker 2: Ok, Bruno-Teo envía el acta el lunes.",
    "maxMs": -1,
    "raw": {
     "actions": [
@@ -302,24 +302,24 @@
      },
      {
       "text": "B",
-      "owner": "José Nuñez",
+      "owner": "Tadé Ruñol",
       "due": "lunes"
      },
      {
       "text": "C",
-      "owner": "luis miguel",
+      "owner": "bruno teo",
       "due": "el lun"
      },
      {
       "text": "D",
-      "owner": "Jose",
+      "owner": "Tade",
       "due": "el lunes."
      }
     ],
     "attendees": [
      "Ana",
-     "José Núñez",
-     "Luis-Miguel"
+     "Tadé Rúñol",
+     "Bruno-Teo"
     ]
    },
    "want": {
@@ -336,23 +336,23 @@
      },
      {
       "text": "B",
-      "owner": "José Nuñez",
+      "owner": "Tadé Ruñol",
       "due": "lunes"
      },
      {
       "text": "C",
-      "owner": "luis miguel",
+      "owner": "bruno teo",
       "due": ""
      },
      {
       "text": "D",
-      "owner": "Jose",
+      "owner": "Tade",
       "due": "el lunes."
      }
     ],
     "attendees": [
-     "José Núñez",
-     "Luis-Miguel"
+     "Tadé Rúñol",
+     "Bruno-Teo"
     ]
    }
   }
@@ -419,7 +419,7 @@
      ],
      "attendees": [
       "Ana",
-      "Luis"
+      "Bruno"
      ]
     }
    ],
@@ -459,7 +459,7 @@
     ],
     "attendees": [
      "Ana",
-     "Luis"
+     "Bruno"
     ]
    },
    "wantMergePrompt": [
@@ -469,7 +469,7 @@
     },
     {
      "role": "user",
-     "content": "\nProject glossary (names and product terms; use these spellings): Quorum, Ana\nPART 1:\n{\"title\":\"\",\"summary\":\"First part.\",\"topics\":[\"a\"],\"decisions\":[{\"text\":\"D1\",\"ts_ms\":1000}],\"openPoints\":[],\"actions\":[{\"text\":\"A1\",\"owner\":\"\",\"due\":\"\"}],\"attendees\":[\"Ana\"]}\n\nPART 2:\n{\"title\":\"Second\",\"summary\":\"Second part.\",\"topics\":[\"a\",\"b\"],\"decisions\":[{\"text\":\"d1\"},{\"text\":\"D2\"}],\"openPoints\":[{\"text\":\"O1\"}],\"actions\":[{\"text\":\"a1\",\"owner\":\"Ana\",\"due\":\"\"},{\"text\":\"A2\",\"owner\":\"\",\"due\":\"\",\"ts_ms\":960000}],\"attendees\":[\"Ana\",\"Luis\"]}"
+     "content": "\nProject glossary (names and product terms; use these spellings): Quorum, Ana\nPART 1:\n{\"title\":\"\",\"summary\":\"First part.\",\"topics\":[\"a\"],\"decisions\":[{\"text\":\"D1\",\"ts_ms\":1000}],\"openPoints\":[],\"actions\":[{\"text\":\"A1\",\"owner\":\"\",\"due\":\"\"}],\"attendees\":[\"Ana\"]}\n\nPART 2:\n{\"title\":\"Second\",\"summary\":\"Second part.\",\"topics\":[\"a\",\"b\"],\"decisions\":[{\"text\":\"d1\"},{\"text\":\"D2\"}],\"openPoints\":[{\"text\":\"O1\"}],\"actions\":[{\"text\":\"a1\",\"owner\":\"Ana\",\"due\":\"\"},{\"text\":\"A2\",\"owner\":\"\",\"due\":\"\",\"ts_ms\":960000}],\"attendees\":[\"Ana\",\"Bruno\"]}"
     }
    ]
   }
@@ -504,7 +504,7 @@
     }
    ],
    "speakerNames": {
-    "Speaker 2": "Luis",
+    "Speaker 2": "Bruno",
     "Speaker 1": " "
    },
    "language": "es",
@@ -522,7 +522,7 @@
      },
      {
       "role": "user",
-      "content": "Transcript of a meeting, with timestamps and speakers.\n\nProject glossary (names and product terms; use these spellings): Quorum, Ana\n\nTRANSCRIPT:\n[00:00] Speaker 1: Hola a todos\n[00:08] Luis: Empiezo yo\n[1:01:40] Una hora después"
+      "content": "Transcript of a meeting, with timestamps and speakers.\n\nProject glossary (names and product terms; use these spellings): Quorum, Ana\n\nTRANSCRIPT:\n[00:00] Speaker 1: Hola a todos\n[00:08] Bruno: Empiezo yo\n[1:01:40] Una hora después"
      }
     ]
    ]
@@ -628,14 +628,14 @@
     "Quorum"
    ],
    "speakerNames": {
-    "Speaker 2": "Luis"
+    "Speaker 2": "Bruno"
    },
    "segments": [
     {
      "start_ms": 0,
      "end_ms": 4000,
      "speaker": "Speaker 1",
-     "text": "Luis prepara el informe para el viernes"
+     "text": "Bruno prepara el informe para el viernes"
     },
     {
      "start_ms": 30000,
@@ -657,10 +657,10 @@
     }
    ],
    "answers": [
-    "{\"title\": \"Parte 1\", \"summary\": \"Inicio.\", \"actions\": [{\"text\": \"Preparar el informe\", \"owner\": \"Luis\", \"due\": \"viernes\", \"ts\": \"00:00\"}], \"attendees\": [\"Luis\", \"Speaker 1\"]}",
+    "{\"title\": \"Parte 1\", \"summary\": \"Inicio.\", \"actions\": [{\"text\": \"Preparar el informe\", \"owner\": \"Bruno\", \"due\": \"viernes\", \"ts\": \"00:00\"}], \"attendees\": [\"Bruno\", \"Speaker 1\"]}",
     "{\"title\": \"Parte 2\", \"summary\": \"Medio.\", \"decisions\": [{\"text\": \"Usar Go\", \"ts\": \"16:40\"}]}",
     "sure: {\"title\": \"Parte 3\", \"openPoints\": [\"Presupuesto\"]}",
-    "{\"title\": \"Reunión\", \"summary\": \"Todo.\", \"decisions\": [{\"text\": \"Usar Go\", \"ts\": \"16:40\"}], \"openPoints\": [{\"text\": \"Presupuesto\", \"ts\": \"33:20\"}], \"actions\": [{\"text\": \"Preparar el informe\", \"owner\": \"Luis\", \"due\": \"viernes\", \"ts\": \"00:00\"}, {\"text\": \"Llamar al cliente\", \"owner\": \"Marta\", \"due\": \"mañana\"}], \"attendees\": [\"Luis\", \"Marta\"]}"
+    "{\"title\": \"Reunión\", \"summary\": \"Todo.\", \"decisions\": [{\"text\": \"Usar Go\", \"ts\": \"16:40\"}], \"openPoints\": [{\"text\": \"Presupuesto\", \"ts\": \"33:20\"}], \"actions\": [{\"text\": \"Preparar el informe\", \"owner\": \"Bruno\", \"due\": \"viernes\", \"ts\": \"00:00\"}, {\"text\": \"Llamar al cliente\", \"owner\": \"Velka\", \"due\": \"mañana\"}], \"attendees\": [\"Bruno\", \"Velka\"]}"
    ],
    "want": {
     "title": "Reunión",
@@ -681,7 +681,7 @@
     "actions": [
      {
       "text": "Preparar el informe",
-      "owner": "Luis",
+      "owner": "Bruno",
       "due": "viernes",
       "ts_ms": 0
      },
@@ -692,7 +692,7 @@
      }
     ],
     "attendees": [
-     "Luis"
+     "Bruno"
     ]
    },
    "wantPrompts": [
@@ -703,7 +703,7 @@
      },
      {
       "role": "user",
-      "content": "Transcript of a meeting, with timestamps and speakers. This is part 1 of 3 of a longer meeting.\n\nProject glossary (names and product terms; use these spellings): Quorum\n\nTRANSCRIPT:\n[00:00] Speaker 1: Luis prepara el informe para el viernes\n[00:30] Luis: De acuerdo"
+      "content": "Transcript of a meeting, with timestamps and speakers. This is part 1 of 3 of a longer meeting.\n\nProject glossary (names and product terms; use these spellings): Quorum\n\nTRANSCRIPT:\n[00:00] Speaker 1: Bruno prepara el informe para el viernes\n[00:30] Bruno: De acuerdo"
      }
     ],
     [
@@ -723,7 +723,7 @@
      },
      {
       "role": "user",
-      "content": "Transcript of a meeting, with timestamps and speakers. This is part 3 of 3 of a longer meeting.\n\nProject glossary (names and product terms; use these spellings): Quorum\n\nTRANSCRIPT:\n[33:20] Luis: Queda pendiente el presupuesto"
+      "content": "Transcript of a meeting, with timestamps and speakers. This is part 3 of 3 of a longer meeting.\n\nProject glossary (names and product terms; use these spellings): Quorum\n\nTRANSCRIPT:\n[33:20] Bruno: Queda pendiente el presupuesto"
      }
     ],
     [
@@ -733,7 +733,7 @@
      },
      {
       "role": "user",
-      "content": "\nProject glossary (names and product terms; use these spellings): Quorum\nPART 1:\n{\"title\":\"Parte 1\",\"summary\":\"Inicio.\",\"topics\":[],\"decisions\":[],\"openPoints\":[],\"actions\":[{\"text\":\"Preparar el informe\",\"owner\":\"Luis\",\"due\":\"viernes\",\"ts_ms\":0}],\"attendees\":[\"Luis\"]}\n\nPART 2:\n{\"title\":\"Parte 2\",\"summary\":\"Medio.\",\"topics\":[],\"decisions\":[{\"text\":\"Usar Go\",\"ts_ms\":1000000}],\"openPoints\":[],\"actions\":[],\"attendees\":[]}\n\nPART 3:\n{\"title\":\"Parte 3\",\"summary\":\"\",\"topics\":[],\"decisions\":[],\"openPoints\":[{\"text\":\"Presupuesto\"}],\"actions\":[],\"attendees\":[]}"
+      "content": "\nProject glossary (names and product terms; use these spellings): Quorum\nPART 1:\n{\"title\":\"Parte 1\",\"summary\":\"Inicio.\",\"topics\":[],\"decisions\":[],\"openPoints\":[],\"actions\":[{\"text\":\"Preparar el informe\",\"owner\":\"Bruno\",\"due\":\"viernes\",\"ts_ms\":0}],\"attendees\":[\"Bruno\"]}\n\nPART 2:\n{\"title\":\"Parte 2\",\"summary\":\"Medio.\",\"topics\":[],\"decisions\":[{\"text\":\"Usar Go\",\"ts_ms\":1000000}],\"openPoints\":[],\"actions\":[],\"attendees\":[]}\n\nPART 3:\n{\"title\":\"Parte 3\",\"summary\":\"\",\"topics\":[],\"decisions\":[],\"openPoints\":[{\"text\":\"Presupuesto\"}],\"actions\":[],\"attendees\":[]}"
      }
     ]
    ]

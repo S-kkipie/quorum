@@ -138,8 +138,8 @@ var shortTranscript = []proto.MeetingSegment{
 const shortAnswer = `{"title":"Beta sync","summary":"We talked about the beta.","topics":["beta"],
 	"decisions":[{"text":"Ship the beta","ts":"00:10"}],"openPoints":[{"text":"Who books the room","ts":"00:20"}],
 	"actions":[{"text":"Send the report","owner":"Ana","due":"Friday","ts":"00:00"},
-	           {"text":"Book the room","owner":"Carlos","due":"tomorrow","ts":"00:20"}],
-	"attendees":["Ana","Speaker 2","Carlos"]}`
+	           {"text":"Book the room","owner":"Carla","due":"tomorrow","ts":"00:20"}],
+	"attendees":["Ana","Speaker 2","Carla"]}`
 
 func TestMeetingSummaryDropsInventedOwners(t *testing.T) {
 	f := newSumFx(t, func(int, string) (string, error) { return shortAnswer, nil })
@@ -155,7 +155,7 @@ func TestMeetingSummaryDropsInventedOwners(t *testing.T) {
 		OpenPoints: []proto.MeetingPoint{{Text: "Who books the room", TsMs: 20000}},
 		Attendees:  []string{"Ana"}}, m.Summary)
 	require.Len(t, m.Actions, 2)
-	// Ana and Friday are in the transcript; Carlos and "tomorrow" were invented: unassigned, no date
+	// Ana and Friday are in the transcript; Carla and "tomorrow" were invented: unassigned, no date
 	require.Equal(t, "Ana", m.Actions[0].Owner)
 	require.Equal(t, "Friday", m.Actions[0].Due)
 	require.Equal(t, "", m.Actions[1].Owner)
@@ -189,12 +189,12 @@ func TestMeetingSummarySectionsAt15Minutes(t *testing.T) {
 func TestMeetingSummaryMineWithPersonAndAliases(t *testing.T) {
 	f := newSumFx(t, func(int, string) (string, error) {
 		return `{"summary":"x","actions":[{"text":"Write the spec","owner":"zorv"},{"text":"Review","owner":"Zorvan Q"},
-			{"text":"Deploy","owner":"Luis"},{"text":"Call the client","owner":""}]}`, nil
+			{"text":"Deploy","owner":"Bruno"},{"text":"Call the client","owner":""}]}`, nil
 	})
 	rr := f.do("PUT", "/api/settings/meetings", `{"aliases":[" Zorv ","zorv","Zorván"]}`)
 	require.Equal(t, 200, rr.Code, rr.Body.String())
 	p := f.project(t, "none", map[string]string{"person": "Zorvan Q"})
-	m := f.transcribed(t, p.ID, []proto.MeetingSegment{seg(0, "Speaker 1", "Zorv writes the spec, Zorvan Q reviews, Luis deploys")})
+	m := f.transcribed(t, p.ID, []proto.MeetingSegment{seg(0, "Speaker 1", "Zorv writes the spec, Zorvan Q reviews, Bruno deploys")})
 	require.Equal(t, "ready", m.Status, m.Error)
 	mine := map[string]bool{}
 	for _, a := range m.Actions {
@@ -213,7 +213,7 @@ func TestMeetingSummaryMineWithPersonAndAliases(t *testing.T) {
 	notes, err := f.st.MeetingNotes(p.ID, "")
 	require.NoError(t, err)
 	require.Len(t, notes, 1)
-	require.Equal(t, "- Zorvan Q: Write the spec\n- Zorvan Q: Review\n- Luis: Deploy\n- Call the client", notes[0].Actions)
+	require.Equal(t, "- Zorvan Q: Write the spec\n- Zorvan Q: Review\n- Bruno: Deploy\n- Call the client", notes[0].Actions)
 
 	// without the alias, "zorv" is no longer mine: the projection is rewritten
 	rr = f.do("PUT", "/api/settings/meetings", `{"aliases":[]}`)
@@ -234,7 +234,7 @@ func TestIsMine(t *testing.T) {
 }
 
 func TestBriefingPersonActionsAcceptAliases(t *testing.T) {
-	text := "- Zorv: write it\n  and send it\n- Luis: deploy\nzorvan: review\n- Other: x"
+	text := "- Zorv: write it\n  and send it\n- Bruno: deploy\nzorvan: review\n- Other: x"
 	require.Equal(t, []string{"write it and send it", "review"}, personActions(text, "Zorvan", "Zorv"))
 	require.Equal(t, []string{"review"}, personActions(text, "Zorvan"))
 	require.Nil(t, personActions(text))
@@ -393,11 +393,11 @@ func TestMeetingSettingsKeyIsWriteOnly(t *testing.T) {
 func TestMeetingSpeakerNamesServedAndPassedToTheSummary(t *testing.T) {
 	f := newSumFx(t, func(int, string) (string, error) { return shortAnswer, nil })
 	m := f.transcribed(t, "", shortTranscript)
-	rr := f.do("POST", "/api/meetings/"+m.ID+"/speakers", `{"Speaker 2":"  Luis  M "}`)
+	rr := f.do("POST", "/api/meetings/"+m.ID+"/speakers", `{"Speaker 2":"  Bruno  M "}`)
 	require.Equal(t, 200, rr.Code, rr.Body.String())
 	m = f.detail(t, m.ID)
-	require.Equal(t, map[string]string{"Speaker 2": "Luis M"}, m.Speakers)
-	require.Equal(t, proto.MeetingSegment{StartMs: 10000, EndMs: 14000, Speaker: "Luis M", Label: "Speaker 2", Text: "We agreed to ship the beta"}, m.Segments[1])
+	require.Equal(t, map[string]string{"Speaker 2": "Bruno M"}, m.Speakers)
+	require.Equal(t, proto.MeetingSegment{StartMs: 10000, EndMs: 14000, Speaker: "Bruno M", Label: "Speaker 2", Text: "We agreed to ship the beta"}, m.Segments[1])
 	require.Equal(t, "Speaker 1", m.Segments[0].Speaker)
 	require.Equal(t, "Speaker 1", m.Segments[0].Label)
 
@@ -409,8 +409,8 @@ func TestMeetingSpeakerNamesServedAndPassedToTheSummary(t *testing.T) {
 	require.Equal(t, 202, f.do("POST", "/api/meetings/"+m.ID+"/reprocess", "").Code)
 	f.s.meet.wg.Wait()
 	last := f.model.calls()[len(f.model.calls())-1]
-	require.Contains(t, last, "[00:10] Luis M: We agreed to ship the beta")
-	require.Contains(t, last, "use these spellings): Luis M")
+	require.Contains(t, last, "[00:10] Bruno M: We agreed to ship the beta")
+	require.Contains(t, last, "use these spellings): Bruno M")
 
 	// "" removes a name
 	require.Equal(t, 200, f.do("POST", "/api/meetings/"+m.ID+"/speakers", `{"Speaker 2":""}`).Code)
@@ -471,7 +471,7 @@ func TestMeetingLocalSummaryThroughTheWorker(t *testing.T) {
 	m := f.uploadMeeting(t, "", "audio")
 	p := gpu.start()
 	// named while it transcribes: the summary job is built with the names when it is dispatched
-	require.NoError(t, f.st.SetMeetingSpeakers(m.ID, map[string]string{"Speaker 2": "Luis"}))
+	require.NoError(t, f.st.SetMeetingSpeakers(m.ID, map[string]string{"Speaker 2": "Bruno"}))
 	code, body := postJSON(t, f.ts.URL, p.ResultURL, transcriptBody)
 	require.Equal(t, 200, code, body)
 
@@ -483,8 +483,8 @@ func TestMeetingLocalSummaryThroughTheWorker(t *testing.T) {
 	require.NoError(t, json.Unmarshal(s.Settings, &set))
 	require.Equal(t, "gemma3:4b", set["model"])
 	require.Equal(t, "es", set["language"])
-	require.Equal(t, map[string]any{"Speaker 2": "Luis"}, set["speakerNames"])
-	require.Equal(t, []any{"Luis", "Zorv"}, set["glossary"])
+	require.Equal(t, map[string]any{"Speaker 2": "Bruno"}, set["speakerNames"])
+	require.Equal(t, []any{"Bruno", "Zorv"}, set["glossary"])
 	require.NotContains(t, string(s.Settings), "second", "the transcript is not in the RPC")
 	require.Equal(t, "summarising", f.status(m.ID))
 
@@ -502,13 +502,13 @@ func TestMeetingLocalSummaryThroughTheWorker(t *testing.T) {
 
 	// the worker's summary is checked again by the hub: the invented owner goes
 	res := `{"result":{"title":"T","summary":"S","topics":[],"decisions":[],"openPoints":[],
-		"actions":[{"text":"Do it","owner":"Luis","due":"","ts_ms":1200},{"text":"Other","owner":"Marta","due":"lunes"}],"attendees":["Luis"]}}`
+		"actions":[{"text":"Do it","owner":"Bruno","due":"","ts_ms":1200},{"text":"Other","owner":"Velka","due":"lunes"}],"attendees":["Bruno"]}}`
 	code, body = postJSON(t, f.ts.URL, s.ResultURL, res)
 	require.Equal(t, 200, code, body)
 	mm := f.meeting(t, m.ID)
 	require.Equal(t, "ready", mm.Status, mm.Error)
 	require.Equal(t, "local", mm.Provider)
-	require.Equal(t, "Luis", mm.Actions[0].Owner)
+	require.Equal(t, "Bruno", mm.Actions[0].Owner)
 	require.Equal(t, "", mm.Actions[1].Owner)
 	require.Equal(t, "", mm.Actions[1].Due)
 	// the transcript link died with the job
@@ -539,7 +539,7 @@ func TestMeetingReprocessReplacesAQueuedLocalSummary(t *testing.T) {
 
 func TestMeetingMineFollowsTheProjectPerson(t *testing.T) {
 	f := newSumFx(t, func(int, string) (string, error) { return shortAnswer, nil })
-	p := f.project(t, "none", map[string]string{"person": "Luis"})
+	p := f.project(t, "none", map[string]string{"person": "Bruno"})
 	m := f.transcribed(t, p.ID, shortTranscript)
 	require.False(t, m.Actions[0].Mine)
 	rr := f.do("PATCH", "/api/projects/"+p.ID, `{"connector":{"settings":{"person":"Ana"}}}`)

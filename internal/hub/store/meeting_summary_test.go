@@ -37,11 +37,11 @@ func TestReplaceMeetingActionsKeepsIssuedOnes(t *testing.T) {
 func TestMeetingSpeakersAndMeta(t *testing.T) {
 	s, p := briefingStore(t)
 	m := mkMeeting(t, s, p.ID, "/x/a.ogg")
-	require.NoError(t, s.SetMeetingSpeakers(m.ID, map[string]string{"Speaker 1": "Ana", "Speaker 2": "Luis"}))
-	require.NoError(t, s.SetMeetingSpeakers(m.ID, map[string]string{"Speaker 1": "", "Speaker 2": "Luis M"}))
+	require.NoError(t, s.SetMeetingSpeakers(m.ID, map[string]string{"Speaker 1": "Ana", "Speaker 2": "Bruno"}))
+	require.NoError(t, s.SetMeetingSpeakers(m.ID, map[string]string{"Speaker 1": "", "Speaker 2": "Bruno M"}))
 	names, err := s.MeetingSpeakers(m.ID)
 	require.NoError(t, err)
-	require.Equal(t, map[string]string{"Speaker 2": "Luis M"}, names)
+	require.Equal(t, map[string]string{"Speaker 2": "Bruno M"}, names)
 	require.ErrorIs(t, s.SetMeetingSpeakers("nope", map[string]string{"a": "b"}), ErrNotFound)
 
 	v, err := s.Meta("k")

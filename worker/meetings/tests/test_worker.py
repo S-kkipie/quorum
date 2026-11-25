@@ -185,27 +185,27 @@ def test_split_sections_at_15_minutes():
 
 
 def test_repair_fills_missing_fields_and_drops_invented_owner():
-    transcript = "[00:01] Ana: Carlos will send the budget on Friday.\n[00:09] Speaker 2: I will check the venue."
+    transcript = "[00:01] Ana: Carla will send the budget on Friday.\n[00:09] Speaker 2: I will check the venue."
     raw = {
         "title": "Budget",
         "decisions": [{"text": "Use the cheaper venue", "ts": "00:09"}, {"text": ""}, "Keep the date"],
         "actions": [
-            {"text": "Send the budget", "owner": "Carlos", "due": "Friday", "ts": "00:01"},
-            {"text": "Book the venue", "owner": "Marta", "due": "next Monday", "ts": "99:00"},
+            {"text": "Send the budget", "owner": "Carla", "due": "Friday", "ts": "00:01"},
+            {"text": "Book the venue", "owner": "Velka", "due": "next Monday", "ts": "99:00"},
             {"text": "Check the venue", "owner": "unassigned", "due": ""},
         ],
-        "attendees": ["Ana", "Carlos", "Speaker 2", "Marta"],
+        "attendees": ["Ana", "Carla", "Speaker 2", "Velka"],
         "topics": "not a list",
     }
     out = w.repair_summary(raw, transcript, max_ms=10_000)
     assert set(out) == {"title", "summary", "topics", "decisions", "openPoints", "actions", "attendees"}
     assert out["summary"] == "" and out["topics"] == [] and out["openPoints"] == []
     assert out["decisions"] == [{"text": "Use the cheaper venue", "ts_ms": 9000}, {"text": "Keep the date"}]
-    assert out["actions"][0] == {"text": "Send the budget", "owner": "Carlos", "due": "Friday", "ts_ms": 1000}
+    assert out["actions"][0] == {"text": "Send the budget", "owner": "Carla", "due": "Friday", "ts_ms": 1000}
     # an owner and a due date the transcript never mentions are not added; an out-of-range ts is dropped
     assert out["actions"][1] == {"text": "Book the venue", "owner": "", "due": ""}
     assert out["actions"][2]["owner"] == ""
-    assert out["attendees"] == ["Ana", "Carlos"]
+    assert out["attendees"] == ["Ana", "Carla"]
 
 
 def test_repair_of_garbage_is_an_empty_summary():
@@ -221,35 +221,35 @@ def test_parse_ts():
 
 
 def test_summarize_long_transcript_per_section_then_merge():
-    segs = [seg(1, "Ana: we choose plan B", "Ana"), seg(20, "Luis takes the report", "Speaker 2"), seg(35, "open: the budget")]
+    segs = [seg(1, "Ana: we choose plan B", "Ana"), seg(20, "Bruno takes the report", "Speaker 2"), seg(35, "open: the budget")]
     prompts = []
     answers = [
         {"title": "Part 1", "summary": "s1", "decisions": [{"text": "Plan B", "ts": "01:00"}], "attendees": ["Ana"]},
-        {"summary": "s2", "actions": [{"text": "Write the report", "owner": "Luis", "due": "", "ts": "20:00"}]},
+        {"summary": "s2", "actions": [{"text": "Write the report", "owner": "Bruno", "due": "", "ts": "20:00"}]},
         {"summary": "s3", "openPoints": [{"text": "Budget", "ts": "35:00"}]},
         {"title": "Weekly", "summary": "All of it", "decisions": [{"text": "Plan B", "ts": "01:00"}],
          "openPoints": [{"text": "Budget", "ts": "35:00"}],
-         "actions": [{"text": "Write the report", "owner": "Luis", "due": "", "ts": "20:00"},
-                     {"text": "Invented task", "owner": "Pedro", "due": "2026-12-01"}],
-         "attendees": ["Ana", "Luis"]},
+         "actions": [{"text": "Write the report", "owner": "Bruno", "due": "", "ts": "20:00"},
+                     {"text": "Invented task", "owner": "Orlo", "due": "2026-12-01"}],
+         "attendees": ["Ana", "Bruno"]},
     ]
 
     def chat(messages):
         prompts.append(messages)
         return json.dumps(answers[len(prompts) - 1])
 
-    job = {"settings": {"segments": segs, "language": "es", "speakerNames": {"Speaker 2": "Luis"}, "glossary": ["Quorum"]}}
+    job = {"settings": {"segments": segs, "language": "es", "speakerNames": {"Speaker 2": "Bruno"}, "glossary": ["Quorum"]}}
     out = io.StringIO()
     res = w.run_summarize(job, w.Emitter(out), chat)
     assert len(prompts) == 4  # three sections and the merge
     assert "part 1 of 3" in prompts[0][1]["content"] and "part 3 of 3" in prompts[2][1]["content"]
-    assert "[20:00] Luis: Luis takes the report" in prompts[1][1]["content"]  # speaker names applied
+    assert "[20:00] Bruno: Bruno takes the report" in prompts[1][1]["content"]  # speaker names applied
     assert "Spanish" in prompts[0][0]["content"] and "Never invent owners" in prompts[0][0]["content"]
     assert "Quorum" in prompts[0][1]["content"]
     assert "PART 2" in prompts[3][1]["content"]
     assert res["title"] == "Weekly"
     assert res["decisions"] == [{"text": "Plan B", "ts_ms": 60000}]
-    assert res["actions"][0] == {"text": "Write the report", "owner": "Luis", "due": "", "ts_ms": 1200000}
+    assert res["actions"][0] == {"text": "Write the report", "owner": "Bruno", "due": "", "ts_ms": 1200000}
     assert res["actions"][1]["owner"] == "" and res["actions"][1]["due"] == ""
     stages = [json.loads(l)["stage"] for l in out.getvalue().splitlines()]
     assert "merging" in stages
@@ -448,6 +448,6 @@ def test_prompts_load_lazily_and_fail_readably(tmp_path, monkeypatch):
 
 
 def test_owner_stated_by_whole_words():
-    r = w.repair_summary({"actions": [{"text": "a", "owner": "Ana"}, {"text": "b", "owner": "jose nunez"}]},
-                         "[00:00] mañana lo hace José Núñez")
-    assert [a["owner"] for a in r["actions"]] == ["", "jose nunez"]
+    r = w.repair_summary({"actions": [{"text": "a", "owner": "Ana"}, {"text": "b", "owner": "tade runol"}]},
+                         "[00:00] mañana lo hace Tadé Rúñol")
+    assert [a["owner"] for a in r["actions"]] == ["", "tade runol"]

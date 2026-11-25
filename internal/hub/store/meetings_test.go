@@ -132,7 +132,7 @@ func TestDeleteMeetingCascades(t *testing.T) {
 	require.NoError(t, s.SetMeetingSummary(m.ID, proto.MeetingSummary{Title: "t", Summary: "s"}))
 	_, err := s.db.Exec(`INSERT INTO meeting_actions(meeting_id,id,text) VALUES(?,?,?)`, m.ID, "a1", "do it")
 	require.NoError(t, err)
-	_, err = s.db.Exec(`INSERT INTO meeting_speakers(meeting_id,label,name) VALUES(?,?,?)`, m.ID, "Speaker 1", "Luis")
+	_, err = s.db.Exec(`INSERT INTO meeting_speakers(meeting_id,label,name) VALUES(?,?,?)`, m.ID, "Speaker 1", "Bruno")
 	require.NoError(t, err)
 	require.NoError(t, s.SetMeetingProjection(m.ID, &proto.MeetingNote{Title: "Weekly"}, 1))
 	tok, err := s.CreateMeetingToken("audio", m.ID, "", time.Hour)
@@ -142,7 +142,7 @@ func TestDeleteMeetingCascades(t *testing.T) {
 	require.Len(t, d.Segments, 2)
 	require.Equal(t, "s", d.Summary.Summary)
 	require.Len(t, d.Actions, 1)
-	require.Equal(t, map[string]string{"Speaker 1": "Luis"}, d.Speakers)
+	require.Equal(t, map[string]string{"Speaker 1": "Bruno"}, d.Speakers)
 
 	gone, err := s.DeleteMeeting(m.ID)
 	require.NoError(t, err)
