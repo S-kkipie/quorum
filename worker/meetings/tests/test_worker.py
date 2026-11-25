@@ -306,6 +306,9 @@ def test_ollama_unreachable_is_readable():
 
 
 def run_worker(job: dict, tmp_path: Path) -> tuple[int, list[dict]]:
+    work = tmp_path / "job-work"
+    work.mkdir(exist_ok=True)
+    job.setdefault("workDir", str(work))
     env = {"QUORUM_MEETINGS_FAKE": "1", "PATH": "/usr/bin:/bin:/usr/local/bin"}
     p = subprocess.run([sys.executable, str(WORKER)], input=json.dumps(job), capture_output=True, text=True,
                        env=env, cwd=tmp_path, timeout=120)
@@ -340,3 +343,68 @@ def test_worker_error_line_and_exit_status(tmp_path):
 def test_unknown_step_is_an_error(tmp_path):
     code, lines = run_worker({"step": "dance"}, tmp_path)
     assert code == 1 and "Unknown step" in lines[-1]["error"]
+
+
+def test_transcribe_needs_the_daemons_work_folder(tmp_path):
+    code, lines = run_worker({"step": "transcribe", "audioURL": "http://127.0.0.1:9/x", "workDir": str(tmp_path / "missing")}, tmp_path)
+    assert code == 1 and "work folder" in lines[-1]["error"]
+
+
+def test_download_only_http_and_capped(tmp_path, local_http):
+    with pytest.raises(w.WorkerError, match="http"):
+        w.download("file:///etc/passwd", tmp_path / "x", lambda _f: None)
+    local_http.files["/big"] = b"x" * 5000
+    with pytest.raises(w.WorkerError, match="400 MB"):
+        w.download(local_http.base + "/big", tmp_path / "x", lambda _f: None, limit=1000)
+
+
+class _Redirect(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(302)
+        self.send_header("Location", self.server.target)
+        self.end_headers()
+
+    def log_message(self, *_):
+        pass
+
+
+def test_download_refuses_a_redirect_to_another_host(tmp_path, local_http):
+    local_http.files["/audio"] = b"data"
+    srv = HTTPServer(("127.0.0.1", 0), _Redirect)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        # 127.0.0.1:<other port> is another host for this rule
+        srv.target = local_http.base + "/audio"
+        with pytest.raises(w.WorkerError, match="another host"):
+            w.download(f"http://127.0.0.1:{srv.server_address[1]}/a", tmp_path / "x", lambda _f: None)
+    finally:
+        srv.shutdown()
+
+
+def test_ollama_url_is_loopback_unless_set_on_the_machine(monkeypatch):
+    monkeypatch.delenv("QUORUM_OLLAMA_URL", raising=False)
+    assert w.ollama_url({}) == "http://127.0.0.1:11434"
+    assert w.ollama_url({"ollamaURL": "http://localhost:11500"}) == "http://localhost:11500"
+    for bad in ("http://10.0.0.5:11434", "http://evil.example", "file:///tmp/x", "http://127.0.0.1.evil.example"):
+        with pytest.raises(w.WorkerError, match="not on this machine"):
+            w.ollama_url({"ollamaURL": bad})
+    monkeypatch.setenv("QUORUM_OLLAMA_URL", "http://gpu-box:11434")
+    assert w.ollama_url({"ollamaURL": "http://evil.example"}) == "http://gpu-box:11434"
+
+
+def test_ffmpeg_only_opens_local_files(tmp_path, monkeypatch):
+    calls = []
+
+    class Done:
+        returncode, stdout, stderr = 0, '{"streams": [{"channels": 2}], "format": {"duration": "3"}}', ""
+
+    monkeypatch.setattr(w.subprocess, "run", lambda cmd, **_k: calls.append(cmd) or Done())
+    w.probe(tmp_path / "a.ogg")
+    w.convert(tmp_path / "a.ogg", tmp_path, True)
+    w.convert(tmp_path / "a.ogg", tmp_path, False)
+    assert len(calls) == 3
+    for cmd in calls:
+        i = cmd.index("-protocol_whitelist")
+        assert cmd[i + 1] == "file,pipe"
+    for cmd in calls[1:]:
+        assert cmd.index("-protocol_whitelist") < cmd.index("-i")

@@ -28,6 +28,8 @@ const fakeWorkerScript = `#!/bin/sh
 MODE=$(cat "$FAKE_DIR/mode")
 cat > "$FAKE_DIR/job-$$.json"
 echo $$ > "$FAKE_DIR/pid"
+echo "$TMPDIR" > "$FAKE_DIR/work"
+echo "private audio" > "$TMPDIR/source"
 echo '{"type":"progress","pct":10,"stage":"transcribing"}'
 echo 'not json'
 echo '{"type":"log","message":"loading the model"}'
@@ -56,6 +58,7 @@ esac
 type meetFake struct {
 	t    *testing.T
 	dir  string
+	mdir string // the meetings folder (its tmp/ holds the job folders)
 	hub  *httptest.Server
 	reg  *Registry
 	host *Host
@@ -71,6 +74,8 @@ type postedResult struct {
 func newMeetFake(t *testing.T) *meetFake {
 	t.Helper()
 	f := &meetFake{t: t, dir: t.TempDir(), reg: NewRegistry("m1")}
+	f.mdir = t.TempDir()
+	t.Setenv("QUORUM_MEETINGS_DIR", f.mdir)
 	script := filepath.Join(f.dir, "worker.sh")
 	require.NoError(t, os.WriteFile(script, []byte(fakeWorkerScript), 0o755))
 	f.mode("ok")
@@ -300,7 +305,7 @@ func TestMeetingResultRetriesUntilTheHubAnswers(t *testing.T) {
 		w.WriteHeader(c)
 	}))
 	defer srv.Close()
-	postMeetingResult(srv.URL, proto.MeetingJobResult{Error: "x"}, 5, time.Millisecond)
+	postMeetingResult(context.Background(), srv.URL, proto.MeetingJobResult{Error: "x"}, 5, time.Millisecond)
 	mu.Lock()
 	require.Equal(t, 3, seen)
 	mu.Unlock()
@@ -308,7 +313,19 @@ func TestMeetingResultRetriesUntilTheHubAnswers(t *testing.T) {
 	mu.Lock()
 	codes, seen = []int{409, 200}, 0
 	mu.Unlock()
-	postMeetingResult(srv.URL, proto.MeetingJobResult{Error: "x"}, 5, time.Millisecond)
+	postMeetingResult(context.Background(), srv.URL, proto.MeetingJobResult{Error: "x"}, 5, time.Millisecond)
+	mu.Lock()
+	require.Equal(t, 1, seen)
+	mu.Unlock()
+	// a cancelled run (cancel or shutdown) stops retrying at once
+	mu.Lock()
+	codes, seen = []int{503, 503, 503, 503, 503}, 0
+	mu.Unlock()
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { time.Sleep(50 * time.Millisecond); cancel() }()
+	t0 := time.Now()
+	postMeetingResult(ctx, srv.URL, proto.MeetingJobResult{Error: "x"}, 5, time.Hour)
+	require.Less(t, time.Since(t0), 2*time.Second)
 	mu.Lock()
 	require.Equal(t, 1, seen)
 	mu.Unlock()
@@ -344,6 +361,14 @@ func TestResolveHubURL(t *testing.T) {
 	require.Equal(t, "https://hub.example:8443/api/meeting-jobs/a.b/result", u)
 	_, err = resolveHubURL("", "/api/x")
 	require.Error(t, err)
+	u, err = resolveHubURL("https://hub.example:8443", "https://hub.example:8443/api/x")
+	require.NoError(t, err)
+	require.Equal(t, "https://hub.example:8443/api/x", u)
+	for _, bad := range []string{"https://evil.example/api/x", "http://hub.example:8443/api/x", "//evil.example/x",
+		"https://hub.example/api/x", "file:///etc/passwd"} {
+		_, err = resolveHubURL("https://hub.example:8443", bad)
+		require.Error(t, err, bad)
+	}
 }
 
 func TestInstallModelFromArchive(t *testing.T) {
@@ -395,8 +420,88 @@ func TestWorkerEnvAddsCUDALibraries(t *testing.T) {
 	lib := filepath.Join(dir, "venv", "lib", "python3.12", "site-packages", "nvidia", "cublas", "lib")
 	require.NoError(t, os.MkdirAll(lib, 0o755))
 	t.Setenv("LD_LIBRARY_PATH", "/usr/lib/wsl/lib")
+	t.Setenv("QUORUM_SECRET_TOKEN", "s3cret")
+	t.Setenv("CUDA_VISIBLE_DEVICES", "0")
+	t.Setenv("LC_ALL", "C.UTF-8")
 	env := strings.Join(workerEnv(dir, true), "\n")
+	require.NotContains(t, env, "s3cret", "only allow-listed variables reach the worker")
+	require.Contains(t, env, "CUDA_VISIBLE_DEVICES=0")
+	require.Contains(t, env, "LC_ALL=C.UTF-8")
 	require.Contains(t, env, "LD_LIBRARY_PATH="+lib+":/usr/lib/wsl/lib")
 	require.Contains(t, env, "HF_HOME="+filepath.Join(dir, "models", "hf"))
 	require.Contains(t, env, "HF_HUB_OFFLINE=1")
+}
+
+// workDir returns the job folder the fake worker saw (its TMPDIR).
+func (f *meetFake) workDir() string {
+	f.t.Helper()
+	var w string
+	require.Eventually(f.t, func() bool {
+		b, err := os.ReadFile(filepath.Join(f.dir, "work"))
+		w = strings.TrimSpace(string(b))
+		return err == nil && w != ""
+	}, 3*time.Second, 10*time.Millisecond)
+	return w
+}
+
+func idle() bool { _, ok := meetingJobs.running(); return !ok }
+
+func TestMeetingJobFolderIsRemovedWhateverHappens(t *testing.T) {
+	f := newMeetFake(t)
+	for _, mode := range []string{"ok", "crash", "hang"} {
+		require.NoError(t, os.RemoveAll(filepath.Join(f.dir, "work")))
+		f.mode(mode)
+		id := "job-" + mode
+		_, err := f.start(job(id, 1))
+		require.NoError(t, err)
+		w := f.workDir()
+		require.Equal(t, filepath.Join(f.mdir, "tmp", id+"-1"), w)
+		st, err := os.Stat(w)
+		if err == nil { // the folder may already be gone after a fast run
+			require.Equal(t, os.FileMode(0o700), st.Mode().Perm())
+		}
+		if mode == "hang" {
+			require.FileExists(t, filepath.Join(w, "source"))
+			_, err := f.cancel(id, 1) // killed: the worker never cleans up itself
+			require.NoError(t, err)
+		}
+		require.Eventually(t, idle, 3*time.Second, 10*time.Millisecond)
+		require.NoDirExists(t, w, mode)
+	}
+	// the worker read its folder from stdin as well
+	files, _ := filepath.Glob(filepath.Join(f.dir, "job-*.json"))
+	require.NotEmpty(t, files)
+	b, _ := os.ReadFile(files[0])
+	require.Contains(t, string(b), `"workDir":"`+filepath.Join(f.mdir, "tmp"))
+}
+
+func TestMeetingStaleJobFoldersAreSwept(t *testing.T) {
+	f := newMeetFake(t)
+	stale := filepath.Join(f.mdir, "tmp", "old-1")
+	require.NoError(t, os.MkdirAll(stale, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(stale, "source"), []byte("private"), 0o600))
+	SweepMeetingTmp() // the daemon's start
+	require.NoDirExists(t, stale)
+
+	require.NoError(t, os.MkdirAll(stale, 0o700))
+	_, err := f.start(job("j1", 1)) // and any start with no worker running
+	require.NoError(t, err)
+	require.NoDirExists(t, stale)
+	require.Eventually(t, idle, 3*time.Second, 10*time.Millisecond)
+}
+
+func TestMeetingJobRefusesForeignURLs(t *testing.T) {
+	f := newMeetFake(t)
+	j := job("j1", 1)
+	j.AudioURL = "https://elsewhere.example/audio"
+	_, err := f.start(j)
+	require.ErrorContains(t, err, "not on the hub")
+	j = job("j2", 1)
+	j.ResultURL = "http://elsewhere.example/result"
+	_, err = f.start(j)
+	require.ErrorContains(t, err, "not on the hub")
+	j = job("../../etc", 1)
+	_, err = f.start(j)
+	require.ErrorContains(t, err, "invalid")
+	require.True(t, idle())
 }

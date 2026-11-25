@@ -164,12 +164,12 @@ func setupVenv(ctx context.Context, dir, reqs string, out io.Writer) error {
 			return fmt.Errorf("could not create the venv: %w", err)
 		}
 	}
-	fmt.Fprintln(out, "Installing faster-whisper, sherpa-onnx and the CUDA libraries (pinned versions)…")
+	fmt.Fprintln(out, "Installing faster-whisper, sherpa-onnx and the CUDA libraries (pinned, hash-checked)…")
 	var cmd *exec.Cmd
 	if uv != "" {
-		cmd = exec.CommandContext(ctx, uv, "pip", "install", "--python", py, "-r", reqs)
+		cmd = exec.CommandContext(ctx, uv, "pip", "install", "--python", py, "--require-hashes", "-r", reqs)
 	} else {
-		cmd = exec.CommandContext(ctx, py, "-m", "pip", "install", "-r", reqs)
+		cmd = exec.CommandContext(ctx, py, "-m", "pip", "install", "--require-hashes", "-r", reqs)
 	}
 	cmd.Stdout, cmd.Stderr = out, out
 	if err := cmd.Run(); err != nil {

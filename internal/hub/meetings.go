@@ -88,12 +88,17 @@ func (s *Server) handleMeeting(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, m)
 }
 
-// handlePatchMeeting: PATCH /api/meetings/{id} {title?, projectId?, language?}; projectId "" unassigns.
+// maxMeetingSpeakers bounds the number of people a meeting can be given.
+const maxMeetingSpeakers = 20
+
+// handlePatchMeeting: PATCH /api/meetings/{id} {title?, projectId?, language?, speakers?}; projectId ""
+// unassigns; speakers is the number of people (0 = unknown, up to 20), used by the next transcription.
 func (s *Server) handlePatchMeeting(w http.ResponseWriter, r *http.Request) {
 	var b struct {
 		Title     *string `json:"title"`
 		ProjectID *string `json:"projectId"`
 		Language  *string `json:"language"`
+		Speakers  *int    `json:"speakers"`
 	}
 	if !decode(w, r, &b) {
 		return
@@ -110,7 +115,11 @@ func (s *Server) handlePatchMeeting(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 400, "invalid language")
 		return
 	}
-	m, oldProject, err := s.st.PatchMeeting(r.PathValue("id"), store.MeetingPatch{Title: b.Title, ProjectID: b.ProjectID, Language: b.Language})
+	if b.Speakers != nil && (*b.Speakers < 0 || *b.Speakers > maxMeetingSpeakers) {
+		apiErr(w, 400, "speakers must be between 0 (unknown) and 20")
+		return
+	}
+	m, oldProject, err := s.st.PatchMeeting(r.PathValue("id"), store.MeetingPatch{Title: b.Title, ProjectID: b.ProjectID, Language: b.Language, Speakers: b.Speakers})
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		apiErr(w, 404, "no such meeting")

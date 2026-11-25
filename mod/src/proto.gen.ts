@@ -773,6 +773,11 @@ export interface Meeting {
    * Channels is the recorder's channel layout ("me|others" for two-channel Quorum recordings, else "").
    */
   channels: string;
+  /**
+   * SpeakerCount is the number of people the owner gave (PATCH speakers, 0 = unknown); the transcription's
+   * diarization clusters to it.
+   */
+  speakerCount: number /* int */;
   summary?: MeetingSummary;
   segments?: MeetingSegment[];
   actions?: MeetingAction[];

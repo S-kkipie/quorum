@@ -26,6 +26,9 @@ type Host struct {
 	TerminalOn bool
 	// HubURL is the hub's base URL (meeting jobs carry URLs relative to it).
 	HubURL string
+	// OllamaURL is the machine's own Ollama address for local summaries ("" = the loopback default; only
+	// this local setting may point elsewhere, never the hub's job settings).
+	OllamaURL string
 
 	// active terminal watchers per pane (see terminal.go)
 	wmu     sync.Mutex
@@ -44,6 +47,7 @@ func NewHost(cfg Config) *Host {
 		Terms:      &Terminals{},
 		TerminalOn: cfg.TerminalOn(),
 		HubURL:     cfg.Hub,
+		OllamaURL:  cfg.OllamaURL,
 	}
 	dir, err := ConfigDir()
 	if err != nil {

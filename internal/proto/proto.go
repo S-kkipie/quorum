@@ -674,10 +674,13 @@ type Meeting struct {
 	HasAudio   bool   `json:"hasAudio"`
 	AudioBytes int64  `json:"audioBytes"`
 	// Channels is the recorder's channel layout ("me|others" for two-channel Quorum recordings, else "").
-	Channels string           `json:"channels"`
-	Summary  *MeetingSummary  `json:"summary,omitempty"`
-	Segments []MeetingSegment `json:"segments,omitempty"`
-	Actions  []MeetingAction  `json:"actions,omitempty"`
+	Channels string `json:"channels"`
+	// SpeakerCount is the number of people the owner gave (PATCH speakers, 0 = unknown); the transcription's
+	// diarization clusters to it.
+	SpeakerCount int              `json:"speakerCount"`
+	Summary      *MeetingSummary  `json:"summary,omitempty"`
+	Segments     []MeetingSegment `json:"segments,omitempty"`
+	Actions      []MeetingAction  `json:"actions,omitempty"`
 	// Speakers maps a speaker label of the segments ("Speaker 2") to the name the owner gave it.
 	Speakers map[string]string `json:"speakers,omitempty"`
 }

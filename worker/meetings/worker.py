@@ -35,14 +35,15 @@ be tested without them and without a GPU.
 from __future__ import annotations
 
 import gc
+import ipaddress
 import json
 import os
 import re
 import subprocess
 import sys
-import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -107,17 +108,37 @@ def span(emit: Emitter, lo: float, hi: float, stage: str) -> Callable[[float], N
 # audio
 
 
-def download(url: str, dest: Path, on_progress: Callable[[float], None]) -> Path:
+MAX_DOWNLOAD = 450 * 1024 * 1024  # the hub accepts recordings of up to 400 MB
+
+
+class _SameHostRedirects(urllib.request.HTTPRedirectHandler):
+    """Follows a redirect only to the same scheme and host: the audio never comes from elsewhere."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        a, b = urllib.parse.urlsplit(req.full_url), urllib.parse.urlsplit(newurl)
+        if (a.scheme, a.netloc) != (b.scheme, b.netloc):
+            raise WorkerError("The hub redirected the recording to another host; refused.")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def download(url: str, dest: Path, on_progress: Callable[[float], None], limit: int = MAX_DOWNLOAD) -> Path:
+    if urllib.parse.urlsplit(url).scheme not in ("http", "https"):
+        raise WorkerError("The recording's URL is not an http(s) URL; refused.")
+    opener = urllib.request.build_opener(_SameHostRedirects)
     try:
-        with urllib.request.urlopen(url, timeout=60) as r, open(dest, "wb") as f:
+        with opener.open(url, timeout=60) as r, open(dest, "wb") as f:
             total = int(r.headers.get("Content-Length") or 0)
+            if total > limit:
+                raise WorkerError("The recording is larger than the 400 MB limit.")
             got = 0
             while True:
                 chunk = r.read(1 << 20)
                 if not chunk:
                     break
-                f.write(chunk)
                 got += len(chunk)
+                if got > limit:
+                    raise WorkerError("The recording is larger than the 400 MB limit.")
+                f.write(chunk)
                 if total:
                     on_progress(got / total)
     except urllib.error.HTTPError as e:
@@ -140,7 +161,7 @@ def _run(cmd: list[str], what: str) -> str:
 
 def probe(src: Path) -> tuple[int, float]:
     """Returns (channels, duration in seconds) of the first audio stream."""
-    out = _run(["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=channels:format=duration",
+    out = _run(["ffprobe", "-v", "error", "-protocol_whitelist", "file,pipe", "-select_streams", "a:0", "-show_entries", "stream=channels:format=duration",
                 "-of", "json", str(src)], "ffmpeg could not read the recording")
     info = json.loads(out or "{}")
     streams = info.get("streams") or []
@@ -157,7 +178,9 @@ def probe(src: Path) -> tuple[int, float]:
 def convert(src: Path, workdir: Path, split: bool) -> list[tuple[str | None, Path]]:
     """Converts to 16 kHz mono 16-bit WAV. split=True writes the first channel as "Me" and the second as
     "Others"; otherwise every channel is mixed down into one track with no label."""
-    base = ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-i", str(src), "-vn"]
+    # only local files: a crafted container (HLS, concat…) cannot make ffmpeg open URLs or other paths
+    base = ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-protocol_whitelist", "file,pipe",
+            "-i", str(src), "-vn"]
     enc = ["-ar", str(SAMPLE_RATE), "-c:a", "pcm_s16le"]
     if split:
         me, others = workdir / "me.wav", workdir / "others.wav"
@@ -682,6 +705,25 @@ class OllamaClient:
         return (data.get("message") or {}).get("content") or ""
 
 
+def ollama_url(settings: dict) -> str:
+    """The Ollama address: the machine's own setting (QUORUM_OLLAMA_URL, from quorumd's config) wins; one from
+    the hub's job settings must be a loopback address, so a job cannot send the transcript elsewhere."""
+    local = os.environ.get("QUORUM_OLLAMA_URL", "").strip()
+    if local:
+        return local
+    url = (settings.get("ollamaURL") or OLLAMA_URL).strip()
+    u = urllib.parse.urlsplit(url)
+    host = (u.hostname or "").lower()
+    try:
+        loopback = host == "localhost" or ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        loopback = False
+    if u.scheme not in ("http", "https") or not loopback:
+        raise WorkerError(f"The Ollama address {url} is not on this machine; set ollamaUrl in this machine's quorumd "
+                          "config to use a remote Ollama.")
+    return url
+
+
 def run_summarize(job: dict, emit: Emitter, chat: Callable[[list[dict]], str] | None = None) -> dict:
     settings = job.get("settings") or {}
     segments = settings.get("segments") or []
@@ -689,7 +731,7 @@ def run_summarize(job: dict, emit: Emitter, chat: Callable[[list[dict]], str] | 
     language = language_name(settings.get("language") or "")
     glossary = settings.get("glossary")
     if chat is None:
-        chat = OllamaClient(settings.get("ollamaURL") or OLLAMA_URL, settings.get("model") or OLLAMA_MODEL,
+        chat = OllamaClient(ollama_url(settings), settings.get("model") or OLLAMA_MODEL,
                             int(settings.get("numCtx") or NUM_CTX)).chat
     all_lines = render_lines(segments, names)
     if not all_lines:
@@ -760,10 +802,13 @@ def fakes_enabled() -> bool:
 def run_job(job: dict, emit: Emitter) -> dict:
     step = job.get("step")
     if step == "transcribe":
-        with tempfile.TemporaryDirectory(prefix="quorum-meeting-") as d:
-            if fakes_enabled():
-                return run_transcribe(job, emit, Path(d), FakeEngine, lambda: FakeDiarizer(int((job.get("settings") or {}).get("speakers") or 0)))
-            return run_transcribe(job, emit, Path(d))
+        # the daemon creates the job's private folder and removes it whatever happens to this process
+        work = Path(job.get("workDir") or "")
+        if not job.get("workDir") or not work.is_dir():
+            raise WorkerError("The job has no work folder; update quorumd on this machine.")
+        if fakes_enabled():
+            return run_transcribe(job, emit, work, FakeEngine, lambda: FakeDiarizer(int((job.get("settings") or {}).get("speakers") or 0)))
+        return run_transcribe(job, emit, work)
     if step == "summarize_local":
         return run_summarize(job, emit)
     raise WorkerError(f"Unknown step {step!r}; update quorumd on this machine.")

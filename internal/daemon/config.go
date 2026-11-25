@@ -26,6 +26,9 @@ type Config struct {
 	HerdrSocket string `json:"herdrSocket,omitempty"`
 	// Terminal turns the remote terminal off if false; nil means true.
 	Terminal *bool `json:"terminal,omitempty"`
+	// OllamaURL is where the meeting worker reaches Ollama when it is not on this machine's loopback
+	// ("" = http://127.0.0.1:11434). The hub can only choose loopback addresses.
+	OllamaURL string `json:"ollamaUrl,omitempty"`
 }
 
 // TerminalOn reports whether the remote terminal is allowed by the config.

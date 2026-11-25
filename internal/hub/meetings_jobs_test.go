@@ -410,3 +410,53 @@ func TestMeetingJobsSurviveRestart(t *testing.T) {
 	p := gpu.start()
 	require.Equal(t, m.ID, p.MeetingID)
 }
+
+func TestMeetingJobStaleProgressCancelsTheOldAttempt(t *testing.T) {
+	f := newJobFx(t)
+	gpu := f.connect(t, "gpu", true)
+	f.uploadMeeting(t, "", "audio")
+	p := gpu.start()
+	f.s.checkMeetingJobs(time.Now().Add(jobSilence + time.Minute)) // re-queued as attempt 2
+	<-gpu.cancel
+	p2 := gpu.start()
+	require.Equal(t, 2, p2.Attempt)
+	// the machine still reports attempt 1: it is told to stop it, and attempt 2 is untouched
+	gpu.progress(proto.MeetingProgress{JobID: p.JobID, Attempt: 1, Pct: 50, Stage: "transcribing"})
+	select {
+	case c := <-gpu.cancel:
+		require.Equal(t, proto.MeetingJobCancel{JobID: p.JobID, Attempt: 1}, c)
+	case <-time.After(3 * time.Second):
+		t.Fatal("no cancel for the stale attempt")
+	}
+	j, _ := f.st.MeetingJob(p.JobID)
+	require.Equal(t, store.JobRunning, j.Status)
+	require.Equal(t, 2, j.Attempt)
+	require.Equal(t, 0, j.Pct)
+}
+
+func TestMeetingJobSkippedJobLeavesTheMachineFree(t *testing.T) {
+	f := newJobFx(t)
+	gone := f.uploadMeeting(t, "", "first")
+	next := f.uploadMeeting(t, "", "second")
+	require.NoError(t, f.st.DropMeetingAudio(gone.ID)) // the oldest job cannot run
+	gpu := f.connect(t, "gpu", true)
+	p := gpu.start()
+	require.Equal(t, next.ID, p.MeetingID, "the machine takes the next job in the same dispatch")
+	require.Equal(t, "failed", f.status(gone.ID))
+}
+
+func TestMeetingSpeakersReachTheTranscription(t *testing.T) {
+	f := newJobFx(t)
+	m := f.uploadMeeting(t, "", "audio")
+	require.Equal(t, 400, f.do("PATCH", "/api/meetings/"+m.ID, `{"speakers":21}`).Code)
+	require.Equal(t, 400, f.do("PATCH", "/api/meetings/"+m.ID, `{"speakers":-1}`).Code)
+	rr := f.do("PATCH", "/api/meetings/"+m.ID, `{"speakers":4}`)
+	require.Equal(t, 200, rr.Code, rr.Body.String())
+	var got proto.Meeting
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &got))
+	require.Equal(t, 4, got.SpeakerCount)
+	gpu := f.connect(t, "gpu", true)
+	var set proto.MeetingTranscribeSettings
+	require.NoError(t, json.Unmarshal(gpu.start().Settings, &set))
+	require.Equal(t, 4, set.Speakers)
+}

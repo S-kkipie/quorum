@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS meetings (
 	started_at INTEGER NOT NULL DEFAULT 0,
 	duration_s INTEGER NOT NULL DEFAULT 0,
 	language TEXT NOT NULL DEFAULT '',
+	speakers INTEGER NOT NULL DEFAULT 0,
 	status TEXT NOT NULL DEFAULT 'uploaded',
 	progress INTEGER NOT NULL DEFAULT 0,
 	error TEXT NOT NULL DEFAULT '',
@@ -129,6 +130,15 @@ func migrateMeetings(s *Store) error {
 	}
 	if n == 0 {
 		if _, err := s.db.Exec(`ALTER TABLE meeting_notes ADD COLUMN source TEXT NOT NULL DEFAULT 'connector'`); err != nil {
+			return err
+		}
+	}
+	// the number of people the owner gave (0 = unknown), added after the first meetings schema
+	if err := s.db.QueryRow(`SELECT count(*) FROM pragma_table_info('meetings') WHERE name='speakers'`).Scan(&n); err != nil {
+		return err
+	}
+	if n == 0 {
+		if _, err := s.db.Exec(`ALTER TABLE meetings ADD COLUMN speakers INTEGER NOT NULL DEFAULT 0`); err != nil {
 			return err
 		}
 	}
@@ -296,13 +306,13 @@ func (s *Store) DeleteMeetingUpload(id string) error {
 }
 
 const meetingCols = `m.id,m.project_id,m.title,m.started_at,m.duration_s,m.language,m.status,m.progress,m.error,m.provider,
-	m.created_at,m.updated_at,a.meeting_id IS NOT NULL,COALESCE(a.bytes,0),COALESCE(a.channels_meta,'')`
+	m.created_at,m.updated_at,a.meeting_id IS NOT NULL,COALESCE(a.bytes,0),COALESCE(a.channels_meta,''),m.speakers`
 const meetingFrom = ` FROM meetings m LEFT JOIN meeting_audio a ON a.meeting_id=m.id`
 
 func scanMeeting(sc interface{ Scan(...any) error }) (proto.Meeting, error) {
 	var m proto.Meeting
 	err := sc.Scan(&m.ID, &m.ProjectID, &m.Title, &m.StartedAt, &m.DurationS, &m.Language, &m.Status, &m.Progress, &m.Error,
-		&m.Provider, &m.CreatedAt, &m.UpdatedAt, &m.HasAudio, &m.AudioBytes, &m.Channels)
+		&m.Provider, &m.CreatedAt, &m.UpdatedAt, &m.HasAudio, &m.AudioBytes, &m.Channels, &m.SpeakerCount)
 	return m, err
 }
 
@@ -498,6 +508,8 @@ type MeetingPatch struct {
 	Title     *string
 	ProjectID *string
 	Language  *string
+	// Speakers is the number of people (0 = unknown); diarization clusters to it.
+	Speakers *int
 }
 
 // PatchMeeting applies p and returns the meeting and its project before the patch. Moving the meeting to
@@ -527,6 +539,11 @@ func (s *Store) PatchMeeting(id string, p MeetingPatch) (m proto.Meeting, oldPro
 	}
 	if p.Language != nil {
 		if _, err = tx.Exec(`UPDATE meetings SET language=?, updated_at=? WHERE id=?`, *p.Language, now, id); err != nil {
+			return m, "", err
+		}
+	}
+	if p.Speakers != nil {
+		if _, err = tx.Exec(`UPDATE meetings SET speakers=?, updated_at=? WHERE id=?`, *p.Speakers, now, id); err != nil {
 			return m, "", err
 		}
 	}

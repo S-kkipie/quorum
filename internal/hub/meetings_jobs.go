@@ -173,13 +173,24 @@ func (s *Server) dispatchMeetingJobs() {
 		if len(idle) == 0 {
 			return
 		}
-		m := idle[0]
-		idle = idle[1:]
-		if !s.startMeetingJob(j, m) {
-			continue // the machine refused; the job waits for the next one
+		switch s.startMeetingJob(j, idle[0]) {
+		case jobStarted, jobRefused:
+			// started: the machine is busy; refused: the job waits for the next machine
+			idle = idle[1:]
+		case jobSkipped:
+			// the job ended without reaching the machine, which stays free for the next job
 		}
 	}
 }
+
+// startOutcome is what a dispatch attempt did with the machine.
+type startOutcome int
+
+const (
+	jobStarted startOutcome = iota // the machine took the job (or may have: no answer)
+	jobRefused                     // the machine did not take it; the job is queued again
+	jobSkipped                     // the job never reached the machine (failed, cancelled or gone)
+)
 
 // idleTranscribers lists the connected machines with Transcribe that run no job, by name.
 func (s *Server) idleTranscribers() []string {
@@ -215,42 +226,42 @@ func parseJobRef(ref string) (string, int, bool) {
 	return id, n, ok && err == nil && id != ""
 }
 
-// startMeetingJob gives job to machine. false: the machine did not take it (the job is queued again).
-func (s *Server) startMeetingJob(j store.MeetingJob, machine string) bool {
+// startMeetingJob gives job to machine.
+func (s *Server) startMeetingJob(j store.MeetingJob, machine string) startOutcome {
 	step, ok := s.jobs.steps[j.Step]
 	if !ok {
 		s.failJob(j, "unknown processing step "+j.Step)
-		return true
+		return jobSkipped
 	}
 	m, err := s.st.Meeting(j.MeetingID)
 	if errors.Is(err, store.ErrNotFound) {
 		s.st.FailMeetingJob(j.ID, "the meeting is gone")
-		return true
+		return jobSkipped
 	}
 	if err != nil {
 		log.Printf("hub: meetings: job %s: %v", j.ID, err)
-		return true
+		return jobSkipped
 	}
 	if step.needsAudio && !m.HasAudio {
 		s.failJob(j, "The recording is no longer on the hub, so it cannot be transcribed.")
-		return true
+		return jobSkipped
 	}
 	settings := j.Settings
 	if step.settings != nil {
 		if settings, err = step.settings(s, j, m); err != nil {
 			s.failJob(j, err.Error())
-			return true
+			return jobSkipped
 		}
 	}
 	if ok, err := s.st.StartMeetingJob(j.ID, machine); err != nil || !ok {
-		return true // cancelled meanwhile
+		return jobSkipped // cancelled meanwhile
 	}
 	ref := jobRef(j.ID, j.Attempt)
 	tok, err := s.st.CreateMeetingToken("job", j.MeetingID, ref, store.MeetingJobTokenTTL)
 	if err != nil {
 		log.Printf("hub: meetings: job token: %v", err)
 		s.st.UnstartMeetingJob(j.ID, j.Attempt)
-		return false
+		return jobSkipped
 	}
 	req := proto.MeetingJobStart{
 		JobID: j.ID, Attempt: j.Attempt, MeetingID: j.MeetingID, Step: j.Step,
@@ -263,18 +274,18 @@ func (s *Server) startMeetingJob(j store.MeetingJob, machine string) bool {
 	err = s.hub.call(context.Background(), machine, "meeting_job_start", req, nil)
 	switch {
 	case err == nil:
-		return true
+		return jobStarted
 	case errors.Is(err, errTimeout) || errors.Is(err, context.DeadlineExceeded):
 		// it may have started: progress (or the silence rule) decides
 		log.Printf("hub: meetings: %s did not answer the start of job %s", machine, j.ID)
-		return true
+		return jobStarted
 	default:
 		log.Printf("hub: meetings: %s did not take job %s: %v", machine, j.ID, err)
 		if ok, _ := s.st.UnstartMeetingJob(j.ID, j.Attempt); ok {
 			s.st.DeleteMeetingTokensRef("job", ref)
 			s.setMeetingState(m.ID, step.queuedStatus, "", 0, "")
 		}
-		return false
+		return jobRefused
 	}
 }
 
@@ -283,7 +294,7 @@ func transcribeSettings(s *Server, _ store.MeetingJob, m proto.Meeting) (string,
 	if lang == "" {
 		lang = defaultLanguage
 	}
-	b, err := json.Marshal(proto.MeetingTranscribeSettings{Language: lang, Channels: m.Channels, Model: defaultWhisperModel})
+	b, err := json.Marshal(proto.MeetingTranscribeSettings{Language: lang, Channels: m.Channels, Speakers: m.SpeakerCount, Model: defaultWhisperModel})
 	return string(b), err
 }
 
@@ -318,13 +329,15 @@ func (s *Server) checkMeetingJobs(now time.Time) {
 }
 
 // cancelOnMachine asks the job's machine (when it is connected) to stop that attempt's worker.
-func (s *Server) cancelOnMachine(j store.MeetingJob) {
-	if j.Machine == "" || !s.hub.Connected(j.Machine) {
+func (s *Server) cancelOnMachine(j store.MeetingJob) { s.cancelAttempt(j.Machine, j.ID, j.Attempt) }
+
+func (s *Server) cancelAttempt(machine, jobID string, attempt int) {
+	if machine == "" || !s.hub.Connected(machine) {
 		return
 	}
 	go func() {
-		if err := s.hub.call(context.Background(), j.Machine, "meeting_job_cancel", proto.MeetingJobCancel{JobID: j.ID, Attempt: j.Attempt}, nil); err != nil {
-			log.Printf("hub: meetings: cancel job %s on %s: %v", j.ID, j.Machine, err)
+		if err := s.hub.call(context.Background(), machine, "meeting_job_cancel", proto.MeetingJobCancel{JobID: jobID, Attempt: attempt}, nil); err != nil {
+			log.Printf("hub: meetings: cancel job %s on %s: %v", jobID, machine, err)
 		}
 	}()
 }
@@ -371,9 +384,18 @@ func (s *Server) publishMeetingState(m proto.Meeting, stage string) {
 }
 
 // onMeetingProgress applies a machine's meeting_progress: only the running attempt on that machine counts.
+// A machine still working on an attempt that is no longer current (re-queued, finished, cancelled or
+// deleted) is told to stop it.
 func (s *Server) onMeetingProgress(machine string, p proto.MeetingProgress) {
+	if p.JobID == "" || p.Attempt < 1 {
+		return
+	}
 	j, err := s.st.MeetingJob(p.JobID)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return
+	}
 	if err != nil || j.Status != store.JobRunning || j.Attempt != p.Attempt || j.Machine != machine {
+		s.cancelAttempt(machine, p.JobID, p.Attempt)
 		return
 	}
 	pct := min(max(p.Pct, 0), 100)

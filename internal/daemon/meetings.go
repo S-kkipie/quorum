@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -123,26 +124,26 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 	return os.Rename(tmp, path)
 }
 
-// workerEnv is the worker's environment: the daemon's, plus the CUDA libraries of the venv's nvidia
-// packages on LD_LIBRARY_PATH and the Hugging Face cache inside the worker folder. offline keeps
-// faster-whisper from contacting the Hub at job time (the setup downloaded the model).
+// workerEnv is the worker's environment: an allow-list of the daemon's variables (never its tokens),
+// the CUDA libraries of the venv's nvidia packages on LD_LIBRARY_PATH and the Hugging Face cache inside
+// the worker folder. offline keeps faster-whisper from contacting the Hub at job time (the setup
+// downloaded the model).
 func workerEnv(dir string, offline bool) []string {
-	var libs []string
-	matches, _ := filepath.Glob(filepath.Join(dir, "venv", "lib", "python3*", "site-packages", "nvidia", "*", "lib"))
-	libs = append(libs, matches...)
-	env := make([]string, 0, len(os.Environ())+5)
+	libs, _ := filepath.Glob(filepath.Join(dir, "venv", "lib", "python3*", "site-packages", "nvidia", "*", "lib"))
+	env := []string{}
 	for _, kv := range os.Environ() {
 		k, v, _ := strings.Cut(kv, "=")
-		switch k {
-		case "LD_LIBRARY_PATH":
+		switch {
+		case k == "LD_LIBRARY_PATH":
 			if v != "" {
 				libs = append(libs, v)
 			}
-			continue
-		case "HF_HOME", "HF_HUB_OFFLINE", "PYTHONUNBUFFERED", "QUORUM_MEETINGS_FAKE":
-			continue
+		case k == "HF_HOME" || k == "HF_HUB_OFFLINE":
+			// set below
+		case k == "PATH" || k == "HOME" || k == "LANG" || k == "TMPDIR" || k == "XDG_CACHE_HOME",
+			strings.HasPrefix(k, "LC_"), strings.HasPrefix(k, "CUDA_"), strings.HasPrefix(k, "HF_"):
+			env = append(env, kv)
 		}
-		env = append(env, kv)
 	}
 	env = append(env, "HF_HOME="+filepath.Join(dir, "models", "hf"), "PYTHONUNBUFFERED=1")
 	if len(libs) > 0 {
@@ -174,8 +175,39 @@ type meetingSupervisor struct {
 	cur *meetingRun
 }
 
+// workerJob is what the worker reads on stdin.
+type workerJob struct {
+	proto.MeetingJobStart
+	// WorkDir is the job's private folder (0700), created and removed by the daemon.
+	WorkDir string `json:"workDir"`
+}
+
+var jobIDRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+
+// sweepMeetingTmp removes the job folders left by workers that died with an earlier daemon.
+func sweepMeetingTmp(dir string) {
+	ents, err := os.ReadDir(filepath.Join(dir, "tmp"))
+	if err != nil {
+		return
+	}
+	for _, e := range ents {
+		if err := os.RemoveAll(filepath.Join(dir, "tmp", e.Name())); err != nil {
+			log.Printf("meetings: remove stale %s: %v", e.Name(), err)
+		}
+	}
+}
+
+// SweepMeetingTmp is sweepMeetingTmp for the daemon's start (no worker runs yet).
+func SweepMeetingTmp() {
+	if dir, err := MeetingsDir(); err == nil {
+		sweepMeetingTmp(dir)
+	}
+}
+
 type meetingRun struct {
-	job proto.MeetingJobStart
+	job  proto.MeetingJobStart
+	ctx  context.Context // cancelled by kill: also stops the result upload
+	work string
 	// read once at start (tests change the package values)
 	heartbeat time.Duration
 	retries   int
@@ -206,8 +238,8 @@ var errMeetingBusy = errors.New("busy: another meeting job is running on this ma
 // start launches the job's worker and returns at once. The same attempt again is a no-op; a newer
 // attempt of the running job replaces it (the hub re-queued it while this machine was away); any other
 // job while one runs is refused as busy.
-func (s *meetingSupervisor) start(hubURL string, reg *Registry, job proto.MeetingJobStart) error {
-	if job.JobID == "" || job.Attempt < 1 || job.ResultURL == "" {
+func (s *meetingSupervisor) start(hubURL, ollamaURL string, reg *Registry, job proto.MeetingJobStart) error {
+	if !jobIDRe.MatchString(job.JobID) || job.Attempt < 1 || job.ResultURL == "" {
 		return errors.New("invalid meeting job")
 	}
 	for {
@@ -236,7 +268,7 @@ func (s *meetingSupervisor) start(hubURL string, reg *Registry, job proto.Meetin
 	if err != nil {
 		return err
 	}
-	in := job
+	in := workerJob{MeetingJobStart: job}
 	in.ResultURL = "" // the worker never needs it: the daemon posts the result
 	if job.AudioURL != "" {
 		if in.AudioURL, err = resolveHubURL(hubURL, job.AudioURL); err != nil {
@@ -247,18 +279,39 @@ func (s *meetingSupervisor) start(hubURL string, reg *Registry, job proto.Meetin
 	if err != nil {
 		return err
 	}
+	// nothing runs now: whatever is left in tmp/ belongs to a worker that was killed with the daemon
+	sweepMeetingTmp(dir)
+	// the daemon owns the job's folder (the downloaded recording and its WAV files), so it is removed
+	// whatever happens to the worker, even after a SIGKILL
+	work := filepath.Join(dir, "tmp", fmt.Sprintf("%s-%d", job.JobID, job.Attempt))
+	if err := os.MkdirAll(filepath.Dir(work), 0o700); err != nil {
+		return err
+	}
+	if err := os.Mkdir(work, 0o700); err != nil {
+		return err
+	}
+	in.WorkDir = work
 	ctx, cancel := context.WithCancel(context.Background())
+	fail := func(err error) error {
+		cancel()
+		os.RemoveAll(work)
+		return err
+	}
 	cmd, err := meetingCommand(ctx, dir)
 	if err != nil {
-		cancel()
-		return err
+		return fail(err)
+	}
+	if cmd.Env != nil {
+		cmd.Env = append(cmd.Env, "TMPDIR="+work)
+		if ollamaURL != "" {
+			cmd.Env = append(cmd.Env, "QUORUM_OLLAMA_URL="+ollamaURL)
+		}
 	}
 	stdin, _ := json.Marshal(in)
 	cmd.Stdin = bytes.NewReader(stdin)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		cancel()
-		return err
+		return fail(err)
 	}
 	stderr := &tailBuffer{max: 8 << 10}
 	cmd.Stderr = stderr
@@ -266,10 +319,9 @@ func (s *meetingSupervisor) start(hubURL string, reg *Registry, job proto.Meetin
 	cmd.Cancel = func() error { return killProcessGroup(cmd) }
 	cmd.WaitDelay = 5 * time.Second
 	if err := cmd.Start(); err != nil {
-		cancel()
-		return fmt.Errorf("could not start the meeting worker: %w", err)
+		return fail(fmt.Errorf("could not start the meeting worker: %w", err))
 	}
-	run := &meetingRun{job: job, cancel: cancel, done: make(chan struct{}),
+	run := &meetingRun{job: job, ctx: ctx, cancel: cancel, work: work, done: make(chan struct{}),
 		heartbeat: meetingHeartbeat, retries: meetingPostRetries, wait: meetingPostWait}
 	s.cur = run
 	log.Printf("meetings: job %s attempt %d (%s) started", job.JobID, job.Attempt, job.Step)
@@ -393,6 +445,9 @@ func (s *meetingSupervisor) supervise(run *meetingRun, cmd *exec.Cmd, stdout io.
 	io.Copy(io.Discard, stdout) // a line that was too long: let the worker finish
 	waitErr := cmd.Wait()
 	close(hbDone)
+	if err := os.RemoveAll(run.work); err != nil {
+		log.Printf("meetings: remove %s: %v", run.work, err)
+	}
 	if run.wasKilled() {
 		log.Printf("meetings: job %s attempt %d stopped", job.JobID, job.Attempt)
 		return
@@ -418,7 +473,7 @@ func (s *meetingSupervisor) supervise(run *meetingRun, cmd *exec.Cmd, stdout io.
 	} else {
 		log.Printf("meetings: job %s attempt %d done", job.JobID, job.Attempt)
 	}
-	postMeetingResult(resultURL, body, run.retries, run.wait)
+	postMeetingResult(run.ctx, resultURL, body, run.retries, run.wait)
 }
 
 // readLine reads one '\n'-terminated line of at most max bytes (a longer line is an error).
@@ -439,16 +494,28 @@ func readLine(rd *bufio.Reader, max int) ([]byte, error) {
 
 // postMeetingResult POSTs the result, retrying network errors and 5xx; 4xx answers are final (a stale
 // attempt, an expired link, an invalid result).
-func postMeetingResult(u string, body proto.MeetingJobResult, retries int, wait time.Duration) {
+func postMeetingResult(ctx context.Context, u string, body proto.MeetingJobResult, retries int, wait time.Duration) {
 	b, _ := json.Marshal(body)
 	client := &http.Client{Timeout: 2 * time.Minute}
 	for i := 0; i < retries; i++ {
 		if i > 0 {
-			time.Sleep(wait)
+			select {
+			case <-time.After(wait):
+			case <-ctx.Done():
+				return // cancelled or the daemon is stopping
+			}
 			wait *= 2
 		}
-		resp, err := client.Post(u, "application/json", bytes.NewReader(b))
+		req, err := http.NewRequestWithContext(ctx, "POST", u, bytes.NewReader(b))
 		if err != nil {
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := client.Do(req)
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
 			log.Printf("meetings: post result: %v", err)
 			continue
 		}
@@ -466,18 +533,21 @@ func postMeetingResult(u string, body proto.MeetingJobResult, retries int, wait 
 	}
 }
 
-// resolveHubURL resolves a URL relative to the hub (the hub sends paths) against its base URL.
+// resolveHubURL resolves a URL relative to the hub (the hub sends paths) against its base URL. An
+// absolute URL must point at the hub itself (same scheme and host): a job never sends the worker elsewhere.
 func resolveHubURL(hub, ref string) (string, error) {
 	r, err := url.Parse(ref)
 	if err != nil {
 		return "", err
 	}
-	if r.IsAbs() {
-		return r.String(), nil
-	}
 	base, err := url.Parse(strings.TrimRight(hub, "/") + "/")
-	if err != nil || base.Host == "" {
+	if err != nil || base.Host == "" || (base.Scheme != "http" && base.Scheme != "https") {
 		return "", errors.New("this machine has no hub URL")
+	}
+	if r.IsAbs() || r.Host != "" {
+		if r.Scheme != base.Scheme || r.Host != base.Host {
+			return "", errors.New("a meeting job URL that is not on the hub was refused")
+		}
 	}
 	return base.ResolveReference(r).String(), nil
 }
@@ -519,11 +589,11 @@ func init() {
 		if err := json.Unmarshal(params, &job); err != nil {
 			return nil, err
 		}
-		hub := ""
+		hub, ollama := "", ""
 		if h != nil {
-			hub = h.HubURL
+			hub, ollama = h.HubURL, h.OllamaURL
 		}
-		if err := meetingJobs.start(hub, linkOf(ctx).reg, job); err != nil {
+		if err := meetingJobs.start(hub, ollama, linkOf(ctx).reg, job); err != nil {
 			return nil, err
 		}
 		return map[string]bool{"ok": true}, nil
