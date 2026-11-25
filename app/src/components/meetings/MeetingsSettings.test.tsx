@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 
-const api = vi.hoisted(() => ({ getMeetingSettings: vi.fn(), putMeetingSettings: vi.fn(), meetingDisk: vi.fn(), listMeetings: vi.fn() }))
+const api = vi.hoisted(() => ({ getMeetingSettings: vi.fn(), putMeetingSettings: vi.fn(), meetingDisk: vi.fn(), listMeetings: vi.fn(), uploadMeeting: vi.fn() }))
 vi.mock('../../lib/meetingsApi', async (orig) => ({ ...(await orig<typeof import('../../lib/meetingsApi')>()), ...api }))
 import MeetingsSettings, { workerState } from './MeetingsSettings'
 import { initialState, reduce, type AppState } from '../../lib/store'
@@ -78,6 +78,43 @@ describe('Settings → Meetings', () => {
     s = reduce(s, { type: 'meeting_changed', payload: { id: 'm9', projectId: 'p1', status: 'ready' } } as unknown as Envelope)
     rerender(<MeetingsSettings state={s} onOpenMeeting={onOpen} />)
     await waitFor(() => expect(api.listMeetings).toHaveBeenCalledTimes(2))
+  })
+
+  it('changing the provider resets the model to that provider\'s default', async () => {
+    api.getMeetingSettings.mockResolvedValue({ ...settings, provider: 'ccapi', model: 'opus' })
+    render(<MeetingsSettings state={state()} />)
+    const model = () => (screen.getByLabelText('Model') as HTMLInputElement).value
+    await waitFor(() => expect(model()).toBe('opus'))
+    fireEvent.change(screen.getByLabelText('Summary provider'), { target: { value: 'local' } })
+    expect(model()).toBe('gemma3:12b')
+    fireEvent.change(screen.getByLabelText('Summary provider'), { target: { value: 'openai-compatible' } })
+    expect(model()).toBe('')
+    // back to the saved provider: its saved model
+    fireEvent.change(screen.getByLabelText('Summary provider'), { target: { value: 'ccapi' } })
+    expect(model()).toBe('opus')
+  })
+
+  it('the inbox uploads a recording without a project', async () => {
+    api.uploadMeeting.mockResolvedValue({ id: 'm1', status: 'queued' })
+    render(<MeetingsSettings state={state()} />)
+    await waitFor(() => expect(api.listMeetings).toHaveBeenCalledTimes(1))
+    const f = new File(['x'], 'hallway.ogg', { type: 'audio/ogg' })
+    fireEvent.change(screen.getByLabelText('Recording file'), { target: { files: [f] } })
+    await waitFor(() => expect(api.uploadMeeting).toHaveBeenCalled())
+    expect(api.uploadMeeting.mock.calls[0][1]).toMatchObject({ projectId: '' })
+    expect(screen.getByRole('button', { name: 'Upload recording' })).toBeTruthy()
+    // the finished upload refetches the inbox
+    await waitFor(() => expect(api.listMeetings).toHaveBeenCalledTimes(2))
+  })
+
+  it('warns that a new base URL host needs the key again', async () => {
+    render(<MeetingsSettings state={state()} />)
+    const url = await screen.findByLabelText('Base URL')
+    expect(screen.getByText(/Type a new key to replace it/)).toBeTruthy()
+    fireEvent.change(url, { target: { value: 'https://llm.example.com/v2' } })
+    expect(screen.queryByText(/enter it again/)).toBeNull()
+    fireEvent.change(url, { target: { value: 'https://other.example/v1' } })
+    expect(screen.getByText(/enter it again/)).toBeTruthy()
   })
 
   it('workerState reads the caps', () => {

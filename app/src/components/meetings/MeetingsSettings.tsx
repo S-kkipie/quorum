@@ -4,11 +4,14 @@ import type { AppState } from '../../lib/store'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import MeetingsList, { useMeetings } from './MeetingsList'
+import UploadMeeting from './UploadMeeting'
 import { LANGUAGES, PROVIDERS, bytes } from './util'
 
 const field = 'mt-1 min-h-11 w-full rounded-lg border border-line bg-surface p-2 text-sm md:text-sm'
 const h4 = 'mb-2 mt-4 text-[13px] font-medium text-muted-foreground'
 const DEFAULT_MODEL: Record<string, string> = { local: 'gemma3:12b', ccapi: 'sonnet', 'openai-compatible': '' }
+
+const hostOf = (u: string) => { try { return new URL(u).host.toLowerCase() } catch { return u } }
 
 /** What a machine's caps say about its meeting worker. */
 export function workerState(c: { transcribe?: boolean; meetingWorker?: string } | undefined): { text: string; ok: boolean } {
@@ -34,7 +37,9 @@ export default function MeetingsSettings({ state, onOpenMeeting }: { state: AppS
   const [error, setError] = useState('')
   const [ok, setOk] = useState(false)
   const [disk, setDisk] = useState<{ audioBytes: number; freeBytes: number } | null>(null)
-  const inbox = useMeetings({ unassigned: true }, state.meetingsRev ?? 0)
+  // an upload finished: refetch at once (the meeting_changed may come a moment later)
+  const [uploads, setUploads] = useState(0)
+  const inbox = useMeetings({ unassigned: true }, `${state.meetingsRev ?? 0}:${uploads}`)
 
   const show = (s: MeetingSettings) => {
     setSaved(s)
@@ -70,14 +75,22 @@ export default function MeetingsSettings({ state, onOpenMeeting }: { state: AppS
     ...(key.trim() ? { key: key.trim() } : {}),
   })
 
+  // a model belongs to its provider: another provider starts from its default (the saved one keeps its model)
+  const changeProvider = (p: string) => {
+    setProvider(p)
+    setModel(saved && p === (saved.provider || 'local') ? saved.model || '' : DEFAULT_MODEL[p] ?? '')
+  }
+
   const machines = Object.values(state.machines).sort((a, b) => a.name.localeCompare(b.name))
   const openai = provider === 'openai-compatible'
+  // the hub drops the saved key when the base URL moves to another host
+  const hostMoved = !!saved?.baseUrl && hostOf(baseUrl.trim()) !== hostOf(saved.baseUrl)
   return (
     <div className="min-w-0">
       <form aria-label="Meetings settings" onSubmit={(e) => { e.preventDefault(); void submit() }} className="rounded-xl border border-line bg-surface p-3">
         <div className="grid gap-2 sm:grid-cols-2">
           <label className="block min-w-0 text-xs text-muted-foreground">Summary provider
-            <select value={provider} onChange={(e) => setProvider(e.target.value)} className={field}>
+            <select value={provider} onChange={(e) => changeProvider(e.target.value)} className={field}>
               {PROVIDERS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
             </select>
           </label>
@@ -92,7 +105,9 @@ export default function MeetingsSettings({ state, onOpenMeeting }: { state: AppS
             </label>
             <label className="block min-w-0 text-xs text-muted-foreground">API key
               <Input type="password" autoComplete="off" value={key} onChange={(e) => setKey(e.target.value)} placeholder={saved?.hasKey ? 'Saved' : 'Not set'} className={field} />
-              {saved?.hasKey && <span className="mt-1 block">Saved. Type a new key to replace it.</span>}
+              {saved?.hasKey && (hostMoved
+                ? <span className="mt-1 block text-warning">A new host does not get the saved key: enter it again.</span>
+                : <span className="mt-1 block">Saved. Type a new key to replace it.</span>)}
             </label>
           </div>
         )}
@@ -140,6 +155,7 @@ export default function MeetingsSettings({ state, onOpenMeeting }: { state: AppS
       </p>
 
       <h4 className={h4}>Inbox: unassigned meetings</h4>
+      <div className="mb-2"><UploadMeeting projectId="" onUploaded={() => setUploads((n) => n + 1)} /></div>
       {inbox.error ? <p role="alert" className="text-xs text-danger">{inbox.error}</p>
         : inbox.list && <MeetingsList list={inbox.list} live={state.meetingLive ?? {}} onOpen={(id) => onOpenMeeting?.(id)} empty="No unassigned meetings. Recordings uploaded without a project wait here." />}
     </div>
