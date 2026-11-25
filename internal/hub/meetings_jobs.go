@@ -45,6 +45,8 @@ type jobStep struct {
 	queuedStatus  string
 	runningStatus string
 	needsAudio    bool
+	// needsTranscript: the worker fetches the transcript from the job's transcript URL
+	needsTranscript bool
 	// settings builds the step's settings at dispatch time ("" keeps the job's stored settings).
 	settings func(s *Server, job store.MeetingJob, m proto.Meeting) (string, error)
 	// parse checks a result before it is claimed (an invalid result changes nothing: 400).
@@ -58,9 +60,10 @@ type meetingJobs struct {
 	mu    sync.Mutex  // serializes dispatching
 	kick  atomic.Bool // a dispatch is pending
 	steps map[string]jobStep
-	// onTranscribed runs after a transcript is stored (Task 4: the summary); nil makes the meeting ready.
+	// onTranscribed runs after a transcript is stored (the summary, meetings_summary.go); nil makes the
+	// meeting ready.
 	onTranscribed func(meetingID string)
-	// onLocalSummary applies a summarize_local result (Task 4); nil fails the job.
+	// onLocalSummary applies a summarize_local result; nil fails the job.
 	onLocalSummary func(job store.MeetingJob, raw json.RawMessage) error
 }
 
@@ -125,6 +128,7 @@ func (s *Server) startMeetingJobs(ctx context.Context) {
 	go func() {
 		t := time.NewTicker(jobCheckEvery)
 		defer t.Stop()
+		s.recoverSummaries()
 		s.kickJobs()
 		for {
 			select {
@@ -270,6 +274,9 @@ func (s *Server) startMeetingJob(j store.MeetingJob, machine string) startOutcom
 	if step.needsAudio {
 		req.AudioURL = "/api/meeting-jobs/" + tok + "/audio"
 	}
+	if step.needsTranscript {
+		req.TranscriptURL = "/api/meeting-jobs/" + tok + "/transcript"
+	}
 	s.setMeetingState(m.ID, step.runningStatus, "", 0, "starting")
 	err = s.hub.call(context.Background(), machine, "meeting_job_start", req, nil)
 	switch {
@@ -292,7 +299,7 @@ func (s *Server) startMeetingJob(j store.MeetingJob, machine string) startOutcom
 func transcribeSettings(s *Server, _ store.MeetingJob, m proto.Meeting) (string, error) {
 	lang := m.Language
 	if lang == "" {
-		lang = defaultLanguage
+		lang = s.defaultMeetingLanguage()
 	}
 	b, err := json.Marshal(proto.MeetingTranscribeSettings{Language: lang, Channels: m.Channels, Speakers: m.SpeakerCount, Model: defaultWhisperModel})
 	return string(b), err
@@ -579,6 +586,19 @@ func (s *Server) handleRetryMeeting(w http.ResponseWriter, r *http.Request) {
 	}
 	if m.Status != "failed" {
 		apiErr(w, 409, "only a failed meeting can be retried")
+		return
+	}
+	// a meeting that has its transcript failed while summarising: summarise it again
+	if segs, err := s.st.MeetingSegments(id); err != nil {
+		apiErr(w, 500, "internal error")
+		return
+	} else if len(segs) > 0 {
+		if err := s.summarizeMeeting(id, ""); err != nil {
+			apiErr(w, 400, trimRunes(err.Error(), maxJobError))
+			return
+		}
+		m, _ = s.st.Meeting(id)
+		writeJSON(w, 200, m)
 		return
 	}
 	if !m.HasAudio {

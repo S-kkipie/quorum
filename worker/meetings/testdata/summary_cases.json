@@ -1,0 +1,864 @@
+{
+ "_doc": "Shared summary cases: worker.py (tests/test_parity.py) and the hub (meetings_minutes_test.go) must both produce every 'want'. The inputs are hand-written and made up; the wants come from worker.py: regenerate them with QUORUM_UPDATE_CASES=1 pytest tests/test_parity.py, then make the Go side pass.",
+ "parseTs": [
+  [
+   "01:05",
+   65000
+  ],
+  [
+   "[12:30]",
+   750000
+  ],
+  [
+   "1:02:03",
+   3723000
+  ],
+  [
+   1500,
+   1500
+  ],
+  [
+   -1,
+   null
+  ],
+  [
+   true,
+   null
+  ],
+  [
+   "abc",
+   null
+  ],
+  [
+   "(00:07)",
+   7000
+  ],
+  [
+   "123:45",
+   null
+  ],
+  [
+   null,
+   null
+  ],
+  [
+   "90000",
+   90000
+  ],
+  [
+   12.7,
+   12
+  ]
+ ],
+ "parseAnswer": [
+  [
+   "{\"title\": \"A\"}",
+   {
+    "title": "A"
+   }
+  ],
+  [
+   "Here you go: {\"title\": \"B\"} thanks",
+   {
+    "title": "B"
+   }
+  ],
+  [
+   "no json",
+   null
+  ],
+  [
+   "null",
+   null
+  ],
+  [
+   "[1, 2]",
+   [
+    1,
+    2
+   ]
+  ],
+  [
+   "```json\n{\"x\": {\"y\": 1}}\n```",
+   {
+    "x": {
+     "y": 1
+    }
+   }
+  ]
+ ],
+ "repair": [
+  {
+   "name": "invented owner and due date are dropped",
+   "transcript": "[00:01] Ana: I will send the report on Friday\n[00:09] Speaker 2: ok",
+   "maxMs": 20000,
+   "raw": {
+    "title": "  Weekly sync  ",
+    "summary": "S",
+    "topics": [
+     "a",
+     "a",
+     " b ",
+     3
+    ],
+    "decisions": [
+     "Ship it",
+     {
+      "text": "Use Go",
+      "ts": "00:09"
+     },
+     {
+      "text": ""
+     },
+     5,
+     {
+      "text": "Late",
+      "ts": "59:00"
+     }
+    ],
+    "openPoints": [
+     {
+      "text": "Budget",
+      "ts_ms": 1000
+     }
+    ],
+    "actions": [
+     {
+      "text": "Send the report",
+      "owner": "ana",
+      "due": "Friday",
+      "ts": "[00:01]"
+     },
+     {
+      "text": "Book a room",
+      "owner": "Carlos",
+      "due": "next Monday"
+     },
+     {
+      "text": "Call",
+      "owner": "unassigned",
+      "due": "TBD"
+     },
+     "Plain string action",
+     {
+      "owner": "x"
+     }
+    ],
+    "attendees": [
+     "Ana",
+     "Speaker 2",
+     "Carlos",
+     "Me",
+     "Persona 3"
+    ]
+   },
+   "want": {
+    "title": "Weekly sync",
+    "summary": "S",
+    "topics": [
+     "a",
+     "b"
+    ],
+    "decisions": [
+     {
+      "text": "Ship it"
+     },
+     {
+      "text": "Use Go",
+      "ts_ms": 9000
+     },
+     {
+      "text": "Late"
+     }
+    ],
+    "openPoints": [
+     {
+      "text": "Budget",
+      "ts_ms": 1000
+     }
+    ],
+    "actions": [
+     {
+      "text": "Send the report",
+      "owner": "ana",
+      "due": "Friday",
+      "ts_ms": 1000
+     },
+     {
+      "text": "Book a room",
+      "owner": "",
+      "due": ""
+     },
+     {
+      "text": "Call",
+      "owner": "",
+      "due": ""
+     },
+     {
+      "text": "Plain string action",
+      "owner": "",
+      "due": ""
+     }
+    ],
+    "attendees": [
+     "Ana"
+    ]
+   }
+  },
+  {
+   "name": "garbage",
+   "transcript": "[00:00] hi",
+   "maxMs": 1000,
+   "raw": "not an object",
+   "want": {
+    "title": "",
+    "summary": "",
+    "topics": [],
+    "decisions": [],
+    "openPoints": [],
+    "actions": [],
+    "attendees": []
+   }
+  },
+  {
+   "name": "missing fields and wrong types",
+   "transcript": "[00:00] Luis: hola",
+   "maxMs": -1,
+   "raw": {
+    "title": [
+     "x"
+    ],
+    "summary": 7,
+    "decisions": "nope",
+    "actions": {
+     "text": "x"
+    },
+    "attendees": [
+     "Luis",
+     "luis",
+     "Luis"
+    ]
+   },
+   "want": {
+    "title": "",
+    "summary": "",
+    "topics": [],
+    "decisions": [],
+    "openPoints": [],
+    "actions": [],
+    "attendees": [
+     "Luis",
+     "luis"
+    ]
+   }
+  },
+  {
+   "name": "long title and unicode",
+   "transcript": "[00:00] Señora Núñez: revisará el contrato el martes",
+   "maxMs": -1,
+   "raw": {
+    "title": "TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT",
+    "actions": [
+     {
+      "text": "Revisar el contrato",
+      "owner": "señora  núñez",
+      "due": "el martes",
+      "ts": 0
+     }
+    ],
+    "attendees": [
+     "Señora Núñez"
+    ]
+   },
+   "want": {
+    "title": "TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT",
+    "summary": "",
+    "topics": [],
+    "decisions": [],
+    "openPoints": [],
+    "actions": [
+     {
+      "text": "Revisar el contrato",
+      "owner": "señora  núñez",
+      "due": "el martes",
+      "ts_ms": 0
+     }
+    ],
+    "attendees": [
+     "Señora Núñez"
+    ]
+   }
+  }
+ ],
+ "naiveMerge": [
+  {
+   "parts": [
+    {
+     "title": "",
+     "summary": "First part.",
+     "topics": [
+      "a"
+     ],
+     "decisions": [
+      {
+       "text": "D1",
+       "ts_ms": 1000
+      }
+     ],
+     "openPoints": [],
+     "actions": [
+      {
+       "text": "A1",
+       "owner": "",
+       "due": ""
+      }
+     ],
+     "attendees": [
+      "Ana"
+     ]
+    },
+    {
+     "title": "Second",
+     "summary": "Second part.",
+     "topics": [
+      "a",
+      "b"
+     ],
+     "decisions": [
+      {
+       "text": "d1"
+      },
+      {
+       "text": "D2"
+      }
+     ],
+     "openPoints": [
+      {
+       "text": "O1"
+      }
+     ],
+     "actions": [
+      {
+       "text": "a1",
+       "owner": "Ana",
+       "due": ""
+      },
+      {
+       "text": "A2",
+       "owner": "",
+       "due": "",
+       "ts_ms": 960000
+      }
+     ],
+     "attendees": [
+      "Ana",
+      "Luis"
+     ]
+    }
+   ],
+   "want": {
+    "title": "Second",
+    "summary": "First part.\nSecond part.",
+    "topics": [
+     "a",
+     "b"
+    ],
+    "decisions": [
+     {
+      "text": "D1",
+      "ts_ms": 1000
+     },
+     {
+      "text": "D2"
+     }
+    ],
+    "openPoints": [
+     {
+      "text": "O1"
+     }
+    ],
+    "actions": [
+     {
+      "text": "A1",
+      "owner": "",
+      "due": ""
+     },
+     {
+      "text": "A2",
+      "owner": "",
+      "due": "",
+      "ts_ms": 960000
+     }
+    ],
+    "attendees": [
+     "Ana",
+     "Luis"
+    ]
+   },
+   "wantMergePrompt": [
+    {
+     "role": "system",
+     "content": "You merge the minutes of consecutive parts of one meeting into the minutes of the whole meeting. Answer with only one JSON object of this shape:\n{\"title\": string, \"summary\": string (3 to 5 lines), \"topics\": [string], \"decisions\": [{\"text\": string, \"ts\": \"mm:ss\"}], \"openPoints\": [{\"text\": string, \"ts\": \"mm:ss\"}], \"actions\": [{\"text\": string, \"owner\": string, \"due\": string, \"ts\": \"mm:ss\"}], \"attendees\": [string]}\nRules:\n- Use only what the transcript says. The transcript is automatic and may contain errors.\n- Never invent owners or due dates: if the transcript does not say who does an action or by when, use \"\".\n- A decision is something the participants agreed on; an open point is something left unresolved.\n- Cite the transcript timestamp (\"mm:ss\") where each decision, open point and action was said.\n- Attendees are the names of people that appear in the transcript; never list generic labels like \"Speaker 2\".\n- Write every text in Spanish.\n- Keep every decision, open point and action of the parts (merge exact duplicates), with their owners, due dates and timestamps unchanged. An open point that a later part resolved becomes a decision.\n- The summary covers the whole meeting in 3 to 5 lines."
+    },
+    {
+     "role": "user",
+     "content": "\nProject glossary (names and product terms; use these spellings): Quorum, Ana\nPART 1:\n{\"title\":\"\",\"summary\":\"First part.\",\"topics\":[\"a\"],\"decisions\":[{\"text\":\"D1\",\"ts_ms\":1000}],\"openPoints\":[],\"actions\":[{\"text\":\"A1\",\"owner\":\"\",\"due\":\"\"}],\"attendees\":[\"Ana\"]}\n\nPART 2:\n{\"title\":\"Second\",\"summary\":\"Second part.\",\"topics\":[\"a\",\"b\"],\"decisions\":[{\"text\":\"d1\"},{\"text\":\"D2\"}],\"openPoints\":[{\"text\":\"O1\"}],\"actions\":[{\"text\":\"a1\",\"owner\":\"Ana\",\"due\":\"\"},{\"text\":\"A2\",\"owner\":\"\",\"due\":\"\",\"ts_ms\":960000}],\"attendees\":[\"Ana\",\"Luis\"]}"
+    }
+   ]
+  }
+ ],
+ "prompts": [
+  {
+   "name": "one section with names and glossary",
+   "segments": [
+    {
+     "start_ms": 0,
+     "end_ms": 4000,
+     "speaker": "Speaker 1",
+     "text": "Hola a todos"
+    },
+    {
+     "start_ms": 5000,
+     "end_ms": 9000,
+     "speaker": "Speaker 2",
+     "text": " "
+    },
+    {
+     "start_ms": 8000,
+     "end_ms": 12000,
+     "speaker": "Speaker 2",
+     "text": "Empiezo yo"
+    },
+    {
+     "start_ms": 3700000,
+     "end_ms": 3704000,
+     "speaker": "",
+     "text": "Una hora después"
+    }
+   ],
+   "speakerNames": {
+    "Speaker 2": "Luis",
+    "Speaker 1": " "
+   },
+   "language": "es",
+   "glossary": [
+    "Quorum",
+    " ",
+    "Ana"
+   ],
+   "sectionMinutes": 120,
+   "want": [
+    [
+     {
+      "role": "system",
+      "content": "You write meeting minutes. Answer with only one JSON object of this shape:\n{\"title\": string, \"summary\": string (3 to 5 lines), \"topics\": [string], \"decisions\": [{\"text\": string, \"ts\": \"mm:ss\"}], \"openPoints\": [{\"text\": string, \"ts\": \"mm:ss\"}], \"actions\": [{\"text\": string, \"owner\": string, \"due\": string, \"ts\": \"mm:ss\"}], \"attendees\": [string]}\nRules:\n- Use only what the transcript says. The transcript is automatic and may contain errors.\n- Never invent owners or due dates: if the transcript does not say who does an action or by when, use \"\".\n- A decision is something the participants agreed on; an open point is something left unresolved.\n- Cite the transcript timestamp (\"mm:ss\") where each decision, open point and action was said.\n- Attendees are the names of people that appear in the transcript; never list generic labels like \"Speaker 2\".\n- Write every text in Spanish."
+     },
+     {
+      "role": "user",
+      "content": "Transcript of a meeting, with timestamps and speakers.\n\nProject glossary (names and product terms; use these spellings): Quorum, Ana\n\nTRANSCRIPT:\n[00:00] Speaker 1: Hola a todos\n[00:08] Luis: Empiezo yo\n[1:01:40] Una hora después"
+     }
+    ]
+   ]
+  },
+  {
+   "name": "three sections",
+   "segments": [
+    {
+     "start_ms": 0,
+     "end_ms": 4000,
+     "speaker": "Me",
+     "text": "start"
+    },
+    {
+     "start_ms": 899000,
+     "end_ms": 903000,
+     "speaker": "Others",
+     "text": "edge"
+    },
+    {
+     "start_ms": 900000,
+     "end_ms": 904000,
+     "speaker": "Me",
+     "text": "second"
+    },
+    {
+     "start_ms": 2000000,
+     "end_ms": 2004000,
+     "speaker": "Others",
+     "text": "third {where} {glossary}"
+    }
+   ],
+   "speakerNames": {},
+   "language": "pt-BR",
+   "glossary": [],
+   "sectionMinutes": 15,
+   "want": [
+    [
+     {
+      "role": "system",
+      "content": "You write meeting minutes. Answer with only one JSON object of this shape:\n{\"title\": string, \"summary\": string (3 to 5 lines), \"topics\": [string], \"decisions\": [{\"text\": string, \"ts\": \"mm:ss\"}], \"openPoints\": [{\"text\": string, \"ts\": \"mm:ss\"}], \"actions\": [{\"text\": string, \"owner\": string, \"due\": string, \"ts\": \"mm:ss\"}], \"attendees\": [string]}\nRules:\n- Use only what the transcript says. The transcript is automatic and may contain errors.\n- Never invent owners or due dates: if the transcript does not say who does an action or by when, use \"\".\n- A decision is something the participants agreed on; an open point is something left unresolved.\n- Cite the transcript timestamp (\"mm:ss\") where each decision, open point and action was said.\n- Attendees are the names of people that appear in the transcript; never list generic labels like \"Speaker 2\".\n- Write every text in Portuguese."
+     },
+     {
+      "role": "user",
+      "content": "Transcript of a meeting, with timestamps and speakers. This is part 1 of 3 of a longer meeting.\n\nTRANSCRIPT:\n[00:00] Me: start\n[14:59] Others: edge"
+     }
+    ],
+    [
+     {
+      "role": "system",
+      "content": "You write meeting minutes. Answer with only one JSON object of this shape:\n{\"title\": string, \"summary\": string (3 to 5 lines), \"topics\": [string], \"decisions\": [{\"text\": string, \"ts\": \"mm:ss\"}], \"openPoints\": [{\"text\": string, \"ts\": \"mm:ss\"}], \"actions\": [{\"text\": string, \"owner\": string, \"due\": string, \"ts\": \"mm:ss\"}], \"attendees\": [string]}\nRules:\n- Use only what the transcript says. The transcript is automatic and may contain errors.\n- Never invent owners or due dates: if the transcript does not say who does an action or by when, use \"\".\n- A decision is something the participants agreed on; an open point is something left unresolved.\n- Cite the transcript timestamp (\"mm:ss\") where each decision, open point and action was said.\n- Attendees are the names of people that appear in the transcript; never list generic labels like \"Speaker 2\".\n- Write every text in Portuguese."
+     },
+     {
+      "role": "user",
+      "content": "Transcript of a meeting, with timestamps and speakers. This is part 2 of 3 of a longer meeting.\n\nTRANSCRIPT:\n[15:00] Me: second"
+     }
+    ],
+    [
+     {
+      "role": "system",
+      "content": "You write meeting minutes. Answer with only one JSON object of this shape:\n{\"title\": string, \"summary\": string (3 to 5 lines), \"topics\": [string], \"decisions\": [{\"text\": string, \"ts\": \"mm:ss\"}], \"openPoints\": [{\"text\": string, \"ts\": \"mm:ss\"}], \"actions\": [{\"text\": string, \"owner\": string, \"due\": string, \"ts\": \"mm:ss\"}], \"attendees\": [string]}\nRules:\n- Use only what the transcript says. The transcript is automatic and may contain errors.\n- Never invent owners or due dates: if the transcript does not say who does an action or by when, use \"\".\n- A decision is something the participants agreed on; an open point is something left unresolved.\n- Cite the transcript timestamp (\"mm:ss\") where each decision, open point and action was said.\n- Attendees are the names of people that appear in the transcript; never list generic labels like \"Speaker 2\".\n- Write every text in Portuguese."
+     },
+     {
+      "role": "user",
+      "content": "Transcript of a meeting, with timestamps and speakers. This is part 3 of 3 of a longer meeting.\n\nTRANSCRIPT:\n[33:20] Others: third {where} {glossary}"
+     }
+    ]
+   ]
+  },
+  {
+   "name": "unknown language",
+   "segments": [
+    {
+     "start_ms": 1000,
+     "end_ms": 5000,
+     "speaker": "",
+     "text": "x"
+    }
+   ],
+   "speakerNames": {},
+   "language": "",
+   "glossary": [],
+   "sectionMinutes": 15,
+   "want": [
+    [
+     {
+      "role": "system",
+      "content": "You write meeting minutes. Answer with only one JSON object of this shape:\n{\"title\": string, \"summary\": string (3 to 5 lines), \"topics\": [string], \"decisions\": [{\"text\": string, \"ts\": \"mm:ss\"}], \"openPoints\": [{\"text\": string, \"ts\": \"mm:ss\"}], \"actions\": [{\"text\": string, \"owner\": string, \"due\": string, \"ts\": \"mm:ss\"}], \"attendees\": [string]}\nRules:\n- Use only what the transcript says. The transcript is automatic and may contain errors.\n- Never invent owners or due dates: if the transcript does not say who does an action or by when, use \"\".\n- A decision is something the participants agreed on; an open point is something left unresolved.\n- Cite the transcript timestamp (\"mm:ss\") where each decision, open point and action was said.\n- Attendees are the names of people that appear in the transcript; never list generic labels like \"Speaker 2\".\n- Write every text in the transcript's language."
+     },
+     {
+      "role": "user",
+      "content": "Transcript of a meeting, with timestamps and speakers.\n\nTRANSCRIPT:\n[00:01] x"
+     }
+    ]
+   ]
+  }
+ ],
+ "runs": [
+  {
+   "name": "long meeting: sections then merge",
+   "language": "es",
+   "glossary": [
+    "Quorum"
+   ],
+   "speakerNames": {
+    "Speaker 2": "Luis"
+   },
+   "segments": [
+    {
+     "start_ms": 0,
+     "end_ms": 4000,
+     "speaker": "Speaker 1",
+     "text": "Luis prepara el informe para el viernes"
+    },
+    {
+     "start_ms": 30000,
+     "end_ms": 34000,
+     "speaker": "Speaker 2",
+     "text": "De acuerdo"
+    },
+    {
+     "start_ms": 1000000,
+     "end_ms": 1004000,
+     "speaker": "Speaker 1",
+     "text": "Decidimos usar Go"
+    },
+    {
+     "start_ms": 2000000,
+     "end_ms": 2004000,
+     "speaker": "Speaker 2",
+     "text": "Queda pendiente el presupuesto"
+    }
+   ],
+   "answers": [
+    "{\"title\": \"Parte 1\", \"summary\": \"Inicio.\", \"actions\": [{\"text\": \"Preparar el informe\", \"owner\": \"Luis\", \"due\": \"viernes\", \"ts\": \"00:00\"}], \"attendees\": [\"Luis\", \"Speaker 1\"]}",
+    "{\"title\": \"Parte 2\", \"summary\": \"Medio.\", \"decisions\": [{\"text\": \"Usar Go\", \"ts\": \"16:40\"}]}",
+    "sure: {\"title\": \"Parte 3\", \"openPoints\": [\"Presupuesto\"]}",
+    "{\"title\": \"Reunión\", \"summary\": \"Todo.\", \"decisions\": [{\"text\": \"Usar Go\", \"ts\": \"16:40\"}], \"openPoints\": [{\"text\": \"Presupuesto\", \"ts\": \"33:20\"}], \"actions\": [{\"text\": \"Preparar el informe\", \"owner\": \"Luis\", \"due\": \"viernes\", \"ts\": \"00:00\"}, {\"text\": \"Llamar al cliente\", \"owner\": \"Marta\", \"due\": \"mañana\"}], \"attendees\": [\"Luis\", \"Marta\"]}"
+   ],
+   "want": {
+    "title": "Reunión",
+    "summary": "Todo.",
+    "topics": [],
+    "decisions": [
+     {
+      "text": "Usar Go",
+      "ts_ms": 1000000
+     }
+    ],
+    "openPoints": [
+     {
+      "text": "Presupuesto",
+      "ts_ms": 2000000
+     }
+    ],
+    "actions": [
+     {
+      "text": "Preparar el informe",
+      "owner": "Luis",
+      "due": "viernes",
+      "ts_ms": 0
+     },
+     {
+      "text": "Llamar al cliente",
+      "owner": "",
+      "due": ""
+     }
+    ],
+    "attendees": [
+     "Luis"
+    ]
+   },
+   "wantPrompts": [
+    [
+     {
+      "role": "system",
+      "content": "You write meeting minutes. Answer with only one JSON object of this shape:\n{\"title\": string, \"summary\": string (3 to 5 lines), \"topics\": [string], \"decisions\": [{\"text\": string, \"ts\": \"mm:ss\"}], \"openPoints\": [{\"text\": string, \"ts\": \"mm:ss\"}], \"actions\": [{\"text\": string, \"owner\": string, \"due\": string, \"ts\": \"mm:ss\"}], \"attendees\": [string]}\nRules:\n- Use only what the transcript says. The transcript is automatic and may contain errors.\n- Never invent owners or due dates: if the transcript does not say who does an action or by when, use \"\".\n- A decision is something the participants agreed on; an open point is something left unresolved.\n- Cite the transcript timestamp (\"mm:ss\") where each decision, open point and action was said.\n- Attendees are the names of people that appear in the transcript; never list generic labels like \"Speaker 2\".\n- Write every text in Spanish."
+     },
+     {
+      "role": "user",
+      "content": "Transcript of a meeting, with timestamps and speakers. This is part 1 of 3 of a longer meeting.\n\nProject glossary (names and product terms; use these spellings): Quorum\n\nTRANSCRIPT:\n[00:00] Speaker 1: Luis prepara el informe para el viernes\n[00:30] Luis: De acuerdo"
+     }
+    ],
+    [
+     {
+      "role": "system",
+      "content": "You write meeting minutes. Answer with only one JSON object of this shape:\n{\"title\": string, \"summary\": string (3 to 5 lines), \"topics\": [string], \"decisions\": [{\"text\": string, \"ts\": \"mm:ss\"}], \"openPoints\": [{\"text\": string, \"ts\": \"mm:ss\"}], \"actions\": [{\"text\": string, \"owner\": string, \"due\": string, \"ts\": \"mm:ss\"}], \"attendees\": [string]}\nRules:\n- Use only what the transcript says. The transcript is automatic and may contain errors.\n- Never invent owners or due dates: if the transcript does not say who does an action or by when, use \"\".\n- A decision is something the participants agreed on; an open point is something left unresolved.\n- Cite the transcript timestamp (\"mm:ss\") where each decision, open point and action was said.\n- Attendees are the names of people that appear in the transcript; never list generic labels like \"Speaker 2\".\n- Write every text in Spanish."
+     },
+     {
+      "role": "user",
+      "content": "Transcript of a meeting, with timestamps and speakers. This is part 2 of 3 of a longer meeting.\n\nProject glossary (names and product terms; use these spellings): Quorum\n\nTRANSCRIPT:\n[16:40] Speaker 1: Decidimos usar Go"
+     }
+    ],
+    [
+     {
+      "role": "system",
+      "content": "You write meeting minutes. Answer with only one JSON object of this shape:\n{\"title\": string, \"summary\": string (3 to 5 lines), \"topics\": [string], \"decisions\": [{\"text\": string, \"ts\": \"mm:ss\"}], \"openPoints\": [{\"text\": string, \"ts\": \"mm:ss\"}], \"actions\": [{\"text\": string, \"owner\": string, \"due\": string, \"ts\": \"mm:ss\"}], \"attendees\": [string]}\nRules:\n- Use only what the transcript says. The transcript is automatic and may contain errors.\n- Never invent owners or due dates: if the transcript does not say who does an action or by when, use \"\".\n- A decision is something the participants agreed on; an open point is something left unresolved.\n- Cite the transcript timestamp (\"mm:ss\") where each decision, open point and action was said.\n- Attendees are the names of people that appear in the transcript; never list generic labels like \"Speaker 2\".\n- Write every text in Spanish."
+     },
+     {
+      "role": "user",
+      "content": "Transcript of a meeting, with timestamps and speakers. This is part 3 of 3 of a longer meeting.\n\nProject glossary (names and product terms; use these spellings): Quorum\n\nTRANSCRIPT:\n[33:20] Luis: Queda pendiente el presupuesto"
+     }
+    ],
+    [
+     {
+      "role": "system",
+      "content": "You merge the minutes of consecutive parts of one meeting into the minutes of the whole meeting. Answer with only one JSON object of this shape:\n{\"title\": string, \"summary\": string (3 to 5 lines), \"topics\": [string], \"decisions\": [{\"text\": string, \"ts\": \"mm:ss\"}], \"openPoints\": [{\"text\": string, \"ts\": \"mm:ss\"}], \"actions\": [{\"text\": string, \"owner\": string, \"due\": string, \"ts\": \"mm:ss\"}], \"attendees\": [string]}\nRules:\n- Use only what the transcript says. The transcript is automatic and may contain errors.\n- Never invent owners or due dates: if the transcript does not say who does an action or by when, use \"\".\n- A decision is something the participants agreed on; an open point is something left unresolved.\n- Cite the transcript timestamp (\"mm:ss\") where each decision, open point and action was said.\n- Attendees are the names of people that appear in the transcript; never list generic labels like \"Speaker 2\".\n- Write every text in Spanish.\n- Keep every decision, open point and action of the parts (merge exact duplicates), with their owners, due dates and timestamps unchanged. An open point that a later part resolved becomes a decision.\n- The summary covers the whole meeting in 3 to 5 lines."
+     },
+     {
+      "role": "user",
+      "content": "\nProject glossary (names and product terms; use these spellings): Quorum\nPART 1:\n{\"title\":\"Parte 1\",\"summary\":\"Inicio.\",\"topics\":[],\"decisions\":[],\"openPoints\":[],\"actions\":[{\"text\":\"Preparar el informe\",\"owner\":\"Luis\",\"due\":\"viernes\",\"ts_ms\":0}],\"attendees\":[\"Luis\"]}\n\nPART 2:\n{\"title\":\"Parte 2\",\"summary\":\"Medio.\",\"topics\":[],\"decisions\":[{\"text\":\"Usar Go\",\"ts_ms\":1000000}],\"openPoints\":[],\"actions\":[],\"attendees\":[]}\n\nPART 3:\n{\"title\":\"Parte 3\",\"summary\":\"\",\"topics\":[],\"decisions\":[],\"openPoints\":[{\"text\":\"Presupuesto\"}],\"actions\":[],\"attendees\":[]}"
+     }
+    ]
+   ]
+  },
+  {
+   "name": "unusable merge falls back",
+   "language": "en",
+   "glossary": [],
+   "speakerNames": {},
+   "segments": [
+    {
+     "start_ms": 0,
+     "end_ms": 4000,
+     "speaker": "",
+     "text": "x"
+    },
+    {
+     "start_ms": 960000,
+     "end_ms": 964000,
+     "speaker": "",
+     "text": "y"
+    }
+   ],
+   "answers": [
+    "{\"summary\": \"one\", \"actions\": [\"do x\"]}",
+    "{\"summary\": \"two\"}",
+    "[\"not\", \"an\", \"object\"]"
+   ],
+   "want": {
+    "title": "",
+    "summary": "one\ntwo",
+    "topics": [],
+    "decisions": [],
+    "openPoints": [],
+    "actions": [
+     {
+      "text": "do x",
+      "owner": "",
+      "due": ""
+     }
+    ],
+    "attendees": []
+   },
+   "wantPrompts": [
+    [
+     {
+      "role": "system",
+      "content": "You write meeting minutes. Answer with only one JSON object of this shape:\n{\"title\": string, \"summary\": string (3 to 5 lines), \"topics\": [string], \"decisions\": [{\"text\": string, \"ts\": \"mm:ss\"}], \"openPoints\": [{\"text\": string, \"ts\": \"mm:ss\"}], \"actions\": [{\"text\": string, \"owner\": string, \"due\": string, \"ts\": \"mm:ss\"}], \"attendees\": [string]}\nRules:\n- Use only what the transcript says. The transcript is automatic and may contain errors.\n- Never invent owners or due dates: if the transcript does not say who does an action or by when, use \"\".\n- A decision is something the participants agreed on; an open point is something left unresolved.\n- Cite the transcript timestamp (\"mm:ss\") where each decision, open point and action was said.\n- Attendees are the names of people that appear in the transcript; never list generic labels like \"Speaker 2\".\n- Write every text in English."
+     },
+     {
+      "role": "user",
+      "content": "Transcript of a meeting, with timestamps and speakers. This is part 1 of 2 of a longer meeting.\n\nTRANSCRIPT:\n[00:00] x"
+     }
+    ],
+    [
+     {
+      "role": "system",
+      "content": "You write meeting minutes. Answer with only one JSON object of this shape:\n{\"title\": string, \"summary\": string (3 to 5 lines), \"topics\": [string], \"decisions\": [{\"text\": string, \"ts\": \"mm:ss\"}], \"openPoints\": [{\"text\": string, \"ts\": \"mm:ss\"}], \"actions\": [{\"text\": string, \"owner\": string, \"due\": string, \"ts\": \"mm:ss\"}], \"attendees\": [string]}\nRules:\n- Use only what the transcript says. The transcript is automatic and may contain errors.\n- Never invent owners or due dates: if the transcript does not say who does an action or by when, use \"\".\n- A decision is something the participants agreed on; an open point is something left unresolved.\n- Cite the transcript timestamp (\"mm:ss\") where each decision, open point and action was said.\n- Attendees are the names of people that appear in the transcript; never list generic labels like \"Speaker 2\".\n- Write every text in English."
+     },
+     {
+      "role": "user",
+      "content": "Transcript of a meeting, with timestamps and speakers. This is part 2 of 2 of a longer meeting.\n\nTRANSCRIPT:\n[16:00] y"
+     }
+    ],
+    [
+     {
+      "role": "system",
+      "content": "You merge the minutes of consecutive parts of one meeting into the minutes of the whole meeting. Answer with only one JSON object of this shape:\n{\"title\": string, \"summary\": string (3 to 5 lines), \"topics\": [string], \"decisions\": [{\"text\": string, \"ts\": \"mm:ss\"}], \"openPoints\": [{\"text\": string, \"ts\": \"mm:ss\"}], \"actions\": [{\"text\": string, \"owner\": string, \"due\": string, \"ts\": \"mm:ss\"}], \"attendees\": [string]}\nRules:\n- Use only what the transcript says. The transcript is automatic and may contain errors.\n- Never invent owners or due dates: if the transcript does not say who does an action or by when, use \"\".\n- A decision is something the participants agreed on; an open point is something left unresolved.\n- Cite the transcript timestamp (\"mm:ss\") where each decision, open point and action was said.\n- Attendees are the names of people that appear in the transcript; never list generic labels like \"Speaker 2\".\n- Write every text in English.\n- Keep every decision, open point and action of the parts (merge exact duplicates), with their owners, due dates and timestamps unchanged. An open point that a later part resolved becomes a decision.\n- The summary covers the whole meeting in 3 to 5 lines."
+     },
+     {
+      "role": "user",
+      "content": "PART 1:\n{\"title\":\"\",\"summary\":\"one\",\"topics\":[],\"decisions\":[],\"openPoints\":[],\"actions\":[{\"text\":\"do x\",\"owner\":\"\",\"due\":\"\"}],\"attendees\":[]}\n\nPART 2:\n{\"title\":\"\",\"summary\":\"two\",\"topics\":[],\"decisions\":[],\"openPoints\":[],\"actions\":[],\"attendees\":[]}"
+     }
+    ]
+   ]
+  },
+  {
+   "name": "empty merge falls back",
+   "language": "en",
+   "glossary": [],
+   "speakerNames": {},
+   "segments": [
+    {
+     "start_ms": 0,
+     "end_ms": 4000,
+     "speaker": "",
+     "text": "x"
+    },
+    {
+     "start_ms": 960000,
+     "end_ms": 964000,
+     "speaker": "",
+     "text": "y"
+    }
+   ],
+   "answers": [
+    "{\"summary\": \"one\"}",
+    "{\"summary\": \"two\"}",
+    "{\"title\": \"only a title\"}"
+   ],
+   "want": {
+    "title": "",
+    "summary": "one\ntwo",
+    "topics": [],
+    "decisions": [],
+    "openPoints": [],
+    "actions": [],
+    "attendees": []
+   },
+   "wantPrompts": [
+    [
+     {
+      "role": "system",
+      "content": "You write meeting minutes. Answer with only one JSON object of this shape:\n{\"title\": string, \"summary\": string (3 to 5 lines), \"topics\": [string], \"decisions\": [{\"text\": string, \"ts\": \"mm:ss\"}], \"openPoints\": [{\"text\": string, \"ts\": \"mm:ss\"}], \"actions\": [{\"text\": string, \"owner\": string, \"due\": string, \"ts\": \"mm:ss\"}], \"attendees\": [string]}\nRules:\n- Use only what the transcript says. The transcript is automatic and may contain errors.\n- Never invent owners or due dates: if the transcript does not say who does an action or by when, use \"\".\n- A decision is something the participants agreed on; an open point is something left unresolved.\n- Cite the transcript timestamp (\"mm:ss\") where each decision, open point and action was said.\n- Attendees are the names of people that appear in the transcript; never list generic labels like \"Speaker 2\".\n- Write every text in English."
+     },
+     {
+      "role": "user",
+      "content": "Transcript of a meeting, with timestamps and speakers. This is part 1 of 2 of a longer meeting.\n\nTRANSCRIPT:\n[00:00] x"
+     }
+    ],
+    [
+     {
+      "role": "system",
+      "content": "You write meeting minutes. Answer with only one JSON object of this shape:\n{\"title\": string, \"summary\": string (3 to 5 lines), \"topics\": [string], \"decisions\": [{\"text\": string, \"ts\": \"mm:ss\"}], \"openPoints\": [{\"text\": string, \"ts\": \"mm:ss\"}], \"actions\": [{\"text\": string, \"owner\": string, \"due\": string, \"ts\": \"mm:ss\"}], \"attendees\": [string]}\nRules:\n- Use only what the transcript says. The transcript is automatic and may contain errors.\n- Never invent owners or due dates: if the transcript does not say who does an action or by when, use \"\".\n- A decision is something the participants agreed on; an open point is something left unresolved.\n- Cite the transcript timestamp (\"mm:ss\") where each decision, open point and action was said.\n- Attendees are the names of people that appear in the transcript; never list generic labels like \"Speaker 2\".\n- Write every text in English."
+     },
+     {
+      "role": "user",
+      "content": "Transcript of a meeting, with timestamps and speakers. This is part 2 of 2 of a longer meeting.\n\nTRANSCRIPT:\n[16:00] y"
+     }
+    ],
+    [
+     {
+      "role": "system",
+      "content": "You merge the minutes of consecutive parts of one meeting into the minutes of the whole meeting. Answer with only one JSON object of this shape:\n{\"title\": string, \"summary\": string (3 to 5 lines), \"topics\": [string], \"decisions\": [{\"text\": string, \"ts\": \"mm:ss\"}], \"openPoints\": [{\"text\": string, \"ts\": \"mm:ss\"}], \"actions\": [{\"text\": string, \"owner\": string, \"due\": string, \"ts\": \"mm:ss\"}], \"attendees\": [string]}\nRules:\n- Use only what the transcript says. The transcript is automatic and may contain errors.\n- Never invent owners or due dates: if the transcript does not say who does an action or by when, use \"\".\n- A decision is something the participants agreed on; an open point is something left unresolved.\n- Cite the transcript timestamp (\"mm:ss\") where each decision, open point and action was said.\n- Attendees are the names of people that appear in the transcript; never list generic labels like \"Speaker 2\".\n- Write every text in English.\n- Keep every decision, open point and action of the parts (merge exact duplicates), with their owners, due dates and timestamps unchanged. An open point that a later part resolved becomes a decision.\n- The summary covers the whole meeting in 3 to 5 lines."
+     },
+     {
+      "role": "user",
+      "content": "PART 1:\n{\"title\":\"\",\"summary\":\"one\",\"topics\":[],\"decisions\":[],\"openPoints\":[],\"actions\":[],\"attendees\":[]}\n\nPART 2:\n{\"title\":\"\",\"summary\":\"two\",\"topics\":[],\"decisions\":[],\"openPoints\":[],\"actions\":[],\"attendees\":[]}"
+     }
+    ]
+   ]
+  },
+  {
+   "name": "invalid section answer",
+   "language": "en",
+   "glossary": [],
+   "speakerNames": {},
+   "segments": [
+    {
+     "start_ms": 0,
+     "end_ms": 4000,
+     "speaker": "",
+     "text": "x"
+    }
+   ],
+   "answers": [
+    "no json at all"
+   ],
+   "want": {
+    "error": true
+   },
+   "wantPrompts": [
+    [
+     {
+      "role": "system",
+      "content": "You write meeting minutes. Answer with only one JSON object of this shape:\n{\"title\": string, \"summary\": string (3 to 5 lines), \"topics\": [string], \"decisions\": [{\"text\": string, \"ts\": \"mm:ss\"}], \"openPoints\": [{\"text\": string, \"ts\": \"mm:ss\"}], \"actions\": [{\"text\": string, \"owner\": string, \"due\": string, \"ts\": \"mm:ss\"}], \"attendees\": [string]}\nRules:\n- Use only what the transcript says. The transcript is automatic and may contain errors.\n- Never invent owners or due dates: if the transcript does not say who does an action or by when, use \"\".\n- A decision is something the participants agreed on; an open point is something left unresolved.\n- Cite the transcript timestamp (\"mm:ss\") where each decision, open point and action was said.\n- Attendees are the names of people that appear in the transcript; never list generic labels like \"Speaker 2\".\n- Write every text in English."
+     },
+     {
+      "role": "user",
+      "content": "Transcript of a meeting, with timestamps and speakers.\n\nTRANSCRIPT:\n[00:00] x"
+     }
+    ]
+   ]
+  },
+  {
+   "name": "empty transcript",
+   "language": "en",
+   "glossary": [],
+   "speakerNames": {},
+   "segments": [
+    {
+     "start_ms": 0,
+     "end_ms": 4000,
+     "speaker": "",
+     "text": "   "
+    }
+   ],
+   "answers": [],
+   "want": {
+    "error": true
+   },
+   "wantPrompts": []
+  }
+ ]
+}

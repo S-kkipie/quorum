@@ -217,7 +217,8 @@ func (s *Server) briefing(projectID string, now time.Time) (proto.Briefing, erro
 	if err != nil {
 		return b, err
 	}
-	b.Meetings = meetings(notes, from, person)
+	// the owner's actions: lines of the project person or of one of the names they go by
+	b.Meetings = meetings(notes, from, s.mineNames(projectID))
 
 	sessions, ends, err := s.projectSessions(projectID)
 	if err != nil {
@@ -467,9 +468,10 @@ func noteItems(ns []store.NewNote) []proto.BriefingItem {
 }
 
 // meetings splits the notes dated on or after from into bullets: each "- " line starts an item (an unbulleted
-// line continues the previous one). Actions keep only the lines that start with "<person>:" (with or without
-// the bullet, case-insensitive), without that prefix.
-func meetings(ns []proto.MeetingNote, from, person string) proto.BriefingMeetings {
+// line continues the previous one). Actions keep only the lines that start with "<name>:" for one of the
+// owner's names (the project person and the aliases; with or without the bullet, case-insensitive), without
+// that prefix.
+func meetings(ns []proto.MeetingNote, from string, names []string) proto.BriefingMeetings {
 	m := proto.BriefingMeetings{Decisions: []proto.MeetingItem{}, OpenPoints: []proto.MeetingItem{}, Actions: []proto.MeetingItem{}}
 	for _, n := range ns { // newest first
 		if n.Date < from {
@@ -482,7 +484,7 @@ func meetings(ns []proto.MeetingNote, from, person string) proto.BriefingMeeting
 		for _, t := range bullets(n.OpenPoints) {
 			m.OpenPoints = appendItem(m.OpenPoints, proto.MeetingItem{Text: t, NoteTitle: title, Date: n.Date})
 		}
-		for _, t := range personActions(n.Actions, person) {
+		for _, t := range personActions(n.Actions, names...) {
 			m.Actions = appendItem(m.Actions, proto.MeetingItem{Text: t, NoteTitle: title, Date: n.Date})
 		}
 	}
@@ -515,10 +517,10 @@ func bullets(text string) []string {
 	return out
 }
 
-// personActions returns the person's action items: each line that starts with "<person>:" or "- <person>:"
-// starts one (without that prefix); another "- " line, or an unbulleted line that starts with another short
-// "<name>:", starts somebody else's; any other unbulleted line continues the item before it.
-func personActions(text, person string) []string {
+// personActions returns the person's action items: each line that starts with "<name>:" or "- <name>:" for
+// one of names starts one (without that prefix); another "- " line, or an unbulleted line that starts with
+// another short "<name>:", starts somebody else's; any other unbulleted line continues the item before it.
+func personActions(text string, names ...string) []string {
 	var out []string
 	keep := false
 	for _, line := range strings.Split(text, "\n") {
@@ -526,7 +528,7 @@ func personActions(text, person string) []string {
 		if line == "" {
 			continue
 		}
-		if rest, ok := personAction(line, person); ok {
+		if rest, ok := anyPersonAction(line, names); ok {
 			out, keep = append(out, rest), true
 			continue
 		}
@@ -549,6 +551,15 @@ func namedLine(line string) bool {
 	}
 	n := len(strings.Fields(line[:i]))
 	return n >= 1 && n <= 3
+}
+
+func anyPersonAction(line string, names []string) (string, bool) {
+	for _, n := range names {
+		if rest, ok := personAction(line, n); ok {
+			return rest, true
+		}
+	}
+	return "", false
 }
 
 // personAction: the bullet starts with "<person>:" (case-insensitive); it returns the rest.

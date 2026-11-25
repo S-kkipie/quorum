@@ -377,22 +377,9 @@ func (s *Store) MeetingDetail(id string) (proto.Meeting, error) {
 	if m.Segments, err = s.MeetingSegments(id); err != nil {
 		return m, err
 	}
-	rows, err := s.db.Query(`SELECT id,text,owner,due,mine,ts_ms,issue_url FROM meeting_actions WHERE meeting_id=? ORDER BY idx, id`, id)
-	if err != nil {
+	if m.Actions, err = s.MeetingActions(id); err != nil {
 		return m, err
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var a proto.MeetingAction
-		if err := rows.Scan(&a.ID, &a.Text, &a.Owner, &a.Due, &a.Mine, &a.TsMs, &a.IssueURL); err != nil {
-			return m, err
-		}
-		m.Actions = append(m.Actions, a)
-	}
-	if err := rows.Err(); err != nil {
-		return m, err
-	}
-	rows.Close()
 	m.Speakers, err = s.MeetingSpeakers(id)
 	return m, err
 }

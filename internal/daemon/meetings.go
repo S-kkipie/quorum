@@ -103,14 +103,22 @@ func meetingWorkerState() string {
 	return "ready"
 }
 
-// ensureWorkerFile writes the embedded worker.py into dir when it differs (an updated quorumd brings
-// its own worker).
+// ensureWorkerFile writes the embedded worker.py and its prompts.json into dir when they differ (an
+// updated quorumd brings its own worker).
 func ensureWorkerFile(dir string) error {
-	path := filepath.Join(dir, "worker.py")
-	if b, err := os.ReadFile(path); err == nil && bytes.Equal(b, meetingworker.Worker) {
-		return nil
+	for _, f := range []struct {
+		name string
+		data []byte
+	}{{"prompts.json", meetingworker.Prompts}, {"worker.py", meetingworker.Worker}} {
+		path := filepath.Join(dir, f.name)
+		if b, err := os.ReadFile(path); err == nil && bytes.Equal(b, f.data) {
+			continue
+		}
+		if err := writeFileAtomic(path, f.data, 0o644); err != nil {
+			return err
+		}
 	}
-	return writeFileAtomic(path, meetingworker.Worker, 0o644)
+	return nil
 }
 
 func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
@@ -272,6 +280,11 @@ func (s *meetingSupervisor) start(hubURL, ollamaURL string, reg *Registry, job p
 	in.ResultURL = "" // the worker never needs it: the daemon posts the result
 	if job.AudioURL != "" {
 		if in.AudioURL, err = resolveHubURL(hubURL, job.AudioURL); err != nil {
+			return err
+		}
+	}
+	if job.TranscriptURL != "" {
+		if in.TranscriptURL, err = resolveHubURL(hubURL, job.TranscriptURL); err != nil {
 			return err
 		}
 	}

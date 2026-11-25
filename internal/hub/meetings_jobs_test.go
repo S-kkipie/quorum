@@ -75,6 +75,7 @@ func (f *jobFx) reconnect(t *testing.T, name, tok string, transcribe bool) *work
 				continue
 			}
 			res := proto.RPCResult{ReqID: r.ReqID, Result: mustJSON(map[string]bool{"ok": true})}
+			var started *proto.MeetingJobStart
 			switch r.Method {
 			case "meeting_job_start":
 				w.mu.Lock()
@@ -85,7 +86,7 @@ func (f *jobFx) reconnect(t *testing.T, name, tok string, transcribe bool) *work
 				} else {
 					var p proto.MeetingJobStart
 					_ = json.Unmarshal(r.Params, &p)
-					w.starts <- p
+					started = &p
 				}
 			case "meeting_job_cancel":
 				var p proto.MeetingJobCancel
@@ -93,6 +94,10 @@ func (f *jobFx) reconnect(t *testing.T, name, tok string, transcribe bool) *work
 				w.cancel <- p
 			}
 			_ = wsjson.Write(context.Background(), c, proto.Envelope{Type: "rpc_result", Payload: mustJSON(res)})
+			// announced after the answer, so a test that closes the link next never races the rpc result
+			if started != nil {
+				w.starts <- *started
+			}
 		}
 	}()
 	eventually(t, func() bool { return online2(f.st, name) && f.s.hub.Connected(name) })
@@ -189,7 +194,7 @@ func TestMeetingJobAssignedToTranscribeMachine(t *testing.T) {
 	code, body := postJSON(t, f.ts.URL, p.ResultURL, transcriptBody)
 	require.Equal(t, 200, code, body)
 	mm := f.meeting(t, m.ID)
-	require.Equal(t, "ready", mm.Status) // no summarizer wired yet: the transcript is the result
+	require.Equal(t, "summarising", mm.Status) // the local summary is queued next
 	require.Equal(t, int64(62), mm.DurationS)
 	require.Equal(t, []proto.MeetingSegment{
 		{StartMs: 0, EndMs: 1100, Speaker: "Speaker 1", Text: "first"},
@@ -233,8 +238,8 @@ func TestMeetingJobOneAtATimePerMachine(t *testing.T) {
 	require.Equal(t, "queued", f.status(m2.ID))
 	code, body := postJSON(t, f.ts.URL, p1.ResultURL, transcriptBody)
 	require.Equal(t, 200, code, body)
-	require.Equal(t, "ready", f.status(m1.ID))
-	p2 := gpu.start()
+	require.Equal(t, "summarising", f.status(m1.ID))
+	p2 := gpu.start() // the oldest job first: m2's transcription, then m1's summary
 	require.Equal(t, m2.ID, p2.MeetingID)
 }
 
@@ -296,7 +301,8 @@ func TestMeetingJobOfflineRequeuedAndStaleAttemptDiscarded(t *testing.T) {
 	require.Equal(t, "transcribing", f.status(m.ID))
 	code, body := postJSON(t, f.ts.URL, p2.ResultURL, transcriptBody)
 	require.Equal(t, 200, code, body)
-	require.Equal(t, "ready", f.status(m.ID))
+	require.Equal(t, "summarising", f.status(m.ID))
+	require.Len(t, f.meeting(t, m.ID).Segments, 2)
 }
 
 func TestMeetingJobHeartbeatKeepsItRunning(t *testing.T) {

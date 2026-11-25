@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/S-kkipie/quorum/internal/proto"
+	meetingworker "github.com/S-kkipie/quorum/worker/meetings"
 	"github.com/stretchr/testify/require"
 )
 
@@ -193,7 +194,28 @@ func TestMeetingJobProgressForwardedAndResultPosted(t *testing.T) {
 	require.NoError(t, json.Unmarshal(b, &in))
 	require.Equal(t, f.hub.URL+"/api/meeting-jobs/tok/audio", in["audioURL"])
 	require.Equal(t, "", in["resultURL"])
+	require.Nil(t, in["transcriptURL"])
 	require.Equal(t, "me|others", in["settings"].(map[string]any)["channels"])
+	require.Eventually(t, func() bool { _, ok := meetingJobs.running(); return !ok }, 3*time.Second, 10*time.Millisecond)
+}
+
+func TestMeetingJobTranscriptURLResolved(t *testing.T) {
+	f := newMeetFake(t)
+	j := job("j1", 1)
+	j.Step, j.AudioURL, j.TranscriptURL = proto.MeetingStepSummarizeLocal, "", "/api/meeting-jobs/tok/transcript"
+	_, err := f.start(j)
+	require.NoError(t, err)
+	var in map[string]any
+	require.Eventually(t, func() bool {
+		files, _ := filepath.Glob(filepath.Join(f.dir, "job-*.json"))
+		if len(files) != 1 {
+			return false
+		}
+		b, _ := os.ReadFile(files[0])
+		return json.Unmarshal(b, &in) == nil
+	}, 3*time.Second, 10*time.Millisecond)
+	require.Equal(t, f.hub.URL+"/api/meeting-jobs/tok/transcript", in["transcriptURL"])
+	require.Equal(t, "", in["audioURL"])
 	require.Eventually(t, func() bool { _, ok := meetingJobs.running(); return !ok }, 3*time.Second, 10*time.Millisecond)
 }
 
@@ -413,6 +435,10 @@ func TestEnsureWorkerFileDeploysTheEmbeddedWorker(t *testing.T) {
 	require.NoError(t, ensureWorkerFile(dir))
 	b, _ = os.ReadFile(filepath.Join(dir, "worker.py"))
 	require.Contains(t, string(b), "Quorum meeting worker")
+	// the shared prompts go next to it
+	b, err = os.ReadFile(filepath.Join(dir, "prompts.json"))
+	require.NoError(t, err)
+	require.Equal(t, meetingworker.Prompts, b)
 }
 
 func TestWorkerEnvAddsCUDALibraries(t *testing.T) {
@@ -498,6 +524,10 @@ func TestMeetingJobRefusesForeignURLs(t *testing.T) {
 	require.ErrorContains(t, err, "not on the hub")
 	j = job("j2", 1)
 	j.ResultURL = "http://elsewhere.example/result"
+	_, err = f.start(j)
+	require.ErrorContains(t, err, "not on the hub")
+	j = job("j3", 1)
+	j.TranscriptURL = "//elsewhere.example/transcript"
 	_, err = f.start(j)
 	require.ErrorContains(t, err, "not on the hub")
 	j = job("../../etc", 1)

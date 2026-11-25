@@ -4,7 +4,7 @@
 quorumd runs this program in the venv that `quorumd meetings setup` creates, one job at a time. The job
 arrives as one JSON object on stdin:
 
-    {"jobId", "attempt", "meetingId", "step", "audioURL", "settings"}
+    {"jobId", "attempt", "meetingId", "step", "audioURL", "transcriptURL", "settings", "workDir"}
 
 and the worker writes JSON lines on stdout:
 
@@ -23,8 +23,13 @@ Steps:
 Settings per step:
 - transcribe: {language ("es", "" or "auto" to detect), channels ("me|others" or ""), speakers (the number of
   people when known, else 0), model (the Whisper model)}.
-- summarize_local: {segments: [{start_ms, end_ms, speaker, text}], language, speakerNames ({label: name}),
-  glossary (string or list), model (the Ollama model), ollamaURL, numCtx}.
+- summarize_local: {language, speakerNames ({label: name}), glossary (string or list), model (the Ollama
+  model), ollamaURL, numCtx}; the transcript comes from the job's transcriptURL (a signed hub URL that serves
+  {segments: [{start_ms, end_ms, speaker, text}]}), or from settings.segments (tests).
+
+The summary prompts and repair rules live in prompts.json next to this file; the hub uses the same file for
+the ccapi and OpenAI-compatible providers, and tests on both sides check the shared cases in
+testdata/summary_cases.json.
 
 Other modes (used by the setup): --check-cuda, --download-model NAME, --version.
 
@@ -53,7 +58,6 @@ WORKER_VERSION = "1"
 SAMPLE_RATE = 16000
 WHISPER_MODEL = "large-v3-turbo"
 DIAR_THRESHOLD = 0.8
-SECTION_MS = 15 * 60 * 1000
 OLLAMA_URL = "http://127.0.0.1:11434"
 OLLAMA_MODEL = "gemma3:12b"
 NUM_CTX = 32768
@@ -480,10 +484,32 @@ def run_transcribe(job: dict, emit: Emitter, workdir: Path, engine_factory=None,
 # ---------------------------------------------------------------------------------------------------
 # summarize_local step
 
-LANGUAGES = {"es": "Spanish", "en": "English", "pt": "Portuguese", "fr": "French", "de": "German", "it": "Italian"}
-UNKNOWN_OWNERS = {"", "unassigned", "unknown", "none", "n/a", "na", "-", "?", "tbd", "nobody", "desconocido",
-                  "sin asignar", "no asignado", "nadie", "ninguno", "por definir"}
-GENERIC_SPEAKER = re.compile(r"^(speaker|persona|hablante|others|me)( \d+)?$", re.I)
+def _load_prompts() -> dict:
+    """The canonical prompts and repair rules (prompts.json, shared with the hub; quorumd deploys it next to
+    this file)."""
+    try:
+        return json.loads((HERE / "prompts.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        raise SystemExit(f"prompts.json is missing or invalid next to worker.py ({e}); run `quorumd meetings setup`.")
+
+
+PROMPTS = _load_prompts()
+LANGUAGES = PROMPTS["languages"]
+UNKNOWN_OWNERS = set(PROMPTS["unknownOwners"])
+GENERIC_SPEAKER = re.compile(PROMPTS["genericSpeaker"])
+SECTION_MS = int(PROMPTS["sectionMinutes"]) * 60 * 1000
+TITLE_MAX = int(PROMPTS["titleMax"])
+SCHEMA = PROMPTS["schema"]
+
+
+def fill(template: str, **values) -> str:
+    """Replaces each {name} of values in one pass (an unknown placeholder stays as is), like the hub."""
+    return re.sub(r"\{(\w+)\}", lambda m: str(values[m.group(1)]) if m.group(1) in values else m.group(0), template)
+
+
+def compact_json(v) -> str:
+    """JSON without spaces and with non-ASCII text as is (the hub writes the same bytes)."""
+    return json.dumps(v, ensure_ascii=False, separators=(",", ":"))
 
 
 def fmt_ts(ms: int) -> str:
@@ -529,47 +555,32 @@ def split_sections(segments: list[dict], section_ms: int = SECTION_MS) -> list[l
     return [out[k] for k in sorted(out)]
 
 
-SCHEMA = ('{"title": string, "summary": string (3 to 5 lines), "topics": [string], '
-          '"decisions": [{"text": string, "ts": "mm:ss"}], "openPoints": [{"text": string, "ts": "mm:ss"}], '
-          '"actions": [{"text": string, "owner": string, "due": string, "ts": "mm:ss"}], "attendees": [string]}')
-
-RULES = """Rules:
-- Use only what the transcript says. The transcript is automatic and may contain errors.
-- Never invent owners or due dates: if the transcript does not say who does an action or by when, use "".
-- A decision is something the participants agreed on; an open point is something left unresolved.
-- Cite the transcript timestamp ("mm:ss") where each decision, open point and action was said.
-- Attendees are the names of people that appear in the transcript; never list generic labels like "Speaker 2".
-- Write every text in {language}."""
-
-
 def language_name(code: str) -> str:
-    return LANGUAGES.get((code or "").split("-")[0].lower(), code or "the transcript's language")
+    return LANGUAGES.get((code or "").split("-")[0].lower(), code or PROMPTS["unknownLanguage"])
 
 
 def glossary_text(g) -> str:
     if isinstance(g, list):
         g = ", ".join(str(x) for x in g if str(x).strip())
     g = (g or "").strip()
-    return f"\nProject glossary (names and product terms; use these spellings): {g}\n" if g else ""
+    return fill(PROMPTS["glossary"], glossary=g) if g else ""
+
+
+def _rules(language: str) -> str:
+    return fill(PROMPTS["rules"], language=language)
 
 
 def section_prompt(lines: list[str], language: str, glossary, part: int, parts: int) -> list[dict]:
-    where = f" This is part {part} of {parts} of a longer meeting." if parts > 1 else ""
-    system = ("You write meeting minutes. Answer with only one JSON object of this shape:\n" + SCHEMA + "\n"
-              + RULES.format(language=language))
-    user = (f"Transcript of a meeting, with timestamps and speakers.{where}\n{glossary_text(glossary)}\n"
-            "TRANSCRIPT:\n" + "\n".join(lines))
+    where = fill(PROMPTS["sectionWhere"], part=part, parts=parts) if parts > 1 else ""
+    system = fill(PROMPTS["sectionSystem"], schema=SCHEMA, rules=_rules(language))
+    user = fill(PROMPTS["sectionUser"], where=where, glossary=glossary_text(glossary), transcript="\n".join(lines))
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 
 def merge_prompt(parts: list[dict], language: str, glossary) -> list[dict]:
-    system = ("You merge the minutes of consecutive parts of one meeting into the minutes of the whole meeting. "
-              "Answer with only one JSON object of this shape:\n" + SCHEMA + "\n" + RULES.format(language=language)
-              + "\n- Keep every decision, open point and action of the parts (merge exact duplicates), with their "
-              "owners, due dates and timestamps unchanged. An open point that a later part resolved becomes a "
-              "decision.\n- The summary covers the whole meeting in 3 to 5 lines.")
-    body = "\n\n".join(f"PART {i + 1}:\n" + json.dumps(p, ensure_ascii=False) for i, p in enumerate(parts))
-    return [{"role": "system", "content": system}, {"role": "user", "content": glossary_text(glossary) + body}]
+    system = fill(PROMPTS["mergeSystem"], schema=SCHEMA, rules=_rules(language))
+    body = PROMPTS["mergePartSeparator"].join(fill(PROMPTS["mergePart"], n=i + 1, json=compact_json(p)) for i, p in enumerate(parts))
+    return [{"role": "system", "content": system}, {"role": "user", "content": fill(PROMPTS["mergeUser"], glossary=glossary_text(glossary), parts=body)}]
 
 
 def _norm(s: str) -> str:
@@ -642,7 +653,7 @@ def repair_summary(raw, transcript_text: str, max_ms: int | None = None) -> dict
         actions.append(act)
     attendees = [n for n in _strs(raw.get("attendees")) if not GENERIC_SPEAKER.match(n) and stated(n)]
     return {
-        "title": _str(raw.get("title"))[:200],
+        "title": _str(raw.get("title"))[:TITLE_MAX],
         "summary": _str(raw.get("summary")),
         "topics": _strs(raw.get("topics")),
         "decisions": _points(raw.get("decisions"), max_ms),
@@ -724,9 +735,37 @@ def ollama_url(settings: dict) -> str:
     return url
 
 
+MAX_TRANSCRIPT = 64 * 1024 * 1024
+
+
+def fetch_transcript(url: str, limit: int = MAX_TRANSCRIPT) -> list[dict]:
+    """The job's transcript from the hub's signed URL: {segments: [{start_ms, end_ms, speaker, text}]}."""
+    if urllib.parse.urlsplit(url).scheme not in ("http", "https"):
+        raise WorkerError("The transcript's URL is not an http(s) URL; refused.")
+    opener = urllib.request.build_opener(_SameHostRedirects)
+    try:
+        with opener.open(url, timeout=60) as r:
+            body = r.read(limit + 1)
+    except urllib.error.HTTPError as e:
+        raise WorkerError(f"Could not download the transcript from the hub (HTTP {e.code}).") from e
+    except (urllib.error.URLError, OSError) as e:
+        raise WorkerError(f"Could not download the transcript from the hub: {e}") from e
+    if len(body) > limit:
+        raise WorkerError("The transcript is too large.")
+    try:
+        data = json.loads(body)
+    except ValueError as e:
+        raise WorkerError("The hub sent an invalid transcript.") from e
+    segs = data.get("segments") if isinstance(data, dict) else None
+    if not isinstance(segs, list):
+        raise WorkerError("The hub sent an invalid transcript.")
+    return [x for x in segs if isinstance(x, dict)]
+
+
 def run_summarize(job: dict, emit: Emitter, chat: Callable[[list[dict]], str] | None = None) -> dict:
     settings = job.get("settings") or {}
-    segments = settings.get("segments") or []
+    # the hub sends a signed URL rather than the transcript itself (it can be megabytes)
+    segments = settings.get("segments") or (fetch_transcript(job["transcriptURL"]) if job.get("transcriptURL") else [])
     names = {k: v for k, v in (settings.get("speakerNames") or {}).items() if isinstance(v, str) and v.strip()}
     language = language_name(settings.get("language") or "")
     glossary = settings.get("glossary")

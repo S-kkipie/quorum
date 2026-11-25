@@ -250,6 +250,9 @@ func (s *Server) handlePatchProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.hub.publishProject(out)
+	if store.ProjectPerson(proto.Project{Connector: oldConn}) != store.ProjectPerson(out) {
+		s.reprojectMeetings(store.MeetingFilter{ProjectID: out.ID}) // "mine" follows the person
+	}
 	if reset {
 		s.hub.afterConnectorReset(out, rs)
 		if out.Connector.Kind != "none" {

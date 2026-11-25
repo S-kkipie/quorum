@@ -274,6 +274,36 @@ def test_unusable_merge_falls_back_to_the_sections():
     assert res["summary"] == "first\nsecond"
 
 
+def test_summarize_fetches_the_transcript_from_the_hub(local_http):
+    local_http.files["/t"] = json.dumps({"segments": [seg(0, "hola"), seg(5, "adios")]}).encode()
+    sent = []
+
+    def chat(messages):
+        sent.append(messages)
+        return '{"summary": "ok"}'
+
+    res = w.run_summarize({"transcriptURL": local_http.base + "/t", "settings": {"language": "es"}}, w.Emitter(io.StringIO()), chat)
+    assert res["summary"] == "ok"
+    assert "[05:00] Speaker 1: adios" in sent[0][1]["content"]
+    with pytest.raises(w.WorkerError, match="HTTP 404"):
+        w.run_summarize({"transcriptURL": local_http.base + "/missing", "settings": {}}, w.Emitter(io.StringIO()), chat)
+    local_http.files["/bad"] = b'{"segments": 3}'
+    with pytest.raises(w.WorkerError, match="invalid transcript"):
+        w.fetch_transcript(local_http.base + "/bad")
+    with pytest.raises(w.WorkerError, match="too large"):
+        w.fetch_transcript(local_http.base + "/t", limit=10)
+    with pytest.raises(w.WorkerError, match="http"):
+        w.fetch_transcript("file:///etc/passwd")
+
+
+def test_prompts_come_from_the_shared_file():
+    shared = json.loads((Path(w.__file__).parent / "prompts.json").read_text(encoding="utf-8"))
+    msgs = w.section_prompt(["[00:00] x"], "Spanish", "", 1, 1)
+    assert shared["schema"] in msgs[0]["content"]
+    assert "Write every text in Spanish." in msgs[0]["content"]
+    assert w.UNKNOWN_OWNERS == set(shared["unknownOwners"])
+
+
 def test_invalid_section_answer_is_an_error():
     with pytest.raises(w.WorkerError, match="valid JSON"):
         w.run_summarize({"settings": {"segments": [seg(0, "x")]}}, w.Emitter(io.StringIO()), lambda _m: "no json at all")

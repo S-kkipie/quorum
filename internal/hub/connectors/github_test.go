@@ -213,3 +213,22 @@ func TestGhCommandArgv(t *testing.T) {
 	_, _, err = ghCommand("linux", func(string) (string, error) { return "", exec.ErrNotFound }, args)
 	require.EqualError(t, err, "GitHub: gh command not found on the hub")
 }
+
+func TestGitHubCreateIssue(t *testing.T) {
+	var calls []call
+	g := ghConn(t, "", fakeGh(&calls, func(a []string) ([]byte, error) {
+		return []byte(`{"number":7,"html_url":"https://github.com/o/r/issues/7"}`), nil
+	}))
+	url, err := g.createIssue(context.Background(), "Send the report", "body @file $(x)")
+	require.NoError(t, err)
+	require.Equal(t, "https://github.com/o/r/issues/7", url)
+	require.Equal(t, []string{"api", "-X", "POST", "repos/o/r/issues", "-f", "title=Send the report", "-f", "body=body @file $(x)"}, calls[0].args)
+	require.Equal(t, []string{"WHOAS_PROFILE=p"}, calls[0].env)
+
+	bad := ghConn(t, "", fakeGh(&calls, func([]string) ([]byte, error) { return []byte(`{}`), nil }))
+	_, err = bad.createIssue(context.Background(), "t", "b")
+	require.ErrorContains(t, err, "invalid response")
+	fail := ghConn(t, "", fakeGh(&calls, func([]string) ([]byte, error) { return nil, errors.New("HTTP 404: Not Found") }))
+	_, err = fail.createIssue(context.Background(), "t", "b")
+	require.ErrorContains(t, err, "repository not found")
+}

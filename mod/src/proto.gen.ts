@@ -788,12 +788,14 @@ export interface Meeting {
 }
 /**
  * MeetingSegment is one transcript segment; Speaker is a stable label per meeting ("Me", "Others",
- * "Speaker 1", …) or "".
+ * "Speaker 1", …) or "". When the hub serves a meeting, Speaker is the name the owner gave the label (else
+ * the label) and Label is the stored label (the key of a rename).
  */
 export interface MeetingSegment {
   startMs: number /* int64 */;
   endMs: number /* int64 */;
   speaker: string;
+  label?: string;
   text: string;
 }
 /**
@@ -841,8 +843,9 @@ export const MeetingStepSummarizeLocal = "summarize_local";
 /**
  * MeetingJobStart is the params of the rpc meeting_job_start (hub->daemon). It returns at once (the daemon
  * only starts the worker); progress comes back as meeting_progress envelopes and the result is POSTed to
- * ResultURL. AudioURL and ResultURL are relative to the hub and carry a signed token of this job attempt
- * (no device token needed). Settings depends on the step (MeetingTranscribeSettings for transcribe).
+ * ResultURL. AudioURL, TranscriptURL and ResultURL are relative to the hub and carry a signed token of this
+ * job attempt (no device token needed). Settings depends on the step (MeetingTranscribeSettings for
+ * transcribe).
  */
 export interface MeetingJobStart {
   jobId: string;
@@ -851,6 +854,11 @@ export interface MeetingJobStart {
   step: string;
   audioURL: string;
   resultURL: string;
+  /**
+   * TranscriptURL serves the transcript to a summarize_local job ({segments: [MeetingWorkerSegment]}),
+   * so the RPC never carries it.
+   */
+  transcriptURL?: string;
   settings: any /* json.RawMessage */;
 }
 /**

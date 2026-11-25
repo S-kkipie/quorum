@@ -1,0 +1,43 @@
+{
+  "_doc": "Canonical meeting-summary prompts and repair rules, shared by the Python worker (summarize_local) and the hub (ccapi and OpenAI-compatible providers); quorumd deploys this file next to worker.py. Placeholders are {name}, replaced in one pass (an unknown one stays as is). Rendering: rules with {language}; sectionSystem and mergeSystem with {schema} and {rules}; sectionWhere with {part} and {parts} (only when there is more than one part); glossary with {glossary} (empty glossary: the empty string); sectionUser with {where}, {glossary} and {transcript} (the lines joined by newlines); mergePart with {n} and {json} (the part as compact JSON), joined by mergePartSeparator; mergeUser with {glossary} and {parts}. The system and user texts are two chat messages for Ollama; the hub joins them with a blank line into one prompt.",
+  "schema": "{\"title\": string, \"summary\": string (3 to 5 lines), \"topics\": [string], \"decisions\": [{\"text\": string, \"ts\": \"mm:ss\"}], \"openPoints\": [{\"text\": string, \"ts\": \"mm:ss\"}], \"actions\": [{\"text\": string, \"owner\": string, \"due\": string, \"ts\": \"mm:ss\"}], \"attendees\": [string]}",
+  "rules": "Rules:\n- Use only what the transcript says. The transcript is automatic and may contain errors.\n- Never invent owners or due dates: if the transcript does not say who does an action or by when, use \"\".\n- A decision is something the participants agreed on; an open point is something left unresolved.\n- Cite the transcript timestamp (\"mm:ss\") where each decision, open point and action was said.\n- Attendees are the names of people that appear in the transcript; never list generic labels like \"Speaker 2\".\n- Write every text in {language}.",
+  "sectionSystem": "You write meeting minutes. Answer with only one JSON object of this shape:\n{schema}\n{rules}",
+  "sectionUser": "Transcript of a meeting, with timestamps and speakers.{where}\n{glossary}\nTRANSCRIPT:\n{transcript}",
+  "sectionWhere": " This is part {part} of {parts} of a longer meeting.",
+  "mergeSystem": "You merge the minutes of consecutive parts of one meeting into the minutes of the whole meeting. Answer with only one JSON object of this shape:\n{schema}\n{rules}\n- Keep every decision, open point and action of the parts (merge exact duplicates), with their owners, due dates and timestamps unchanged. An open point that a later part resolved becomes a decision.\n- The summary covers the whole meeting in 3 to 5 lines.",
+  "mergeUser": "{glossary}{parts}",
+  "mergePart": "PART {n}:\n{json}",
+  "mergePartSeparator": "\n\n",
+  "glossary": "\nProject glossary (names and product terms; use these spellings): {glossary}\n",
+  "unknownLanguage": "the transcript's language",
+  "languages": {
+    "es": "Spanish",
+    "en": "English",
+    "pt": "Portuguese",
+    "fr": "French",
+    "de": "German",
+    "it": "Italian"
+  },
+  "unknownOwners": [
+    "",
+    "-",
+    "?",
+    "desconocido",
+    "n/a",
+    "na",
+    "nadie",
+    "ninguno",
+    "no asignado",
+    "nobody",
+    "none",
+    "por definir",
+    "sin asignar",
+    "tbd",
+    "unassigned",
+    "unknown"
+  ],
+  "genericSpeaker": "(?i)^(speaker|persona|hablante|others|me)( \\d+)?$",
+  "sectionMinutes": 15,
+  "titleMax": 200
+}

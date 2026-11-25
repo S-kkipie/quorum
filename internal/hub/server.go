@@ -33,11 +33,13 @@ type Server struct {
 	diskFree    func(path string) (uint64, error)
 	meetUploads uploadBusy
 	jobs        meetingJobs
+	meet        meetSummaries
 }
 
 // Options configures the server; all fields are optional.
 type Options struct {
 	// Model generates the project summaries; nil uses ccapi (CCAPIURL/CCAPITokenFile) or `claude -p`.
+	// The ccapi meeting summaries use the same selector when Model is a *summary.Auto.
 	Model          summary.Model
 	CCAPIURL       string
 	CCAPITokenFile string
@@ -88,6 +90,10 @@ func NewServer(st *store.Store, opts ...Options) *Server {
 	if o.Model == nil {
 		o.Model = summary.NewAuto(o.CCAPIURL, o.CCAPITokenFile)
 	}
+	auto, ok := o.Model.(*summary.Auto)
+	if !ok {
+		auto = summary.NewAuto(o.CCAPIURL, o.CCAPITokenFile)
+	}
 	s.sum = summary.New(st, o.Model, s.hub.publish)
 	s.hub.touch = s.sum.Touch
 	s.hub.leftOff = s.sum.TouchLeftOff
@@ -118,6 +124,7 @@ func NewServer(st *store.Store, opts ...Options) *Server {
 	}
 	s.hub.startupGrace()
 	s.initMeetingJobs()
+	s.initMeetingSummaries(auto)
 	s.routes()
 	return s
 }

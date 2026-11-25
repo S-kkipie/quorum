@@ -29,10 +29,17 @@ func (s *Server) meetingRoutes(dev func(string, http.HandlerFunc)) {
 	dev("DELETE /api/meetings/{id}", s.handleDeleteMeeting)
 	dev("GET /api/meetings/{id}/audio-url", s.handleMeetingAudioURL)
 	dev("POST /api/meetings/{id}/retry", s.handleRetryMeeting)
+	dev("POST /api/meetings/{id}/reprocess", s.handleReprocessMeeting)
+	// POST, not PUT: PUT /api/meetings/{id}/speakers would clash with PUT /api/meetings/uploads/{id}
+	dev("POST /api/meetings/{id}/speakers", s.handleMeetingSpeakers)
+	dev("POST /api/meetings/{id}/actions/{actionId}/issue", s.handleMeetingActionIssue)
+	dev("GET /api/settings/meetings", s.handleGetMeetingSettings)
+	dev("PUT /api/settings/meetings", s.handlePutMeetingSettings)
 	s.mux.HandleFunc("GET /api/meeting-audio/{token}", s.handleMeetingAudio)
 	// the worker's per-job signed URLs (meetings_jobs.go): the token is the auth
 	s.mux.HandleFunc("GET /api/meeting-jobs/{token}/audio", s.handleMeetingJobAudio)
 	s.mux.HandleFunc("POST /api/meeting-jobs/{token}/result", s.handleMeetingJobResult)
+	s.mux.HandleFunc("GET /api/meeting-jobs/{token}/transcript", s.handleMeetingJobTranscript)
 }
 
 // publishMeeting sends meeting_changed {id, projectId, status} to the devices.
@@ -74,7 +81,8 @@ func (s *Server) handleMeetings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, ms)
 }
 
-// handleMeeting: GET /api/meetings/{id} with its summary, segments, actions and speakers.
+// handleMeeting: GET /api/meetings/{id} with its summary, segments (with the speaker names applied),
+// actions and speakers.
 func (s *Server) handleMeeting(w http.ResponseWriter, r *http.Request) {
 	m, err := s.st.MeetingDetail(r.PathValue("id"))
 	if errors.Is(err, store.ErrNotFound) {
@@ -85,6 +93,7 @@ func (s *Server) handleMeeting(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 500, "internal error")
 		return
 	}
+	applySpeakerNames(&m)
 	writeJSON(w, 200, m)
 }
 
@@ -133,8 +142,11 @@ func (s *Server) handlePatchMeeting(w http.ResponseWriter, r *http.Request) {
 	}
 	s.publishMeeting(m.ID, m.ProjectID, m.Status)
 	if oldProject != m.ProjectID {
-		// the meeting's briefing projection moved with it
+		// the meeting's briefing projection moved with it; "mine" follows the new project's person
 		s.hub.briefingChanged(oldProject)
+		if err := s.projectMeeting(m.ID); err != nil {
+			log.Printf("hub: meetings: projection of %s: %v", m.ID, err)
+		}
 		s.hub.briefingChanged(m.ProjectID)
 	}
 	writeJSON(w, 200, m)

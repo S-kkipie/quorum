@@ -13,3 +13,9 @@ var Worker []byte
 //
 //go:embed requirements.txt
 var Requirements []byte
+
+// Prompts is prompts.json: the canonical summary prompts and repair rules, shared by worker.py
+// (deployed next to it) and the hub's ccapi and OpenAI-compatible summaries.
+//
+//go:embed prompts.json
+var Prompts []byte

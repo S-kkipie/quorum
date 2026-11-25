@@ -686,11 +686,13 @@ type Meeting struct {
 }
 
 // MeetingSegment is one transcript segment; Speaker is a stable label per meeting ("Me", "Others",
-// "Speaker 1", …) or "".
+// "Speaker 1", …) or "". When the hub serves a meeting, Speaker is the name the owner gave the label (else
+// the label) and Label is the stored label (the key of a rename).
 type MeetingSegment struct {
 	StartMs int64  `json:"startMs"`
 	EndMs   int64  `json:"endMs"`
 	Speaker string `json:"speaker"`
+	Label   string `json:"label,omitempty"`
 	Text    string `json:"text"`
 }
 
@@ -732,16 +734,20 @@ const (
 
 // MeetingJobStart is the params of the rpc meeting_job_start (hub->daemon). It returns at once (the daemon
 // only starts the worker); progress comes back as meeting_progress envelopes and the result is POSTed to
-// ResultURL. AudioURL and ResultURL are relative to the hub and carry a signed token of this job attempt
-// (no device token needed). Settings depends on the step (MeetingTranscribeSettings for transcribe).
+// ResultURL. AudioURL, TranscriptURL and ResultURL are relative to the hub and carry a signed token of this
+// job attempt (no device token needed). Settings depends on the step (MeetingTranscribeSettings for
+// transcribe).
 type MeetingJobStart struct {
-	JobID     string          `json:"jobId"`
-	Attempt   int             `json:"attempt"`
-	MeetingID string          `json:"meetingId"`
-	Step      string          `json:"step"`
-	AudioURL  string          `json:"audioURL"`
-	ResultURL string          `json:"resultURL"`
-	Settings  json.RawMessage `json:"settings"`
+	JobID     string `json:"jobId"`
+	Attempt   int    `json:"attempt"`
+	MeetingID string `json:"meetingId"`
+	Step      string `json:"step"`
+	AudioURL  string `json:"audioURL"`
+	ResultURL string `json:"resultURL"`
+	// TranscriptURL serves the transcript to a summarize_local job ({segments: [MeetingWorkerSegment]}),
+	// so the RPC never carries it.
+	TranscriptURL string          `json:"transcriptURL,omitempty"`
+	Settings      json.RawMessage `json:"settings"`
 }
 
 // MeetingJobCancel is the params of the rpc meeting_job_cancel: the daemon kills the worker of that job

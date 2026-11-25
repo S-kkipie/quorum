@@ -348,3 +348,25 @@ func (g *githubConnector) removeLabels(ctx context.Context, base, keep string) e
 	}
 	return nil
 }
+
+// CreateGitHubIssue creates an issue in the repo of a GitHub connector configuration through gh (the
+// login shell, as the connector's sync) and returns its URL.
+func CreateGitHubIssue(ctx context.Context, cfg proto.ConnectorConfig, token string, env []string, title, body string) (string, error) {
+	g, err := newGitHub(cfg, token, env, defaultGhRunner(ghTimeout))
+	if err != nil {
+		return "", err
+	}
+	return g.createIssue(ctx, title, body)
+}
+
+func (g *githubConnector) createIssue(ctx context.Context, title, body string) (string, error) {
+	out, err := g.gh(ctx, "api", "-X", "POST", "repos/"+g.repo+"/issues", "-f", "title="+title, "-f", "body="+body)
+	if err != nil {
+		return "", err
+	}
+	var is ghIssue
+	if err := json.Unmarshal(out, &is); err != nil || !strings.HasPrefix(is.HTMLURL, "https://") {
+		return "", errors.New("GitHub: invalid response to the new issue")
+	}
+	return is.HTMLURL, nil
+}
