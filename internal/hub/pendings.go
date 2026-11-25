@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"unicode/utf8"
 
@@ -78,10 +79,16 @@ func (s *Server) handleMachineListPendings(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	list, err := s.st.Pendings(p.ID, r.URL.Query().Get("status") == "all")
+	all := r.URL.Query().Get("status") == "all"
+	list, err := s.st.Pendings(p.ID, all)
 	if err != nil {
 		s.fail(w, err, "unknown session")
 		return
+	}
+	total := len(list)
+	if all {
+		// open items first, then done/dropped; each group keeps its oldest-first order
+		sort.SliceStable(list, func(i, j int) bool { return (list[i].Status == "open") && (list[j].Status != "open") })
 	}
 	if len(list) > machineListMax {
 		list = list[:machineListMax]
@@ -93,7 +100,7 @@ func (s *Server) handleMachineListPendings(w http.ResponseWriter, r *http.Reques
 		}
 		items = append(items, it)
 	}
-	writeJSON(w, 200, map[string]any{"projectId": p.ID, "projectName": p.Name, "items": items})
+	writeJSON(w, 200, map[string]any{"projectId": p.ID, "projectName": p.Name, "items": items, "total": total})
 }
 
 // handleMachineAddPending answers 200 for both a new item and a deduplicated one; created tells them apart.
@@ -127,7 +134,7 @@ func (s *Server) handleMachineAddPending(w http.ResponseWriter, r *http.Request)
 	if created {
 		s.hub.briefingChanged(p.ID)
 	}
-	writeJSON(w, 200, map[string]any{"item": it, "created": created})
+	writeJSON(w, 200, map[string]any{"item": it, "created": created, "projectId": p.ID, "projectName": p.Name})
 }
 
 func (s *Server) handleMachineDonePending(w http.ResponseWriter, r *http.Request) {

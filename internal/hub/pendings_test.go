@@ -174,6 +174,12 @@ func TestMachinePendingsResolveProject(t *testing.T) {
 	require.Equal(t, "agent", add.Item.Source)
 	require.Equal(t, "s1", add.Item.SourceRef)
 	require.Equal(t, p.ID, add.Item.ProjectID)
+	var addRaw struct{ ProjectID, ProjectName string }
+	require.NoError(t, json.Unmarshal([]byte(body), &addRaw))
+	require.Equal(t, p.ID, addRaw.ProjectID)
+	require.Equal(t, "R", addRaw.ProjectName)
+	before, err := f.st.Pendings(p.ID, true)
+	require.NoError(t, err)
 	var list struct {
 		ProjectID, ProjectName string
 		Items                  []proto.Pending
@@ -194,6 +200,38 @@ func TestMachinePendingsResolveProject(t *testing.T) {
 	}
 	code, _ = f.machReq(t, f.machTok, "GET", "/api/machine/sessions/nope/pendings", "")
 	require.Equal(t, 404, code)
+	after, err := f.st.Pendings(p.ID, true)
+	require.NoError(t, err)
+	require.Len(t, after, len(before))
+}
+
+func TestMachinePendingsTotalAndOrder(t *testing.T) {
+	f, p := machinePendingFx(t, true)
+	var ids []string
+	for i := 0; i < 3; i++ {
+		var add struct{ Item proto.Pending }
+		code, body := f.machReq(t, f.machTok, "POST", mpath, fmt.Sprintf(`{"text":"item %d"}`, i))
+		require.Equal(t, 200, code, body)
+		require.NoError(t, json.Unmarshal([]byte(body), &add))
+		ids = append(ids, add.Item.ID)
+	}
+	// close the oldest: it must move behind the open ones in the "all" listing
+	code, body := f.machReq(t, f.machTok, "POST", mpath+"/"+ids[0]+"/done", `{}`)
+	require.Equal(t, 200, code, body)
+	var list struct {
+		Total int
+		Items []proto.Pending
+	}
+	code, body = f.machReq(t, f.machTok, "GET", mpath+"?status=all", "")
+	require.Equal(t, 200, code, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &list))
+	require.Equal(t, 3, list.Total)
+	require.Equal(t, []string{"item 1", "item 2", "item 0"}, []string{list.Items[0].Text, list.Items[1].Text, list.Items[2].Text})
+	code, body = f.machReq(t, f.machTok, "GET", mpath, "")
+	require.Equal(t, 200, code, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &list))
+	require.Equal(t, 2, list.Total)
+	_ = p
 }
 
 func TestMachinePendingsNoProjectThenLinked(t *testing.T) {
@@ -266,11 +304,15 @@ func TestMachinePendingsCapAndTrim(t *testing.T) {
 	code, body := f.machReq(t, f.machTok, "POST", mpath, `{"text":"one too many"}`)
 	require.Equal(t, 429, code)
 	require.Contains(t, body, "This project already has 50 open pending items from agents; ask the owner to close some first")
-	var list struct{ Items []proto.Pending }
+	var list struct {
+		Total int
+		Items []proto.Pending
+	}
 	code, body = f.machReq(t, f.machTok, "GET", mpath, "")
 	require.Equal(t, 200, code)
 	require.NoError(t, json.Unmarshal([]byte(body), &list))
 	require.Len(t, list.Items, 50)
+	require.Equal(t, 50, list.Total)
 	found := false
 	for _, it := range list.Items {
 		if it.Text == "item 0" {

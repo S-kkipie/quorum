@@ -167,12 +167,15 @@ export const register: Register = on => {
       })
     }
     await $.command.register({ name: 'quorum', description: 'Connection status with quorumd' })
-    // pending-item tools (mcp__quorum__pending_*), served by the tool.run hooks below; not awaited
-    for (const spec of PENDING_TOOLS) {
-      void Promise.resolve($.tool.register(spec)).catch(err => {
-        void Promise.resolve($.ui.log(`quorum: tool.register ${spec.name} failed: ${String((err as Error)?.message ?? err)}`, { to: 'debug' })).catch(() => {})
-      })
-    }
+    // pending-item tools (mcp__quorum__pending_*), served by the tool.run hooks below; awaited so they are
+    // listed by turn one, and a failure is only logged
+    const regs = await Promise.allSettled(PENDING_TOOLS.map(spec => Promise.resolve($.tool.register(spec))))
+    regs.forEach((res, i) => {
+      if (res.status === 'rejected') {
+        const err = res.reason as Error
+        void Promise.resolve($.ui.log(`quorum: tool.register ${PENDING_TOOLS[i]!.name} failed: ${String(err?.message ?? err)}`, { to: 'debug' })).catch(() => {})
+      }
+    })
     // not awaited: ensure+register can be slow and session.start blocks the first prompt
     void link.start({
       id, previousId: '', machine: '', name: '', cwd, root: root || cwd, model: String(model ?? ''),

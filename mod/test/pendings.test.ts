@@ -25,7 +25,7 @@ async function setup(replies: Reply[]) {
   return { link, calls }
 }
 
-const added = { projectName: 'Zorvan', created: true, item: { id: 'p1', text: 'Ask Quillon' } }
+const added = { projectName: 'Zorvan', created: true, projectId: 'pr1', item: { id: 'p1', text: 'Ask Quillon' } }
 
 test('declares the three tools', () => {
   expect(PENDING_TOOLS.map(t => t.name)).toEqual(['pending_add', 'pending_list', 'pending_done'])
@@ -39,6 +39,26 @@ test('adds with a client key and retries once with the same key on 502', async (
   expect(calls[0]!.body).toEqual({ text: 'Ask Quillon', detail: 'why', clientKey: 'k1' })
   expect(calls[1]!.body.clientKey).toBe('k1')
   expect(calls[0]!.url).toBe('http://127.0.0.1:7/v1/sessions/s1/pendings')
+})
+
+test('a retry that answers created:false still reports "Added to"; a double 502 fails with the not-saved text', async () => {
+  const a = await setup([{ status: 0 }, { status: 200, json: { ...added, created: false } }])
+  expect((await runPendingTool(a.link, 's1', 'pending_add', { text: 'Ask Quillon' }, () => 'k')).text).toBe('Added to Zorvan: "Ask Quillon" (id p1)')
+  const b = await setup([{ status: 502, json: { error: 'x' } }, { status: 502, json: { error: 'x' } }])
+  expect(await runPendingTool(b.link, 's1', 'pending_add', { text: 'x' }, () => 'k')).toEqual({ ok: false, text: 'Quorum hub unreachable; the item was not saved' })
+  expect(b.calls.length).toBe(2)
+})
+
+test('error wording per tool and status', async () => {
+  const run = async (tool: string, rep: Reply, input: Record<string, unknown> = { text: 'x', id: 'a' }) =>
+    (await runPendingTool((await setup([rep, rep])).link, 's1', tool, input, () => 'k')).text
+  expect(await run('pending_list', { status: 502, json: { error: 'x' } })).toBe('Quorum hub unreachable; could not list pending items')
+  expect(await run('pending_done', { status: 502, json: { error: 'x' } })).toBe('Quorum hub unreachable; the item was not marked done')
+  expect(await run('pending_list', { status: 404, json: { error: 'unknown session' } })).toBe('unknown session (Quorum has not seen this session yet; try again in a few seconds)')
+  expect(await run('pending_list', { status: 401, json: { error: 'unauthorized' } })).toBe('Quorum rejected this machine; re-link it with `quorumd link`')
+  expect(await run('pending_done', { status: 403 })).toBe('Quorum rejected this machine; re-link it with `quorumd link`')
+  expect(await run('pending_list', { status: 404 })).toBe('This Quorum version does not support pending items yet; update quorumd and the hub')
+  expect(await run('pending_done', { status: 404, json: { error: 'pending item not found' } })).toBe('pending item not found')
 })
 
 test('reports "Already pending" when created is false', async () => {
@@ -64,6 +84,18 @@ test('list formats items and the empty case', async () => {
   expect(calls[0]!.url).toContain('?status=open')
   const e = await runPendingTool(link, 's1', 'pending_list', {}, () => 'k')
   expect(e.text).toBe('No open pending items in Zorvan.')
+})
+
+test('list shows status and note, keeps full detail, and notes truncation', async () => {
+  const long = 'd'.repeat(200)
+  const { link } = await setup([
+    { status: 200, json: { projectName: 'Zorvan', total: 7, items: [
+      { id: 'a', text: 'One', detail: long, status: 'open', note: '' },
+      { id: 'b', text: 'Two', detail: 'ctx', status: 'done', note: 'sent  it' },
+    ] } },
+  ])
+  const r = await runPendingTool(link, 's1', 'pending_list', { status: 'all' }, () => 'k')
+  expect(r.text).toBe(`- [a] One — ${long}\n- [b] (done) Two — ctx · Note: sent it\n(showing 2 of 7)`)
 })
 
 test('done sends the note', async () => {
