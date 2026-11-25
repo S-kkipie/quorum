@@ -242,8 +242,18 @@ export const unlinkTicket = (sessionId: string, ticketId: string) => apiFetch(`/
 /**
  * Asks the hub for a short-lived link to a file of the session; `url` is relative to the hub.
  * `mode` 'images': an image pasted in the terminal (served from the session's images folder);
- * 'read': an image Claude read with the Read tool (served from its own folder). Both links serve that one file.
+ * 'read': an image Claude read with the Read tool (served from its own folder); 'upload': a file attached to a
+ * message of this session (served from its uploads folder). These links serve that one file.
  */
-export type ViewMode = 'images' | 'read'
+export type ViewMode = 'images' | 'read' | 'upload'
 export const createView = (machine: string, sessionId: string, path: string, mode?: ViewMode) =>
   apiFetch<{ url: string }>(`/api/machines/${enc(machine)}/views`, json('POST', mode ? { sessionId, path, [mode]: true } : { sessionId, path }))
+
+/** What the hub answers when a file attached to a message was saved on the session's machine. */
+export interface UploadedFile { path: string; name: string; size: number; mime: string }
+
+/** Streams a file to the session's machine (POST /api/sessions/{id}/files); resolves with where it was saved. */
+export const uploadFile = (sessionId: string, file: File, signal?: AbortSignal) =>
+  apiFetch<UploadedFile>(`/api/sessions/${enc(sessionId)}/files?name=${enc(file.name || 'file')}`, {
+    method: 'POST', body: file, signal, headers: { 'Content-Type': file.type || 'application/octet-stream' },
+  })
