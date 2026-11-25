@@ -59,8 +59,8 @@ export default function Inspector({ placement, open, onClose, session, usage, ev
 
   const cards = (
     <div className="flex flex-col gap-2.5 p-3">
-      <BackgroundCard background={session.background} />
       <UsageCard session={session} usage={usage} />
+      <BackgroundCard background={session.background} />
       <ChangedFilesCard files={files} partial={hasMore} onJump={jump} />
       <ArtifactsCard links={links} partial={hasMore} onOpen={onOpenArtifact} />
       {!hasBackground(session.background) && !session.account && !session.accountKey && files.length === 0 && links.length === 0 && (

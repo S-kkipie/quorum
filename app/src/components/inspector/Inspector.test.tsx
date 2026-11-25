@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import INSPECTOR_SOURCE from './Inspector.tsx?raw'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import Session from '../../screens/Session'
@@ -58,9 +59,22 @@ describe('cards', () => {
     const { container, rerender } = render(<UsageCard session={sess('a', { account: '' })} usage={usage} />)
     expect(container.innerHTML).toBe('')
     rerender(<UsageCard session={sess('a', { account: 'work', contextPct: 40 })} usage={usage} />)
-    expect(screen.getByText('5h 58%')).toBeTruthy()
-    expect(screen.getByText('week 24%')).toBeTruthy()
-    expect(screen.getByText('Context 40%')).toBeTruthy()
+    expect(screen.getByRole('progressbar', { name: '5-hour window 58%' })).toBeTruthy()
+    expect(screen.getByRole('progressbar', { name: 'Week 24%' })).toBeTruthy()
+    expect(screen.getByRole('progressbar', { name: 'Context 40%' })).toBeTruthy()
+    expect(screen.getByText('work')).toBeTruthy()
+    expect(screen.getAllByText(/resets in/).length).toBe(2)
+  })
+  it('the usage meters tone their bar and number at warn and danger levels', () => {
+    const usage = { key: 'k', alias: 'work', at: Date.now(), fiveHour: { pct: 97, resetsAt: new Date(Date.now() + 3_600_000).toISOString() }, sevenDay: { pct: 85, resetsAt: new Date(Date.now() + 86_400_000).toISOString() } } as never
+    render(<UsageCard session={sess('a', { account: 'work' })} usage={usage} />)
+    expect(screen.getByText('97%').getAttribute('data-tone')).toBe('danger')
+    expect(screen.getByText('85%').getAttribute('data-tone')).toBe('warn')
+    const bar = screen.getByRole('progressbar', { name: '5-hour window 97%' }).firstElementChild as HTMLElement
+    expect(bar.className).toContain('bg-danger')
+  })
+  it('the inspector lists usage before background work', () => {
+    expect(INSPECTOR_SOURCE.indexOf('<UsageCard')).toBeLessThan(INSPECTOR_SOURCE.indexOf('<BackgroundCard'))
   })
   it('card headings are sentence case with no caps or tracking', () => {
     render(<ChangedFilesCard files={[{ path: '/r/a.ts', add: 1, del: 0, eventKey: 'tool:1' }]} />)
