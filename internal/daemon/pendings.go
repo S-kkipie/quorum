@@ -27,7 +27,7 @@ func mountPendings(mux *http.ServeMux, token string, cfgFn func() Config) {
 	fwd := func(suffix func(r *http.Request) string) http.HandlerFunc {
 		return auth(token, func(w http.ResponseWriter, r *http.Request) {
 			for _, k := range []string{"id", "pid"} {
-				if v := r.PathValue(k); v == "" || v == "." || v == ".." {
+				if v := r.PathValue(k); v == "." || v == ".." {
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusBadRequest)
 					io.WriteString(w, `{"error":"invalid id"}`)
