@@ -377,8 +377,9 @@ func promptToFile(req proto.LaunchRequest, rel bool) (proto.LaunchRequest, error
 }
 
 // excludePromptDir keeps the prompt files out of git: it appends the prompt folder to the repository's
-// .git/info/exclude once (never .gitignore). Only a repository with a .git directory is touched (a worktree or
-// submodule, whose .git is a file, is left alone); best effort.
+// info/exclude once (never .gitignore). For a .git directory that is <repo>/.git/info/exclude; for a .git
+// file ("gitdir: <path>", a worktree or submodule) it is the common git dir's (the gitdir's commondir, or the
+// gitdir itself), which every worktree of the repository reads. Best effort.
 func excludePromptDir(dir string) {
 	if dir == "" {
 		return
@@ -388,11 +389,9 @@ func excludePromptDir(dir string) {
 		return
 	}
 	for root := abs; ; {
-		st, err := os.Lstat(filepath.Join(root, ".git"))
+		gd := filepath.Join(root, ".git")
+		st, err := os.Lstat(gd)
 		if err == nil {
-			if !st.IsDir() {
-				return
-			}
 			rel, err := filepath.Rel(root, abs)
 			if err != nil {
 				return
@@ -401,7 +400,13 @@ func excludePromptDir(dir string) {
 			if rel != "." {
 				line = "/" + filepath.ToSlash(rel) + "/" + line
 			}
-			appendExclude(filepath.Join(root, ".git", "info", "exclude"), line)
+			common := gd
+			if !st.IsDir() {
+				if common = commonGitDir(root, gd); common == "" {
+					return
+				}
+			}
+			appendExclude(filepath.Join(common, "info", "exclude"), line)
 			return
 		}
 		parent := filepath.Dir(root)
@@ -410,6 +415,42 @@ func excludePromptDir(dir string) {
 		}
 		root = parent
 	}
+}
+
+// commonGitDir resolves a .git file ("gitdir: <path>") to the repository's common git dir: the gitdir's
+// commondir when it has one (a worktree), else the gitdir itself (a submodule). "" when it cannot.
+func commonGitDir(root, gitFile string) string {
+	data, err := os.ReadFile(gitFile)
+	if err != nil {
+		return ""
+	}
+	line := strings.TrimSpace(strings.SplitN(string(data), "\n", 2)[0])
+	if !strings.HasPrefix(line, "gitdir:") {
+		return ""
+	}
+	gd := strings.TrimSpace(strings.TrimPrefix(line, "gitdir:"))
+	if gd == "" {
+		return ""
+	}
+	if !filepath.IsAbs(gd) {
+		gd = filepath.Join(root, gd)
+	}
+	if st, err := os.Stat(gd); err != nil || !st.IsDir() {
+		return ""
+	}
+	if c, err := os.ReadFile(filepath.Join(gd, "commondir")); err == nil {
+		cd := strings.TrimSpace(string(c))
+		if cd != "" {
+			if !filepath.IsAbs(cd) {
+				cd = filepath.Join(gd, cd)
+			}
+			if st, err := os.Stat(cd); err == nil && st.IsDir() {
+				return filepath.Clean(cd)
+			}
+			return ""
+		}
+	}
+	return filepath.Clean(gd)
 }
 
 func appendExclude(path, line string) {
