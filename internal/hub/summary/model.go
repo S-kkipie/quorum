@@ -28,7 +28,7 @@ const (
 	maxCLIOutput   = 64 << 10
 	selectionTTL   = 5 * time.Minute
 	DefaultCCAPI   = "http://127.0.0.1:18787"
-	ccapiMaxTokens = 220 // a ceiling: the summary asks for 200 characters, "where you left off" for 450
+	ccapiMaxTokens = 120 // the summary (200 characters); a caller can raise it with withMaxTokens
 )
 
 // DefaultTokenFile is ~/.config/ccapi/token (honors XDG_CONFIG_HOME).
@@ -84,9 +84,23 @@ func (c *ccapi) healthy(ctx context.Context) bool {
 	return err == nil && code == 200
 }
 
+type maxTokensKey struct{}
+
+// withMaxTokens sets the ccapi output cap of one call (the CLI has no such option and ignores it).
+func withMaxTokens(ctx context.Context, n int) context.Context {
+	return context.WithValue(ctx, maxTokensKey{}, n)
+}
+
+func maxTokens(ctx context.Context) int {
+	if n, ok := ctx.Value(maxTokensKey{}).(int); ok && n > 0 {
+		return n
+	}
+	return ccapiMaxTokens
+}
+
 func (c *ccapi) Complete(ctx context.Context, prompt string) (string, error) {
 	body, _ := json.Marshal(map[string]any{
-		"model": "haiku", "max_tokens": ccapiMaxTokens,
+		"model": "haiku", "max_tokens": maxTokens(ctx),
 		"messages": []map[string]string{{"role": "user", "content": prompt}},
 	})
 	b, code, err := c.do(ctx, http.MethodPost, "/v1/messages", body)

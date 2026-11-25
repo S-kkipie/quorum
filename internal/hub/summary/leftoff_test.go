@@ -162,7 +162,7 @@ func TestLeftOffNoSessionsIsNull(t *testing.T) {
 	text, n, at, _ := f.st.WhereLeftOff(f.p.ID)
 	require.Empty(t, text)
 	require.Zero(t, n)
-	require.Zero(t, at)
+	require.Equal(t, int64(seededAt), at, "cleared, and never seeded again")
 	require.Equal(t, []string{f.p.ID}, f.changed)
 }
 
@@ -195,6 +195,36 @@ func TestLeftOffStartSeedsOnlyMissing(t *testing.T) {
 	f.s.Start(ctx)
 	require.True(t, f.s.LeftOffPending(f.p.ID))
 	require.False(t, f.s.LeftOffPending(other.ID))
+}
+
+func TestLeftOffSeedOncePerProjectEver(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		f := newLeftFx(t)
+		f.session(t, "s1", "Login", "first", *f.now)
+		if fail {
+			f.m.err = errors.New("quota")
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		f.s.Start(ctx)
+		*f.now = f.now.Add(leftQuiet)
+		f.s.RunOnce(context.Background())
+		require.Equal(t, 1, f.leftOffCalls(), "fail=%v", fail)
+
+		// a restart: a new summarizer on the same store
+		s2 := New(f.st, f.m, func(proto.Envelope) {})
+		s2.now = f.s.now
+		s2.Start(ctx)
+		require.False(t, s2.LeftOffPending(f.p.ID), "fail=%v: never seeded twice", fail)
+		*f.now = f.now.Add(time.Hour)
+		s2.RunOnce(context.Background())
+		require.Equal(t, 1, f.leftOffCalls(), "fail=%v", fail)
+	}
+}
+
+func TestLeftOffMaxTokens(t *testing.T) {
+	require.Equal(t, 120, maxTokens(context.Background()), "the summary keeps its cap")
+	require.Equal(t, leftMaxTokens, maxTokens(withMaxTokens(context.Background(), leftMaxTokens)))
 }
 
 func TestLeftOffForget(t *testing.T) {

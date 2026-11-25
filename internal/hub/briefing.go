@@ -518,8 +518,8 @@ func bullets(text string) []string {
 }
 
 // personActions returns the person's action items: each line that starts with "<person>:" or "- <person>:"
-// starts one (without that prefix); another "- " line starts somebody else's; an unbulleted line continues the
-// item before it.
+// starts one (without that prefix); another "- " line, or an unbulleted line that starts with another short
+// "<name>:", starts somebody else's; any other unbulleted line continues the item before it.
 func personActions(text, person string) []string {
 	var out []string
 	keep := false
@@ -532,8 +532,8 @@ func personActions(text, person string) []string {
 			out, keep = append(out, rest), true
 			continue
 		}
-		if strings.HasPrefix(line, "-") {
-			keep = false
+		if strings.HasPrefix(line, "-") || namedLine(line) {
+			keep = false // somebody else's item, bulleted or not
 			continue
 		}
 		if keep {
@@ -541,6 +541,16 @@ func personActions(text, person string) []string {
 		}
 	}
 	return out
+}
+
+// namedLine: the line starts with a short name (1 to 3 words) and a colon, like "Ben:" or "Ben Smith:".
+func namedLine(line string) bool {
+	i := strings.IndexByte(line, ':')
+	if i <= 0 {
+		return false
+	}
+	n := len(strings.Fields(line[:i]))
+	return n >= 1 && n <= 3
 }
 
 // personAction: the bullet starts with "<person>:" (case-insensitive); it returns the rest.

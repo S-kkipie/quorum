@@ -27,6 +27,10 @@ const (
 	leftMaxTickets = 15
 	maxLeftOff     = 600
 	leftSentences  = 3
+	leftMaxTokens  = 220 // ccapi output cap of a "where you left off" call (the summary keeps 120)
+	// seededAt is the stored at of a project whose first generation was already attempted (or that has no
+	// sessions): a restart never seeds it again.
+	seededAt = -1
 )
 
 // TouchLeftOff marks the project's "where you left off" text as stale; the loop regenerates it when due.
@@ -47,11 +51,16 @@ func (s *Summarizer) LeftOffPending(projectID string) bool {
 	return ok
 }
 
-// seedLeftOff marks the projects that never had a "where you left off" text (one first generation each; a
-// project without sessions costs nothing).
+// seedLeftOff gives each project that never had a "where you left off" text one first generation, once ever:
+// the attempt is recorded (at = -1) before it runs, so a later restart does not seed it again, and a failed
+// first generation only retries while the hub runs. A project without sessions costs nothing.
 func (s *Summarizer) seedLeftOff(ps []proto.Project) {
 	for _, p := range ps {
-		if _, _, at, err := s.st.WhereLeftOff(p.ID); err == nil && at == 0 {
+		if text, _, at, err := s.st.WhereLeftOff(p.ID); err == nil && at == 0 {
+			if err := s.st.SetWhereLeftOff(p.ID, text, 0, seededAt); err != nil {
+				log.Printf("summary: seed where you left off %s: %v", p.ID, err)
+				continue
+			}
 			s.TouchLeftOff(p.ID)
 		}
 	}
@@ -97,7 +106,7 @@ func (s *Summarizer) processLeftOff(ctx context.Context, id string) {
 	case !ok:
 	case now.Sub(touched) < leftQuiet:
 		ok = false
-	case at != 0 && now.Sub(time.UnixMilli(at)) < leftGap:
+	case at > 0 && now.Sub(time.UnixMilli(at)) < leftGap:
 		ok = false
 	case now.Before(s.lretry[id]):
 		ok = false
@@ -115,8 +124,8 @@ func (s *Summarizer) processLeftOff(ctx context.Context, id string) {
 		return
 	}
 	if len(sessions) == 0 {
-		if text != "" || at != 0 {
-			if err := s.st.SetWhereLeftOff(id, "", 0, 0); err != nil {
+		if text != "" || at != seededAt {
+			if err := s.st.SetWhereLeftOff(id, "", 0, seededAt); err != nil {
 				log.Printf("summary: where you left off %s: %v", id, err)
 				return
 			}
@@ -134,7 +143,7 @@ func (s *Summarizer) processLeftOff(ctx context.Context, id string) {
 	if same && text != "" {
 		return // the input did not change: no model call
 	}
-	out, err := s.model.Complete(ctx, buildLeftOffPrompt(p, sessions, tickets, true))
+	out, err := s.model.Complete(withMaxTokens(ctx, leftMaxTokens), buildLeftOffPrompt(p, sessions, tickets, true))
 	if err == nil {
 		if out = CleanLeftOff(out); out == "" {
 			err = fmt.Errorf("the model returned an empty text")

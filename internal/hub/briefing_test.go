@@ -218,6 +218,22 @@ func TestPersonAction(t *testing.T) {
 	require.False(t, ok)
 }
 
+func TestPersonActionsStopAtAnotherName(t *testing.T) {
+	for _, c := range []struct {
+		text string
+		want []string
+	}{
+		{"Ana: x\nBen: y", []string{"x"}},
+		{"- Ana: x\n  continues\n- Ben: y", []string{"x continues"}},
+		{"Ana: x\nBen y: z", []string{"x"}},
+		{"Ana: x\nBen Smith Jr: z\nmore for Ben\nana: w\nand more", []string{"x", "w and more"}},
+		{"Ana: x\nthen call the client at 10: before noon please", []string{"x then call the client at 10: before noon please"}},
+		{"Ben: y\nAna: x", []string{"x"}},
+	} {
+		require.Equal(t, c.want, personActions(c.text, "Ana"), c.text)
+	}
+}
+
 func TestVisitRolloverStable(t *testing.T) {
 	f := newAppFx(t)
 	p := briefingProject(t, f.st, "Ana")
