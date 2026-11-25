@@ -22,6 +22,7 @@ type Store interface {
 	ListWorkspaces() ([]proto.Workspace, error)
 	ReplaceTickets(projectID string, ts []proto.Ticket, now int64) ([]proto.TicketChange, error)
 	ListTickets(projectID string) ([]proto.Ticket, error)
+	ReplaceMeetingNotes(projectID string, ns []proto.MeetingNote) (bool, error)
 	SetSyncResult(projectID, syncErr string, at int64) error
 }
 
@@ -38,6 +39,9 @@ type Syncer struct {
 	now     func() time.Time
 	// OnChange is called after a sync that changed tickets.
 	OnChange func(projectID string)
+	// OnSynced is called after each successful sync of a project with the change-log rows it wrote
+	// and whether the meeting notes changed. A failed sync does not call it.
+	OnSynced func(projectID string, changes []proto.TicketChange, notesChanged bool)
 	tick     time.Duration
 
 	mu      sync.Mutex
@@ -174,7 +178,7 @@ func (s *Syncer) syncOnce(ctx context.Context, id string) error {
 		return ErrNoConnector
 	}
 	start := s.now().UnixMilli() // before querying: what changes during the fetch will be seen on the next one
-	err = s.fetch(ctx, p, g)
+	res, err := s.fetch(ctx, p, g)
 	if errors.Is(err, errStale) {
 		return nil
 	}
@@ -204,14 +208,25 @@ func (s *Syncer) syncOnce(ctx context.Context, id string) error {
 	}
 	s.publishProject(id)
 	s.publishTickets(id)
+	if s.OnSynced != nil {
+		s.OnSynced(id, res.changes, res.notesChanged)
+	}
 	return nil
+}
+
+// fetchResult is what a successful fetch stored.
+type fetchResult struct {
+	changes      []proto.TicketChange
+	notesChanged bool
 }
 
 // errStale: the connector changed during the query; what was fetched is discarded.
 var errStale = errors.New("the connector changed during the sync")
 
-// fetch gets the tickets, normalizes and stores them; on error the tickets stay as they were.
-func (s *Syncer) fetch(ctx context.Context, p proto.Project, g int) (err error) {
+// fetch gets the tickets (and the meeting notes of a NoteLister), normalizes and stores them; on error the
+// tickets and notes stay as they were. A notes failure is logged and keeps the previous notes; the tickets
+// are still saved.
+func (s *Syncer) fetch(ctx context.Context, p proto.Project, g int) (res fetchResult, err error) {
 	var token string
 	defer func() {
 		if err != nil && err != errStale {
@@ -220,12 +235,12 @@ func (s *Syncer) fetch(ctx context.Context, p proto.Project, g int) (err error) 
 	}()
 	token, err = s.st.ConnectorToken(p.ID)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		return err
+		return res, err
 	}
 	env := BuildEnv(s.st, p.WorkspaceID)
 	conn, err := s.newConn(p.Connector, token, env)
 	if err != nil {
-		return err
+		return res, err
 	}
 	var since int64
 	if p.SyncError == "" {
@@ -233,18 +248,18 @@ func (s *Syncer) fetch(ctx context.Context, p proto.Project, g int) (err error) 
 	}
 	ts, err := conn.List(ctx, since)
 	if err != nil {
-		return err
+		return res, err
 	}
 	custom := map[string]string{}
 	if raw := p.Connector.Settings["statusMap"]; raw != "" {
 		if err := json.Unmarshal([]byte(raw), &custom); err != nil {
-			return fmt.Errorf("invalid statusMap: %v", err)
+			return res, fmt.Errorf("invalid statusMap: %v", err)
 		}
 	}
 	out := make([]proto.Ticket, 0, len(ts))
 	for _, t := range ts {
 		if t.ExternalID == "" {
-			return errors.New("the connector returned a ticket without externalId")
+			return res, errors.New("the connector returned a ticket without externalId")
 		}
 		if t.RawStatus == "" {
 			t.RawStatus = t.Status
@@ -252,23 +267,43 @@ func (s *Syncer) fetch(ctx context.Context, p proto.Project, g int) (err error) 
 		t.Status = StatusMap(t.RawStatus, custom)
 		out = append(out, t)
 	}
+	var notes []proto.MeetingNote
+	haveNotes := false
+	if nl, ok := conn.(NoteLister); ok {
+		ns, nerr := nl.ListNotes(ctx)
+		switch {
+		case nerr != nil && ctx.Err() != nil:
+			return res, ctx.Err()
+		case nerr != nil:
+			log.Printf("sync: project %s: meeting notes: %s", p.ID, redact(nerr.Error(), token))
+		default:
+			notes, haveNotes = ns, true
+		}
+	}
 	s.wmu.Lock()
 	if !s.current(p.ID, g) {
 		s.wmu.Unlock()
-		return errStale
+		return res, errStale
 	}
 	before, _ := s.st.ListTickets(p.ID)
-	_, err = s.st.ReplaceTickets(p.ID, out, s.now().UnixMilli())
+	res.changes, err = s.st.ReplaceTickets(p.ID, out, s.now().UnixMilli())
+	if err == nil && haveNotes {
+		if changed, nerr := s.st.ReplaceMeetingNotes(p.ID, notes); nerr != nil {
+			log.Printf("sync: project %s: save meeting notes: %s", p.ID, redact(nerr.Error(), token))
+		} else {
+			res.notesChanged = changed
+		}
+	}
 	s.wmu.Unlock()
 	if err != nil {
-		return err
+		return fetchResult{}, err
 	}
 	if s.OnChange != nil {
 		if after, err := s.st.ListTickets(p.ID); err == nil && ticketsChanged(before, after) {
 			s.OnChange(p.ID)
 		}
 	}
-	return nil
+	return res, nil
 }
 
 func (s *Syncer) publishProject(id string) {

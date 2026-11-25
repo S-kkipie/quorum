@@ -23,6 +23,12 @@ type Connector interface {
 	SetStatus(ctx context.Context, externalID, status string) error
 }
 
+// NoteLister is optional: a connector that also has meeting notes implements it, and the syncer
+// calls it after List.
+type NoteLister interface {
+	ListNotes(ctx context.Context) ([]proto.MeetingNote, error)
+}
+
 // Factory builds a connector of a kind from its configuration.
 type Factory func(cfg proto.ConnectorConfig, token string, env []string) (Connector, error)
 
@@ -55,7 +61,7 @@ var defaultStatuses = map[string]string{
 	"closed": "done", "resolved": "done", "cancelled": "done", "canceled": "done",
 	// Spanish aliases: connectors and statusMaps written before the English migration keep working.
 	"por_hacer": "todo", "en_curso": "in_progress", "en curso": "in_progress", "en_review": "in_review",
-	"hecho": "done", "bloqueado": "blocked",
+	"hecho": "done", "bloqueado": "blocked", "aparcado": "blocked",
 }
 
 func normKey(s string) string {
