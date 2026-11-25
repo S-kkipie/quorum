@@ -29,7 +29,14 @@ export interface MeetingUploadOpts {
   retries?: number
   /** First wait before a retry, doubled each time up to 15 s (default 1000 ms). */
   retryDelayMs?: number
+  /** Busy answers in a row (another request still writes the upload) before giving up (default 10). */
+  busyRetries?: number
+  /** First wait after a busy answer, doubled each time up to 30 s (default 5000 ms, the hub's Retry-After). */
+  busyDelayMs?: number
 }
+
+/** The hub answers 503 (409 on older hubs) while an earlier request still writes the upload. */
+const isBusy = (e: unknown) => e instanceof ApiError && (e.status === 503 || (e.status === 409 && /^another request/.test(e.message)))
 
 const sleep = (ms: number, signal?: AbortSignal) => new Promise<void>((resolve, reject) => {
   if (signal?.aborted) return reject(signal.reason ?? new DOMException('aborted', 'AbortError'))
@@ -56,6 +63,16 @@ export async function uploadMeeting(file: Blob & { name?: string }, opts: Meetin
   const retries = opts.retries ?? 6
   const delay0 = opts.retryDelayMs ?? 1000
   let failures = 0
+  let busy = 0
+  const busyRetries = opts.busyRetries ?? 10
+  const busyDelay0 = opts.busyDelayMs ?? 5000
+  // a busy upload is not a failure: wait (exponential, capped 30 s) on a budget of its own, so a hub still
+  // reading an abandoned request never burns the retries
+  const waitBusy = async (e: unknown) => {
+    if (signal?.aborted) throw e
+    if (++busy > busyRetries) throw e
+    await sleep(Math.min(busyDelay0 * 2 ** (busy - 1), 30000), signal)
+  }
   // permanent errors stop at once; network errors, 5xx (except 507) and interruptions are retried
   const retry = async (e: unknown) => {
     if (signal?.aborted) throw e
@@ -99,9 +116,13 @@ export async function uploadMeeting(file: Blob & { name?: string }, opts: Meetin
       })
       offset = r.offset
       failures = 0
+      busy = 0
     } catch (e) {
       const o = hubOffset(e)
-      if (e instanceof ApiError && e.status === 409 && o !== undefined) {
+      if (isBusy(e)) {
+        if (o !== undefined) offset = o
+        await waitBusy(e)
+      } else if (e instanceof ApiError && e.status === 409 && o !== undefined) {
         offset = o // the hub has another offset (a lost answer, or the upload is already complete): go on from there
         if (++failures > retries) throw e
         if (e.message === 'the upload is already complete') break
@@ -115,7 +136,7 @@ export async function uploadMeeting(file: Blob & { name?: string }, opts: Meetin
   for (;;) {
     try {
       return await apiFetch<Meeting>(`/api/meetings/uploads/${enc(id)}/complete`, { method: 'POST', signal })
-    } catch (e) { await retry(e) }
+    } catch (e) { await (isBusy(e) ? waitBusy(e) : retry(e)) }
   }
 }
 

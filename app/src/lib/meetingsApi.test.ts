@@ -14,7 +14,7 @@ beforeEach(() => { for (const k in mem) delete mem[k]; setHub('http://h:1/', 'to
 const res = (status: number, body: unknown) => new Response(body === undefined ? null : JSON.stringify(body), { status })
 
 /** A fake hub upload: chunkSize 4, stores what each PUT sends at its offset. */
-function fakeHub(opts: { failPut?: (n: number) => 'network' | 'partial' | null } = {}) {
+function fakeHub(opts: { failPut?: (n: number) => 'network' | 'partial' | 'busy' | null; busyComplete?: number } = {}) {
   let stored = ''
   let puts = 0
   const calls: string[] = []
@@ -29,9 +29,14 @@ function fakeHub(opts: { failPut?: (n: number) => 'network' | 'partial' | null }
       if (off !== stored.length) return res(409, { error: 'offset mismatch', offset: stored.length })
       const fail = opts.failPut?.(puts++) ?? null
       if (fail === 'network') throw new TypeError('Failed to fetch')
+      if (fail === 'busy') return res(503, { error: 'another request is writing this upload; try again shortly', offset: stored.length })
       if (fail === 'partial') { stored += data.slice(0, 1); return res(400, { error: 'the upload was interrupted', offset: stored.length }) }
       stored += data
       return res(200, { offset: stored.length })
+    }
+    if (path === '/api/meetings/uploads/up1/complete' && (opts.busyComplete ?? 0) > 0) {
+      opts.busyComplete!--
+      return res(503, { error: 'another request is writing this upload; try again shortly', offset: stored.length })
     }
     if (path === '/api/meetings/uploads/up1/complete') return res(201, { id: 'm1', status: 'queued', data: stored })
     return res(404, { error: 'nope' })
@@ -84,6 +89,35 @@ describe('uploadMeeting', () => {
   it('gives up after the retries', async () => {
     fakeHub({ failPut: () => 'network' })
     await expect(uploadMeeting(file('0123456789'), { retries: 2, retryDelayMs: 0 })).rejects.toThrow('Failed to fetch')
+  })
+
+  it('backs off on a busy upload without spending the retries', async () => {
+    const delays: number[] = []
+    const st = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: () => void, ms?: number) => { delays.push(ms ?? 0); fn(); return 0 }) as unknown as typeof setTimeout)
+    try {
+      // five busy answers on the 2nd chunk, then two on complete; no failure retries are allowed at all
+      const hub = fakeHub({ failPut: (n) => (n >= 1 && n <= 5 ? 'busy' : null), busyComplete: 2 })
+      const m = await uploadMeeting(file('0123456789'), { retries: 0 })
+      expect(m).toMatchObject({ id: 'm1' })
+      expect(hub.stored()).toBe('0123456789')
+      // exponential from the hub's Retry-After (5 s), capped at 30 s; a success resets it
+      expect(delays).toEqual([5000, 10000, 20000, 30000, 30000, 5000, 10000])
+      expect(hub.calls.filter((c) => c === 'PUT /api/meetings/uploads/up1?offset=4')).toHaveLength(6)
+      // an upload that stays busy gives up after its own budget
+      fakeHub({ failPut: () => 'busy' })
+      await expect(uploadMeeting(file('0123456789'), { busyRetries: 2 })).rejects.toMatchObject({ status: 503 })
+    } finally { st.mockRestore() }
+  })
+
+  it('treats an older hub\'s busy 409 as busy too', async () => {
+    let n = 0
+    const f = vi.fn(async (u: string) => {
+      if (u.endsWith('/complete')) return n++ < 2 ? res(409, { error: 'another request is writing this upload', offset: 1 }) : res(201, { id: 'm1' })
+      if (u.endsWith('/uploads')) return res(201, { uploadId: 'up1', chunkSize: 4 })
+      return res(200, { offset: 1 })
+    })
+    vi.stubGlobal('fetch', f)
+    await expect(uploadMeeting(file('x'), { retries: 0, busyDelayMs: 0 })).resolves.toMatchObject({ id: 'm1' })
   })
 
   it('stops at once on a full hub disk', async () => {
