@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -534,4 +535,36 @@ func TestMeetingJobRefusesForeignURLs(t *testing.T) {
 	_, err = f.start(j)
 	require.ErrorContains(t, err, "invalid")
 	require.True(t, idle())
+}
+
+// syncBuf is a log sink safe for concurrent writes.
+type syncBuf struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (s *syncBuf) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuf) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
+}
+
+func TestMeetingResultPostErrorsLogNoURL(t *testing.T) {
+	var buf syncBuf
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	srv := httptest.NewServer(http.NotFoundHandler())
+	u := srv.URL + "/api/meeting-jobs/secret-token-123/result"
+	srv.Close() // the hub is unreachable: every post is a network error
+	postMeetingResult(context.Background(), u, proto.MeetingJobResult{Error: "x"}, 2, time.Millisecond)
+	out := buf.String()
+	require.Contains(t, out, "meetings: post result: Post: ")
+	require.NotContains(t, out, "secret-token-123")
+	require.NotContains(t, out, srv.URL)
 }

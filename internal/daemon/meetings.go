@@ -529,7 +529,7 @@ func postMeetingResult(ctx context.Context, u string, body proto.MeetingJobResul
 			if ctx.Err() != nil {
 				return
 			}
-			log.Printf("meetings: post result: %v", err)
+			log.Printf("meetings: post result: %v", withoutURL(err))
 			continue
 		}
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
@@ -544,6 +544,16 @@ func postMeetingResult(ctx context.Context, u string, body proto.MeetingJobResul
 			log.Printf("meetings: post result: %s", resp.Status)
 		}
 	}
+}
+
+// withoutURL drops the URL from a request error: the result URL carries the job's signed token, which
+// never goes to the log.
+func withoutURL(err error) error {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		return fmt.Errorf("%s: %w", ue.Op, ue.Err)
+	}
+	return err
 }
 
 // resolveHubURL resolves a URL relative to the hub (the hub sends paths) against its base URL. An
