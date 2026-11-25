@@ -91,3 +91,44 @@ func TestPendingsForwardNeedsLocalToken(t *testing.T) {
 		t.Fatal(c)
 	}
 }
+
+func TestPendingsForwardRejectsDotIds(t *testing.T) {
+	called := false
+	hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { called = true }))
+	defer hub.Close()
+	api := pendingsAPI(t, hub.URL)
+	for _, u := range []string{"/v1/sessions/%2E%2E/pendings", "/v1/sessions/%2E/pendings", "/v1/sessions/s1/pendings/%2E%2E/done"} {
+		m := "POST"
+		if strings.HasSuffix(u, "/pendings") {
+			m = "GET"
+		}
+		if c, b := pdo(t, m, api.URL+u, "tok", "{}"); c != 400 || b != `{"error":"invalid id"}` {
+			t.Fatal(u, c, b)
+		}
+	}
+	if called {
+		t.Fatal("hub was called")
+	}
+}
+
+func TestPendingsForwardOversizeResponse(t *testing.T) {
+	hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(strings.Repeat("a", pendingsMaxResp+10)))
+	}))
+	defer hub.Close()
+	api := pendingsAPI(t, hub.URL)
+	if c, b := pdo(t, "GET", api.URL+"/v1/sessions/s1/pendings", "tok", ""); c != 502 || b != `{"error":"Quorum hub answer too large"}` {
+		t.Fatal(c, b)
+	}
+}
+
+func TestPendingsForwardNoRedirect(t *testing.T) {
+	hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/elsewhere", 302)
+	}))
+	defer hub.Close()
+	api := pendingsAPI(t, hub.URL)
+	if c, _ := pdo(t, "GET", api.URL+"/v1/sessions/s1/pendings", "tok", ""); c != 302 {
+		t.Fatal(c)
+	}
+}

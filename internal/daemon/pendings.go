@@ -12,6 +12,7 @@ import (
 
 const (
 	pendingsMaxBody = 64 << 10
+	pendingsMaxResp = 1 << 20
 	pendingsTimeout = 10 * time.Second
 	pendingsDownMsg = `{"error":"Quorum hub unreachable; the item was not saved"}`
 )
@@ -19,9 +20,20 @@ const (
 // mountPendings registers the local routes that forward pending-item calls to the hub's machine
 // routes, adding the machine token. cfgFn returns the current config (so a reload takes effect).
 func mountPendings(mux *http.ServeMux, token string, cfgFn func() Config) {
-	client := &http.Client{Timeout: pendingsTimeout}
+	client := &http.Client{
+		Timeout:       pendingsTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
 	fwd := func(suffix func(r *http.Request) string) http.HandlerFunc {
 		return auth(token, func(w http.ResponseWriter, r *http.Request) {
+			for _, k := range []string{"id", "pid"} {
+				if v := r.PathValue(k); v == "" || v == "." || v == ".." {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusBadRequest)
+					io.WriteString(w, `{"error":"invalid id"}`)
+					return
+				}
+			}
 			forwardPendings(w, r, client, cfgFn, suffix(r))
 		})
 	}
@@ -85,9 +97,15 @@ func forwardPendings(w http.ResponseWriter, r *http.Request, client *http.Client
 		return
 	}
 	defer resp.Body.Close()
-	out, err := io.ReadAll(io.LimitReader(resp.Body, pendingsMaxBody))
+	out, err := io.ReadAll(io.LimitReader(resp.Body, pendingsMaxResp+1))
 	if err != nil {
 		pendingsDown(w)
+		return
+	}
+	if len(out) > pendingsMaxResp {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		io.WriteString(w, `{"error":"Quorum hub answer too large"}`)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
