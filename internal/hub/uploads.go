@@ -15,6 +15,9 @@ import (
 // uploadMaxSize is the largest file a device may attach to a message (a variable for tests).
 var uploadMaxSize int64 = 100 << 20
 
+// uploadReadWait: the longest wait for more of the body from the device (a variable for tests).
+var uploadReadWait = 60 * time.Second
+
 const (
 	// uploadChunk is the size of each upload_chunk sent to the machine (the daemon's maximum).
 	uploadChunk = 1 << 20
@@ -101,7 +104,10 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}()
 	buf := make([]byte, uploadChunk)
 	var off int64
+	rc := http.NewResponseController(w)
 	for {
+		// a device that stops sending for a minute is gone (ErrNotSupported is fine)
+		_ = rc.SetReadDeadline(time.Now().Add(uploadReadWait))
 		n, rerr := io.ReadFull(body, buf)
 		if n > 0 {
 			p := map[string]any{"token": started.Token, "offset": off, "data": base64.StdEncoding.EncodeToString(buf[:n])}

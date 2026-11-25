@@ -93,7 +93,10 @@ func (h *Hub) call(ctx context.Context, machine, method string, params any, out 
 		h.rpcMu.Unlock()
 	}()
 	p, _ := json.Marshal(proto.RPC{ReqID: id, Method: method, Params: pj})
-	if err := c.write(ctx, proto.Envelope{Type: "rpc", Machine: machine, Payload: p}); err != nil {
+	// the write never follows the caller's cancellation: the websocket closes the whole machine
+	// link when a write is interrupted, and a device that goes away mid-request must not do that
+	// (the write keeps its own size-scaled timeout)
+	if err := c.write(context.WithoutCancel(ctx), proto.Envelope{Type: "rpc", Machine: machine, Payload: p}); err != nil {
 		return errOffline
 	}
 	t := time.NewTimer(rpcTimeout)

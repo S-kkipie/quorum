@@ -57,7 +57,7 @@ func newUpFx(t *testing.T) *upFx {
 			_ = json.Unmarshal(r.Params, &f.beginParam)
 			f.n++
 			tok := fmt.Sprintf("tok%d", f.n)
-			path := fmt.Sprintf("/home/u/.config/quorum/uploads/2026-11-25/abc%03d-%s", f.n, p.Name)
+			path := fmt.Sprintf("/home/u/.cache/quorum/uploads/2026-11-25/abc%03d-%s", f.n, p.Name)
 			f.pending[tok], f.paths[tok] = []byte{}, path
 			return okResult(map[string]string{"token": tok, "path": path, "name": path[strings.LastIndex(path, "/")+1:]})
 		case "upload_chunk":
@@ -153,7 +153,7 @@ func TestUploadStreamsInChunks(t *testing.T) {
 	code, out := f.upload(t, "s1", "clip one.mp4", "video/mp4", bytes.NewReader(data), int64(len(data)))
 	require.Equal(t, 200, code, out)
 	path := out["path"].(string)
-	require.Equal(t, "/home/u/.config/quorum/uploads/2026-11-25/abc001-clip one.mp4", path)
+	require.Equal(t, "/home/u/.cache/quorum/uploads/2026-11-25/abc001-clip one.mp4", path)
 	require.EqualValues(t, len(data), out["size"])
 	require.Equal(t, "video/mp4", out["mime"])
 	f.mu.Lock()
@@ -199,7 +199,7 @@ func TestUploadSizeCap(t *testing.T) {
 	require.Equal(t, 413, code)
 	eventually(t, func() bool { return f.callsOf("upload_abort") == 1 })
 	require.Zero(t, f.callsOf("upload_end"))
-	_, ok, _ := f.st.UploadOf("s1", "/home/u/.config/quorum/uploads/2026-11-25/abc001-big.bin")
+	_, ok, _ := f.st.UploadOf("s1", "/home/u/.cache/quorum/uploads/2026-11-25/abc001-big.bin")
 	require.False(t, ok)
 }
 
@@ -249,6 +249,7 @@ func TestUploadClientGoneAborts(t *testing.T) {
 	<-done
 	eventually(t, func() bool { return f.callsOf("upload_abort") == 1 })
 	require.Zero(t, f.callsOf("upload_end"))
+	require.True(t, f.srv.hub.Connected("m1"), "the machine link survives the device going away")
 }
 
 func (f *upFx) view(t *testing.T, sid, path string) (int, string) {
@@ -274,7 +275,7 @@ func TestUploadViewLinkOnlyForRecordedUploads(t *testing.T) {
 	require.Equal(t, 200, code, out)
 	theirs := out["path"].(string)
 	f.mu.Lock()
-	f.files["/home/u/.config/quorum/uploads/2026-11-25/zzz999-x.txt"] = []byte("secret")
+	f.files["/home/u/.cache/quorum/uploads/2026-11-25/zzz999-x.txt"] = []byte("secret")
 	f.mu.Unlock()
 
 	code, u := f.view(t, "s1", mine)
@@ -290,7 +291,7 @@ func TestUploadViewLinkOnlyForRecordedUploads(t *testing.T) {
 	require.Equal(t, "application/pdf", resp.Header.Get("Content-Type"))
 	require.Equal(t, pdf, body)
 	f.mu.Lock()
-	require.Equal(t, "/home/u/.config/quorum/uploads/2026-11-25", f.reads[0]["base"])
+	require.Equal(t, "/home/u/.cache/quorum/uploads/2026-11-25", f.reads[0]["base"])
 	require.NotContains(t, f.reads[0], "imageOnly", "an upload may be any type")
 	f.mu.Unlock()
 	// the link serves that one file, not its neighbours
@@ -301,8 +302,8 @@ func TestUploadViewLinkOnlyForRecordedUploads(t *testing.T) {
 	require.Equal(t, 403, resp.StatusCode)
 
 	// another session's upload, an unrecorded file, a path outside, a traversal: refused
-	for _, p := range []string{theirs, "/home/u/.config/quorum/uploads/2026-11-25/zzz999-x.txt", "/etc/passwd",
-		"/home/u/.config/quorum/uploads/2026-11-25/../2026-11-25/abc001-doc.pdf", "abc001-doc.pdf"} {
+	for _, p := range []string{theirs, "/home/u/.cache/quorum/uploads/2026-11-25/zzz999-x.txt", "/etc/passwd",
+		"/home/u/.cache/quorum/uploads/2026-11-25/../2026-11-25/abc001-doc.pdf", "abc001-doc.pdf"} {
 		code, body := f.view(t, "s1", p)
 		require.Equal(t, 403, code, p+" "+body)
 	}
@@ -362,4 +363,32 @@ func TestUploadVideoRange(t *testing.T) {
 	require.Equal(t, data[uploadChunk-5:], b)
 	resp, _ = get(fmt.Sprintf("bytes=%d-", len(data)+10))
 	require.Equal(t, 416, resp.StatusCode)
+	require.Equal(t, fmt.Sprintf("bytes */%d", len(data)), resp.Header.Get("Content-Range"))
+	resp, _ = get(fmt.Sprintf("bytes=%d-", len(data)))
+	require.Equal(t, 416, resp.StatusCode)
+	require.Equal(t, fmt.Sprintf("bytes */%d", len(data)), resp.Header.Get("Content-Range"))
+}
+
+// a device that stops sending: the read deadline ends the request and the partial file is dropped
+func TestUploadStalledClientTimesOut(t *testing.T) {
+	old := uploadReadWait
+	uploadReadWait = 300 * time.Millisecond
+	t.Cleanup(func() { uploadReadWait = old })
+	f := newUpFx(t)
+	pr, pw := io.Pipe()
+	t.Cleanup(func() { pw.Close() })
+	go func() {
+		req, _ := http.NewRequest("POST", f.ts.URL+"/api/sessions/s1/files?name=a.bin", pr)
+		req.Header.Set("Authorization", "Bearer "+f.devTok)
+		req.ContentLength = 2 * uploadChunk
+		if resp, err := http.DefaultClient.Do(req); err == nil {
+			resp.Body.Close()
+		}
+	}()
+	// more than the client's write buffer, so the request surely reaches the hub
+	_, _ = pw.Write(make([]byte, 64<<10))
+	eventually(t, func() bool { return f.callsOf("upload_begin") == 1 })
+	eventually(t, func() bool { return f.callsOf("upload_abort") == 1 })
+	require.Zero(t, f.callsOf("upload_end"))
+	require.True(t, f.srv.hub.Connected("m1"), "the machine link survives the device going away")
 }

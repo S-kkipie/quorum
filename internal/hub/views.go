@@ -508,7 +508,13 @@ func (s *Server) handleView(w http.ResponseWriter, r *http.Request) {
 		if first {
 			var de daemonError
 			if ranged && errors.As(err, &de) && string(de) == "invalid offset" {
-				h.Set("Content-Range", "bytes */*")
+				// past the end: ask for the first byte to learn the real size
+				p["offset"], p["length"] = 0, 1
+				size := "*"
+				if s.hub.call(r.Context(), link.machine, "file_read", p, &out) == nil {
+					size = strconv.FormatInt(out.Size, 10)
+				}
+				h.Set("Content-Range", "bytes */"+size)
 				viewFail(w, http.StatusRequestedRangeNotSatisfiable, "range not satisfiable")
 				return
 			}
