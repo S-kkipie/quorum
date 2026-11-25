@@ -14,3 +14,5 @@ android-app/**/google-services.json
 android-app/node_modules
 android-app/quorum.apk
 keystore.properties
+__pycache__/
+.pytest_cache/
