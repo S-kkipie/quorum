@@ -85,6 +85,7 @@ export default function ConnectorForm({ value, onChange, hasToken }: { value: Co
             <input type="checkbox" checked={(d.settings.labelsAsStatus ?? '') === 'true'} onChange={(e) => set('labelsAsStatus', e.target.checked ? 'true' : '')} />
             Read the status from labels
           </label>
+          {text('person', 'You are', 'your-login', 'Your GitHub login: the issues assigned to it are "your tickets".')}
         </>
       )}
       {d.kind === 'paperclip' && (
@@ -92,6 +93,7 @@ export default function ConnectorForm({ value, onChange, hasToken }: { value: Co
           {text('baseURL', 'Instance URL', 'https://paperclip.example')}
           {text('companyId', 'Company')}
           {text('projectId', 'Paperclip project (optional)')}
+          {text('person', 'You are', '', 'Your name as the assignee in Paperclip: "your tickets".')}
         </>
       )}
       {d.kind === 'exec' && (
@@ -100,6 +102,7 @@ export default function ConnectorForm({ value, onChange, hasToken }: { value: Co
           <label className="mt-3 block text-xs text-muted-foreground">Status map (JSON, optional)
             <Textarea value={d.settings.statusMap ?? ''} onChange={(e) => set('statusMap', e.target.value)} rows={2} placeholder='{"waiting":"blocked"}' className={field + ' font-mono'} />
           </label>
+          {text('person', 'You are', '', 'Your name as the assignee your script reports: "your tickets".')}
         </>
       )}
       {d.kind === 'moontech' && (

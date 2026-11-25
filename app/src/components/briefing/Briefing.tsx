@@ -72,11 +72,13 @@ const row = 'grid min-w-0 grid-cols-1 items-start gap-3'
  * The project briefing at the top of the project page, in the mockup's order. Two columns once the page
  * itself is 900 px wide (container query), one below. Empty sections are hidden.
  */
-export default function Briefing({ b, projectId, hasSource, pinOpen = false, onBriefing, onOpenSession, onEditSource }: {
+export default function Briefing({ b, projectId, hasSource, hasPerson = true, pinOpen = false, onBriefing, onOpenSession, onEditSource }: {
   b: Data
   projectId: string
   /** The project has a ticket source; without one a hint links to its settings. */
   hasSource: boolean
+  /** The ticket source says who "you" are (setting person); without it a hint replaces "Your tickets". */
+  hasPerson?: boolean
   /** The Pin a note menu item was used: the pinned card shows even with no notes. */
   pinOpen?: boolean
   /** Applies a local change (a pinned note added or removed) to the shown briefing. */
@@ -88,16 +90,17 @@ export default function Briefing({ b, projectId, hasSource, pinOpen = false, onB
   const right = b.myTickets.length > 0
   const meetings = meetingCount(b.meetings) > 0
   const pinned = b.pinned.length > 0 || pinOpen
-  if (!left && !right && !meetings && !pinned && hasSource) return null
+  const noPerson = hasSource && !hasPerson
+  if (!left && !right && !meetings && !pinned && hasSource && !noPerson) return null
+  const hint = (text: string) => onEditSource
+    ? <button type="button" onClick={onEditSource} className="min-h-11 text-left text-sm text-accent hover:underline">{text}</button>
+    : <p className="text-sm text-muted-foreground">{text}</p>
   return (
     <div className="@container min-w-0 px-3 pt-3">
-      {!hasSource && (
-        onEditSource
-          ? <button type="button" onClick={onEditSource} className="min-h-11 text-left text-sm text-accent hover:underline">Connect a ticket source to see your tickets here</button>
-          : <p className="text-sm text-muted-foreground">Connect a ticket source to see your tickets here</p>
-      )}
+      {!hasSource && hint('Connect a ticket source to see your tickets here')}
+      {noPerson && hint('Set “You are” in the ticket source to see your tickets')}
       {(left || right) && (
-        <div data-briefing-row className={`${row} ${left && right ? '@min-[900px]:grid-cols-2' : ''} ${hasSource ? '' : 'mt-2'}`}>
+        <div data-briefing-row className={`${row} ${left && right ? '@min-[900px]:grid-cols-2' : ''} ${hasSource && !noPerson ? '' : 'mt-2'}`}>
           {left && (
             <div className="flex min-w-0 flex-col gap-3">
               {b.whereLeftOff && <WhereLeftOff w={b.whereLeftOff} />}

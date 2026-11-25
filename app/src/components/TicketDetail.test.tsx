@@ -49,6 +49,12 @@ describe('TicketDetail', () => {
     expect(screen.queryByText('Pending proposals')).toBeNull()
     await waitFor(() => expect(fetchMock).toHaveBeenCalled())
   })
+  it('a parked ticket reads parked, like the briefing', async () => {
+    const s = setTickets(initialState(), 'p1', [{ ...tk('t1', { status: 'blocked', rawStatus: 'aparcado' }), sessions: [] }])
+    render(<TicketDetail state={s} ticketId="t1" />)
+    expect(screen.getByText(/^parked \(aparcado\)/)).toBeTruthy()
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled())
+  })
   it('a writable source keeps the status change', async () => {
     const s = setTickets(initialState(), 'p1', [{ ...tk('t1'), sessions: [] }])
     render(<TicketDetail state={s} ticketId="t1" />)

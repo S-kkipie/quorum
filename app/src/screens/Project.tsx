@@ -72,6 +72,7 @@ export default function Project({ state, id, onBack, onOpenTickets, onOpenSessio
     setResumeAt({ prompt: briefingPrompt(b), machine: last?.machine ?? '', dir: last?.root || last?.cwd || '' })
   }
   const hasSource = !!p.connector && p.connector.kind !== 'none'
+  const hasPerson = !!p.connector?.settings?.person?.trim()
 
   async function sync() {
     setSyncing(true)
@@ -108,7 +109,7 @@ export default function Project({ state, id, onBack, onOpenTickets, onOpenSessio
       </div>
 
       {b ? (
-        <Briefing b={b} projectId={id} hasSource={hasSource} pinOpen={pinOpen} onBriefing={(f) => setB((x) => (x ? f(x) : x))}
+        <Briefing b={b} projectId={id} hasSource={hasSource} hasPerson={hasPerson} pinOpen={pinOpen} onBriefing={(f) => setB((x) => (x ? f(x) : x))}
           onOpenSession={onOpenSession} onEditSource={onEdit ? () => onEdit(id) : undefined} />
       ) : (
         briefingError && <p className="px-3 pt-2 text-xs text-muted-foreground [overflow-wrap:anywhere]">Briefing unavailable: {briefingError}</p>

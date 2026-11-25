@@ -45,6 +45,15 @@ describe('ConnectorForm', () => {
     expect(validateConnector(last)).toBe('')
     expect(connectorInput(last)).toEqual({ kind: 'exec', settings: { command: '/x/c.sh' }, intervalMin: 5 })
   })
+  it('every ticket source asks who "you" are', () => {
+    for (const kind of ['github', 'paperclip', 'exec', 'moontech']) {
+      cleanup()
+      render(<Harness c={{ kind: 'none', settings: {}, hasToken: false, intervalMin: 0 }} />)
+      fireEvent.change(screen.getByLabelText('Connector'), { target: { value: kind } })
+      fireEvent.change(screen.getByLabelText('You are'), { target: { value: ' ana ' } })
+      expect(connectorInput(last).settings.person).toBe('ana')
+    }
+  })
   it('github validates owner/name', () => {
     expect(validateConnector({ ...draftFrom(), kind: 'github', settings: { repo: 'nope' } })).toMatch(/owner\/name/)
     expect(validateConnector({ ...draftFrom(), kind: 'github', settings: { repo: 'o/r' } })).toBe('')

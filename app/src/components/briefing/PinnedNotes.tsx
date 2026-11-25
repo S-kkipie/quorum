@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { MoreHorizontal } from 'lucide-react'
 import type { PinnedNote } from '../../proto.gen'
 import { addPinned, deletePinned } from '../../lib/api'
-import { PIN_MAX } from '../../lib/briefing'
+import { PIN_MAX, pinLength } from '../../lib/briefing'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
@@ -19,7 +19,7 @@ export default function PinnedNotes({ projectId, notes, onChange, autoFocus = fa
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const len = text.trim().length
+  const len = pinLength(text)
   const over = len > PIN_MAX
   const shown = over ? `A note can be at most ${PIN_MAX} characters (this one has ${len}).` : error
 

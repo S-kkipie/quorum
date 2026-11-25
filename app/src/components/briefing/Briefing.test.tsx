@@ -28,9 +28,9 @@ const full = (): BriefingData => ({
   prevSeenAt: 1,
 })
 
-function Harness({ b: initial, hasSource = true, pinOpen = false, onEditSource }: { b: BriefingData; hasSource?: boolean; pinOpen?: boolean; onEditSource?: () => void }) {
+function Harness({ b: initial, hasSource = true, hasPerson = true, pinOpen = false, onEditSource }: { b: BriefingData; hasSource?: boolean; hasPerson?: boolean; pinOpen?: boolean; onEditSource?: () => void }) {
   const [b, setB] = useState(initial)
-  return <Briefing b={b} projectId="p1" hasSource={hasSource} pinOpen={pinOpen} onBriefing={setB} onEditSource={onEditSource} />
+  return <Briefing b={b} projectId="p1" hasSource={hasSource} hasPerson={hasPerson} pinOpen={pinOpen} onBriefing={setB} onEditSource={onEditSource} />
 }
 const regions = () => screen.queryAllByRole('region').map((r) => r.getAttribute('aria-label'))
 
@@ -98,6 +98,21 @@ describe('No source', () => {
   })
 })
 
+describe('Source without "You are"', () => {
+  it('shows the hint instead of an empty Your tickets', () => {
+    const onEditSource = vi.fn()
+    render(<Harness b={emptyBriefing()} hasPerson={false} onEditSource={onEditSource} />)
+    const hint = screen.getByRole('button', { name: 'Set \u201cYou are\u201d in the ticket source to see your tickets' })
+    fireEvent.click(hint)
+    expect(onEditSource).toHaveBeenCalled()
+    expect(screen.queryByText('Connect a ticket source to see your tickets here')).toBeNull()
+  })
+  it('a source with a person shows no hint', () => {
+    const { container } = render(<Harness b={emptyBriefing()} />)
+    expect(container.textContent).toBe('')
+  })
+})
+
 describe('Pinned notes', () => {
   it('pins a note through the hub and lists it', async () => {
     render(<Harness b={full()} />)
@@ -125,6 +140,14 @@ describe('Pinned notes', () => {
     expect(screen.getByRole('alert').textContent).toMatch(/500 characters/)
     expect((screen.getByRole('button', { name: 'Pin' }) as HTMLButtonElement).disabled).toBe(true)
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+  it('counts code points like the hub: 500 emoji fit', () => {
+    render(<Harness b={full()} />)
+    fireEvent.change(screen.getByLabelText('New pinned note'), { target: { value: '\u{1F680}'.repeat(500) } })
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect((screen.getByRole('button', { name: 'Pin' }) as HTMLButtonElement).disabled).toBe(false)
+    fireEvent.change(screen.getByLabelText('New pinned note'), { target: { value: '\u{1F680}'.repeat(501) } })
+    expect(screen.getByRole('alert').textContent).toContain('this one has 501')
   })
   it('a hub error shows inline', async () => {
     fetchMock.mockImplementationOnce(async () => new Response(JSON.stringify({ error: 'note too long' }), { status: 400 }))

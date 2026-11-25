@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { ApiError, confirmTicketLink, getTicket, listCheckouts, launchTicket, proposeStatus, unlinkTicket, type TicketView } from '../lib/api'
 import { displayState } from '../lib/sessions'
+import { isParked } from '../lib/briefing'
 import { STATUSES, STATUS_LABEL, TONE_TEXT, projectCheckouts, readOnlyKind, stateStyle, ticketLine, ticketSessions } from '../lib/projects'
 import type { AppState } from '../lib/store'
 import type { Checkout } from '../proto.gen'
@@ -74,7 +75,7 @@ export default function TicketDetail({ state, ticketId, onBack, onOpenSession, o
       <div className="px-3">
         <p className={`mt-3 text-sm ${TONE_TEXT[line.tone]}`}>{line.text}</p>
         <p className="mt-1 text-xs text-muted-foreground">
-          {STATUS_LABEL[t.status] ?? t.status}{t.rawStatus && ` (${t.rawStatus})`}{t.assignee && ` · ${t.assignee}`}
+          {isParked(t) ? 'parked' : STATUS_LABEL[t.status] ?? t.status}{t.rawStatus && ` (${t.rawStatus})`}{t.assignee && ` · ${t.assignee}`}
         </p>
         {error && <p role="alert" className="mt-2 text-xs text-danger">{error}</p>}
         {readOnly && <p className="mt-2 text-xs text-muted-foreground">Read-only source: Quorum never writes to it.</p>}
