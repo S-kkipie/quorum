@@ -208,4 +208,29 @@ describe('subagents in the timeline', () => {
     expect(askingAgents(tl, [{ agent: '' }], live).size).toBe(0)
     expect([...askingAgents(tl, [{}], live)].sort()).toEqual(['tu1', 'tu2'])
   })
+  it('the main turn ending settles foreground subagents that lost their agent_end; background ones keep waiting', () => {
+    const evs = [
+      call('f', 'fg', { prompt: 'p' }), start('F', 'f', 'fg'), ev('assistant', { text: 'fg says', agent: 'F' }),
+      call('b', 'bg'), start('B', 'b', 'bg'), done('b', 'launched', undefined, { background: { taskId: 'B' } }),
+      call('k', 'kid of bg', { agent: 'B' }), start('K', 'k', 'kid of bg', 'B'),
+    ]
+    for (const end of [ev('turn_end', { reason: 'end', outputTokens: 1 }), ev('status', { state: 'idle' })]) {
+      const tl = partitionTimeline(buildTimeline([...evs, end], BASE))
+      expect(tl.agents.get('F')).toMatchObject({ status: 'completed' })
+      expect(tl.agents.get('F')!.endedAt).toBeGreaterThan(0)
+      expect(tl.agents.get('B')).toMatchObject({ status: 'running' })
+      expect(tl.agents.get('K')).toMatchObject({ status: 'running' })
+    }
+    // a subagent's own end of turn is not the main one
+    expect(buildTimeline([...evs, ev('status', { state: 'idle', agent: 'F' })], BASE)[0]).toMatchObject({ status: 'running' })
+  })
+
+  it('focus on a subagent card inside a group, or nested, goes to the group row', () => {
+    const tl = partitionTimeline(buildTimeline([
+      call('a', 'one'), call('b', 'two'), start('A', 'a', 'one'), start('B', 'b', 'two'),
+      call('n', 'nested', { agent: 'B' }), start('N', 'n', 'nested', 'B'),
+    ], BASE))
+    const row = shownKey(tl.main[0])
+    for (const id of ['A', 'B', 'N']) expect(tl.owner.get(itemKey(tl.agents.get(id)!))).toBe(row)
+  })
 })

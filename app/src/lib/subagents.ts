@@ -119,6 +119,8 @@ export function partitionTimeline(items: Item[]): SessionTimeline {
     return undefined
   }
   const owner = new Map<string, string>()
+  // every subagent card, inside a group or nested, is reached through its main row
+  for (const a of byId.values()) { const k = top(a); if (k) owner.set(itemKey(a), k) }
   for (const [id, l] of lists) {
     const k = top(byId.get(id))
     if (k) for (const it of l) owner.set(itemKey(it), k)

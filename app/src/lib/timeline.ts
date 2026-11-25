@@ -325,6 +325,20 @@ export function buildTimeline(events: Event[], base: string, worktrees: readonly
   const commands = new Map<string, CommandItem>()
   // user events of commands a device ran: the command card shows them (see hideDeviceCommands)
   const deviceCommands = new Set<Item>()
+  // the main turn ended: a foreground subagent still shown running lost its agent_end (it cannot
+  // outlive the call that waits on it); background ones, and anything under one, wait for their end
+  const settleForeground = (ts: number) => {
+    const inBackground = (a: AgentItem | undefined): boolean => {
+      const seen = new Set<AgentItem>()
+      while (a && !seen.has(a)) { if (a.bg) return true; seen.add(a); a = a.agent ? agents.get(a.agent) : undefined }
+      return false
+    }
+    for (const it of flat) {
+      if (it.t !== 'agent' || it.status !== 'running' || inBackground(it)) continue
+      it.status = 'completed'
+      if (ts && !it.endedAt) it.endedAt = ts
+    }
+  }
   const settle = (t: ToolItem) => { const a = artifactFor(t, base, worktrees); if (a) flat.push(a) }
 
   let histLeft = 0
@@ -341,7 +355,11 @@ export function buildTimeline(events: Event[], base: string, worktrees: readonly
         if (command && d.device === true) deviceCommands.add(flat[flat.length - 1])
       }
         break
+      case 'status':
+        if (d.state === 'idle' && !d.agent) settleForeground(e.ts)
+        break
       case 'turn_end':
+        if (!d.agent) settleForeground(e.ts)
         // a footer only when the mod reported tokens (older events carry none)
         if (d.tokens && typeof d.tokens === 'object') flat.push({ t: 'turn', seq, tokens: d.tokens, model: typeof d.model === 'string' ? d.model : '' })
         break

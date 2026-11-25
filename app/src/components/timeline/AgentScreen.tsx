@@ -65,7 +65,6 @@ export default function AgentScreen({ stack, tl, liveAgent, bgEnded, asking, ses
 }) {
   const id = stack[stack.length - 1]
   const a = id ? tl.agents.get(id) : undefined
-  // the screen's own key: its stable key, so a card whose ids fill in later keeps its screen
   return (
     <Sheet open={!!a} onOpenChange={(o) => { if (!o) onClose() }}>
       {a && (
