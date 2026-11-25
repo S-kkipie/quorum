@@ -237,6 +237,7 @@ func (s *Server) routes() {
 	dev("POST /api/workspaces", s.handleCreateWorkspace)
 	dev("POST /api/projects", s.handleCreateProject)
 	s.projectRoutes(dev)
+	s.briefingRoutes(dev)
 	dev("POST /api/tickets/{id}/proposals", s.handleCreateProposal)
 	dev("POST /api/proposals/{id}/approve", s.handleApproveProposal)
 	dev("POST /api/proposals/{id}/reject", s.handleRejectProposal)

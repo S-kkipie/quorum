@@ -1,4 +1,4 @@
-import type { AccountUsage, Checkout, Conversation, ConnectorConfig, Event, Project, Proposal, SessionCommands, SessionInfo, Ticket, TranscriptPage, Workspace } from '../proto.gen'
+import type { AccountUsage, Briefing as BriefingGen, Checkout, Conversation, ConnectorConfig, Event, PinnedNote, Project, Proposal, SessionCommands, SessionInfo, Ticket, TranscriptPage, WhereLeftOff, Workspace } from '../proto.gen'
 
 export interface Machine {
   name: string
@@ -200,6 +200,18 @@ export const syncProject = (id: string) => apiFetch(`/api/projects/${enc(id)}/sy
 export const listCheckouts = (projectId: string) => apiFetch<Checkout[]>(`/api/projects/${enc(projectId)}/checkouts`)
 export const listTickets = (projectId: string) => apiFetch<TicketView[]>(`/api/projects/${enc(projectId)}/tickets`)
 export const getTicket = (id: string) => apiFetch<TicketView>(`/api/tickets/${enc(id)}`)
+
+// --- Project briefing ("catch me up") ---
+
+/** GET /api/projects/{id}/briefing: every list is present (possibly empty); whereLeftOff is null when there is none. */
+export type Briefing = Omit<BriefingGen, 'whereLeftOff'> & { whereLeftOff: WhereLeftOff | null }
+export const getBriefing = (projectId: string) => apiFetch<Briefing>(`/api/projects/${enc(projectId)}/briefing`)
+/** Records a visit; the hub moves prevSeenAt only when the last visit is over 30 minutes old. */
+export const visitProject = (projectId: string) =>
+  apiFetch<{ seenAt: number; prevSeenAt: number }>(`/api/projects/${enc(projectId)}/visit`, json('POST'))
+/** Pins a note (1 to 500 characters after trimming; the hub answers 400 otherwise). */
+export const addPinned = (projectId: string, text: string) => apiFetch<PinnedNote>(`/api/projects/${enc(projectId)}/pinned`, json('POST', { text }))
+export const deletePinned = (projectId: string, id: string) => apiFetch(`/api/projects/${enc(projectId)}/pinned/${enc(id)}`, json('DELETE'))
 export const launchTicket = (id: string, b: { machine: string; checkoutRoot: string; permissionMode?: string }) =>
   apiFetch<{ reqId: string }>(`/api/tickets/${enc(id)}/launch`, json('POST', b))
 export const proposeStatus = (ticketId: string, status: string) => apiFetch<Proposal>(`/api/tickets/${enc(ticketId)}/proposals`, json('POST', { kind: 'status', status }))

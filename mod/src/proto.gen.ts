@@ -655,6 +655,64 @@ export interface PinnedNote {
   text: string;
   at: number /* int64 */;
 }
+/**
+ * Briefing is a project's "catch me up" view (GET /api/projects/{id}/briefing). Every list is non-nil.
+ */
+export interface Briefing {
+  /**
+   * WhereLeftOff is the generated paragraph; null when there is none (for example, no sessions yet).
+   */
+  whereLeftOff?: WhereLeftOff;
+  /**
+   * NewSince covers the time since PrevSeenAt, newest first, at most 20 items (empty when PrevSeenAt is 0).
+   */
+  newSince: BriefingItem[];
+  /**
+   * MyTickets are the open tickets of the configured person, by planned end (none last).
+   */
+  myTickets: Ticket[];
+  meetings: BriefingMeetings;
+  pinned: PinnedNote[];
+  sessions: SessionInfo[];
+  seenAt: number /* int64 */;
+  prevSeenAt: number /* int64 */;
+}
+/**
+ * WhereLeftOff is the "where you left off" text, written by Haiku from Sessions sessions at At (Unix ms).
+ */
+export interface WhereLeftOff {
+  text: string;
+  at: number /* int64 */;
+  sessions: number /* int */;
+}
+/**
+ * BriefingItem is one "new since you were here" line. Kind = session|ticket|note; Ref is the session id,
+ * the ticket id or the note's external id.
+ */
+export interface BriefingItem {
+  kind: string;
+  title: string;
+  detail: string;
+  at: number /* int64 */;
+  ref: string;
+}
+/**
+ * BriefingMeetings are the bullets of the project's meeting notes from the last 14 days; Actions only holds
+ * the configured person's.
+ */
+export interface BriefingMeetings {
+  decisions: MeetingItem[];
+  openPoints: MeetingItem[];
+  actions: MeetingItem[];
+}
+/**
+ * MeetingItem is one bullet of a meeting note; Date is the note's YYYY-MM-DD.
+ */
+export interface MeetingItem {
+  text: string;
+  noteTitle: string;
+  date: string;
+}
 export interface SessionTicket {
   sessionId: string;
   ticketId: string;

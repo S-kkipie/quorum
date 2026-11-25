@@ -1,6 +1,7 @@
 package store
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -200,17 +201,19 @@ func TestMeetingNotes(t *testing.T) {
 
 func TestWhereLeftOffRoundTrip(t *testing.T) {
 	s, p := briefingStore(t)
-	text, at, err := s.WhereLeftOff(p.ID)
+	text, n, at, err := s.WhereLeftOff(p.ID)
 	require.NoError(t, err)
 	require.Empty(t, text)
+	require.Zero(t, n)
 	require.Zero(t, at)
-	require.NoError(t, s.SetWhereLeftOff(p.ID, "You were fixing login.", 42))
-	text, at, err = s.WhereLeftOff(p.ID)
+	require.NoError(t, s.SetWhereLeftOff(p.ID, "You were fixing login.", 2, 42))
+	text, n, at, err = s.WhereLeftOff(p.ID)
 	require.NoError(t, err)
 	require.Equal(t, "You were fixing login.", text)
+	require.Equal(t, 2, n)
 	require.Equal(t, int64(42), at)
-	require.ErrorIs(t, s.SetWhereLeftOff("nope", "x", 1), ErrNotFound)
-	_, _, err = s.WhereLeftOff("nope")
+	require.ErrorIs(t, s.SetWhereLeftOff("nope", "x", 1, 1), ErrNotFound)
+	_, _, _, err = s.WhereLeftOff("nope")
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
@@ -227,7 +230,7 @@ func TestBriefingMigrationOnOldDB(t *testing.T) {
 	require.NoError(t, err)
 	defer s.Close()
 	p := mkProject(t, s)
-	require.NoError(t, s.SetWhereLeftOff(p.ID, "x", 1))
+	require.NoError(t, s.SetWhereLeftOff(p.ID, "x", 1, 1))
 	_, err = s.AddPinned(p.ID, "x", 1)
 	require.NoError(t, err)
 }
@@ -255,4 +258,33 @@ func TestDeleteProjectDropsBriefingRows(t *testing.T) {
 		require.Zero(t, n, tb)
 		require.Equal(t, 1, m, tb+" of another project stays")
 	}
+}
+
+func TestProjectSessionEnds(t *testing.T) {
+	s, p := briefingStore(t)
+	_, err := s.UpsertCheckout(proto.Checkout{ProjectID: p.ID, Machine: "m1", Root: "/r"})
+	require.NoError(t, err)
+	_, err = s.UpsertCheckout(proto.Checkout{Machine: "m1", Root: "/other"})
+	require.NoError(t, err)
+	require.NoError(t, s.UpsertSession(proto.SessionInfo{ID: "a", Machine: "m1", Root: "/r", State: proto.StateIdle}))
+	require.NoError(t, s.UpsertSession(proto.SessionInfo{ID: "b", Machine: "m1", Root: "/r", State: proto.StateIdle}))
+	require.NoError(t, s.UpsertSession(proto.SessionInfo{ID: "x", Machine: "m1", Root: "/other", State: proto.StateIdle}))
+	_, err = s.AppendEvent(proto.Event{Session: "a", TS: 500, Kind: proto.KindTurnEnd, Data: json.RawMessage(`{"answer":"old"}`)})
+	require.NoError(t, err)
+	_, err = s.AppendEvent(proto.Event{Session: "a", TS: 700, Kind: proto.KindTurnEnd, Data: json.RawMessage(`{"answer":"Fixed the login."}`)})
+	require.NoError(t, err)
+	_, err = s.AppendEvent(proto.Event{Session: "a", TS: 800, Kind: proto.KindUser, Data: json.RawMessage(`{"text":"more"}`)})
+	require.NoError(t, err)
+	_, err = s.AppendEvent(proto.Event{Session: "b", TS: 600, Kind: proto.KindUser, Data: json.RawMessage(`{"text":"hi"}`)})
+	require.NoError(t, err)
+	_, err = s.CloseSession("m1", "b")
+	require.NoError(t, err)
+	ends, err := s.ProjectSessionEnds(p.ID)
+	require.NoError(t, err)
+	require.Len(t, ends, 2, "only the project's sessions")
+	require.Equal(t, int64(700), ends["a"].EndAt)
+	require.Equal(t, "Fixed the login.", ends["a"].Answer)
+	require.Zero(t, ends["a"].ClosedAt)
+	require.Zero(t, ends["b"].EndAt)
+	require.NotZero(t, ends["b"].ClosedAt)
 }

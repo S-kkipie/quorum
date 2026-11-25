@@ -81,6 +81,11 @@ type Hub struct {
 	sugg map[string]string
 	// touch tells the summarizer that a project changed (nil in tests).
 	touch func(projectID string)
+	// leftOff marks a project's "where you left off" text as stale (nil in tests).
+	leftOff func(projectID string)
+	// bpending: projects with a project_briefing_changed scheduled (briefing.go).
+	bmu      sync.Mutex
+	bpending map[string]bool
 	// seenSess: session -> project it was already reported for (only a new session in the project counts).
 	seenSess map[string]string
 	// doneTimers: session -> end_seq whose done attention grace timer is armed.
@@ -351,6 +356,7 @@ func (h *Hub) publishGone(machine string, ids []string) {
 	for _, id := range ids {
 		h.forgetSuggested(id)
 		h.publish(proto.Envelope{Type: "session_gone", Machine: machine, Session: id})
+		h.sessionEndedID(id)
 	}
 }
 
@@ -493,6 +499,11 @@ func (h *Hub) onMessage(c *machineConn, env proto.Envelope) {
 			return
 		}
 		_, existed, _ := h.st.SessionOwner(si.ID) // only a new session fulfills a launch by folder
+		if si.State == proto.StateClosed {
+			if before, err := h.st.Session(si.ID); err != nil || before.State != proto.StateClosed {
+				defer h.sessionEndedID(si.ID) // closed by the mod: after the upsert is saved and published
+			}
+		}
 		repo, branch := si.RepoURL, si.Branch
 		// The store decides whether the rename applies (it does not if the old id came back alive)
 		// and validates that prev belongs to this machine.
@@ -525,6 +536,7 @@ func (h *Hub) onMessage(c *machineConn, env proto.Envelope) {
 			return
 		}
 		h.forgetSuggested(env.Session)
+		before, berr := h.st.Session(env.Session) // read first: a removed session has no row afterwards
 		removed, err := h.st.CloseSession(name, env.Session)
 		if err != nil {
 			log.Printf("hub: gone %s: %v", env.Session, err)
@@ -532,7 +544,13 @@ func (h *Hub) onMessage(c *machineConn, env proto.Envelope) {
 		}
 		if removed {
 			h.publish(proto.Envelope{Type: "session_removed", Machine: name, Session: env.Session})
+			if berr == nil {
+				h.briefingChanged(before.ProjectID) // it leaves the Sessions list; it never had a prompt
+			}
 			return
+		}
+		if berr == nil && before.State != proto.StateClosed {
+			defer h.sessionEnded(before)
 		}
 	case "session_commands":
 		h.saveSessionCommands(name, env)
@@ -603,6 +621,7 @@ func (h *Hub) onMessage(c *machineConn, env proto.Envelope) {
 			defer h.afterEvent(name, ev) // after the event is published
 		}
 		if ev.Kind == proto.KindTurnEnd {
+			defer h.sessionEndedID(ev.Session)
 			defer h.suggestFromTurnEnd(ev)
 			defer h.draftFromTurnEnd(ev)
 			defer h.touchSession(ev.Session)

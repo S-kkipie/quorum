@@ -578,6 +578,53 @@ type PinnedNote struct {
 	At   int64  `json:"at"`
 }
 
+// Briefing is a project's "catch me up" view (GET /api/projects/{id}/briefing). Every list is non-nil.
+type Briefing struct {
+	// WhereLeftOff is the generated paragraph; null when there is none (for example, no sessions yet).
+	WhereLeftOff *WhereLeftOff `json:"whereLeftOff"`
+	// NewSince covers the time since PrevSeenAt, newest first, at most 20 items (empty when PrevSeenAt is 0).
+	NewSince []BriefingItem `json:"newSince"`
+	// MyTickets are the open tickets of the configured person, by planned end (none last).
+	MyTickets  []Ticket         `json:"myTickets"`
+	Meetings   BriefingMeetings `json:"meetings"`
+	Pinned     []PinnedNote     `json:"pinned"`
+	Sessions   []SessionInfo    `json:"sessions"`
+	SeenAt     int64            `json:"seenAt"`
+	PrevSeenAt int64            `json:"prevSeenAt"`
+}
+
+// WhereLeftOff is the "where you left off" text, written by Haiku from Sessions sessions at At (Unix ms).
+type WhereLeftOff struct {
+	Text     string `json:"text"`
+	At       int64  `json:"at"`
+	Sessions int    `json:"sessions"`
+}
+
+// BriefingItem is one "new since you were here" line. Kind = session|ticket|note; Ref is the session id,
+// the ticket id or the note's external id.
+type BriefingItem struct {
+	Kind   string `json:"kind"`
+	Title  string `json:"title"`
+	Detail string `json:"detail"`
+	At     int64  `json:"at"`
+	Ref    string `json:"ref"`
+}
+
+// BriefingMeetings are the bullets of the project's meeting notes from the last 14 days; Actions only holds
+// the configured person's.
+type BriefingMeetings struct {
+	Decisions  []MeetingItem `json:"decisions"`
+	OpenPoints []MeetingItem `json:"openPoints"`
+	Actions    []MeetingItem `json:"actions"`
+}
+
+// MeetingItem is one bullet of a meeting note; Date is the note's YYYY-MM-DD.
+type MeetingItem struct {
+	Text      string `json:"text"`
+	NoteTitle string `json:"noteTitle"`
+	Date      string `json:"date"`
+}
+
 type SessionTicket struct {
 	SessionID string `json:"sessionId"`
 	TicketID  string `json:"ticketId"`

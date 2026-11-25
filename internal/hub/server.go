@@ -71,6 +71,9 @@ func NewServer(st *store.Store, opts ...Options) *Server {
 	}
 	s.sum = summary.New(st, o.Model, s.hub.publish)
 	s.hub.touch = s.sum.Touch
+	s.hub.leftOff = s.sum.TouchLeftOff
+	s.sum.OnLeftOff = s.hub.briefingChanged
+	s.sync.OnSynced = s.onSynced
 	s.sync.OnChange = func(id string) {
 		s.sum.Touch(id)
 		s.hub.suggestProject(id) // the branch ticket of an open session may have arrived by now

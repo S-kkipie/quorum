@@ -28,7 +28,7 @@ const (
 	maxCLIOutput   = 64 << 10
 	selectionTTL   = 5 * time.Minute
 	DefaultCCAPI   = "http://127.0.0.1:18787"
-	ccapiMaxTokens = 120
+	ccapiMaxTokens = 220 // a ceiling: the summary asks for 200 characters, "where you left off" for 450
 )
 
 // DefaultTokenFile is ~/.config/ccapi/token (honors XDG_CONFIG_HOME).

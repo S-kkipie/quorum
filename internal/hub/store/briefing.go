@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -65,6 +66,7 @@ func migrateBriefing(s *Store) error {
 		{"tickets", "note_title", "TEXT NOT NULL DEFAULT ''"},
 		{"projects", "where_left_off", "TEXT NOT NULL DEFAULT ''"},
 		{"projects", "where_left_off_at", "INTEGER NOT NULL DEFAULT 0"},
+		{"projects", "where_left_off_sessions", "INTEGER NOT NULL DEFAULT 0"},
 	} {
 		var n int
 		if err := s.db.QueryRow(`SELECT count(*) FROM pragma_table_info('`+c[0]+`') WHERE name=?`, c[1]).Scan(&n); err != nil {
@@ -285,16 +287,63 @@ func (s *Store) Pinned(projectID string) ([]proto.PinnedNote, error) {
 	return out, rows.Err()
 }
 
-// SetWhereLeftOff caches the generated "where you left off" text of the project ("" clears it).
-func (s *Store) SetWhereLeftOff(projectID, text string, at int64) error {
-	res, err := s.db.Exec(`UPDATE projects SET where_left_off=?,where_left_off_at=? WHERE id=?`, text, at, projectID)
+// SetWhereLeftOff caches the generated "where you left off" text of the project and how many sessions it was
+// written from ("" clears it).
+func (s *Store) SetWhereLeftOff(projectID, text string, sessions int, at int64) error {
+	res, err := s.db.Exec(`UPDATE projects SET where_left_off=?,where_left_off_sessions=?,where_left_off_at=? WHERE id=?`, text, sessions, at, projectID)
 	return affected(res, err)
 }
 
-func (s *Store) WhereLeftOff(projectID string) (text string, at int64, err error) {
-	err = s.db.QueryRow(`SELECT where_left_off,where_left_off_at FROM projects WHERE id=?`, projectID).Scan(&text, &at)
+func (s *Store) WhereLeftOff(projectID string) (text string, sessions int, at int64, err error) {
+	err = s.db.QueryRow(`SELECT where_left_off,where_left_off_sessions,where_left_off_at FROM projects WHERE id=?`, projectID).Scan(&text, &sessions, &at)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", 0, ErrNotFound
+		return "", 0, 0, ErrNotFound
 	}
 	return
 }
+
+// SessionEnd is when a session of a project last finished: its last turn_end (time and answer) and its close time.
+type SessionEnd struct {
+	ID       string
+	EndAt    int64  // ts of the last turn_end (0 when none is stored)
+	Answer   string // the last turn_end's answer
+	ClosedAt int64  // 0 when the session is not closed
+}
+
+// ProjectSessionEnds returns the last turn_end and close time of every session of the project, by session id.
+func (s *Store) ProjectSessionEnds(projectID string) (map[string]SessionEnd, error) {
+	rows, err := s.db.Query(`SELECT s.id,s.closed_at,COALESCE(e.ts,0),COALESCE(e.data,'')
+		FROM sessions s JOIN checkouts c ON c.machine=s.machine AND c.root=s.root
+		LEFT JOIN events e ON s.end_seq>0 AND e.session=s.id AND e.seq=s.end_seq
+		WHERE c.project_id=?`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]SessionEnd{}
+	for rows.Next() {
+		var e SessionEnd
+		var data string
+		if err := rows.Scan(&e.ID, &e.ClosedAt, &e.EndAt, &data); err != nil {
+			return nil, err
+		}
+		var te proto.TurnEnd
+		if data != "" && json.Unmarshal([]byte(data), &te) == nil {
+			e.Answer = te.Answer
+		}
+		out[e.ID] = e
+	}
+	return out, rows.Err()
+}
+
+// ProjectPerson is the person the project's ticket source calls "you" (connector setting "person", trimmed).
+func ProjectPerson(p proto.Project) string { return strings.TrimSpace(p.Connector.Settings["person"]) }
+
+// IsPerson says whether name is person (both trimmed, case-insensitive); an empty person matches nobody.
+func IsPerson(name, person string) bool {
+	person = strings.TrimSpace(person)
+	return person != "" && strings.EqualFold(strings.TrimSpace(name), person)
+}
+
+// OpenTicket: not done (a blocked or parked ticket stays open).
+func OpenTicket(t proto.Ticket) bool { return t.Status != "done" }

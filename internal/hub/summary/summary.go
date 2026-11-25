@@ -42,10 +42,18 @@ type Summarizer struct {
 	retry map[string]time.Time // do not retry before this time after an error
 	hash  map[string]string    // last input each project was generated from
 	gen   sync.Mutex           // one generation at a time
+
+	// "where you left off" (leftoff.go): last trigger, retry deadline and last input per project.
+	ldirty map[string]time.Time
+	lretry map[string]time.Time
+	lhash  map[string]string
+	// OnLeftOff is called after a project's "where you left off" text changed (set before Start).
+	OnLeftOff func(projectID string)
 }
 
 func New(st *store.Store, m Model, pub func(proto.Envelope)) *Summarizer {
-	return &Summarizer{st: st, model: m, pub: pub, now: time.Now, dirty: map[string]bool{}, retry: map[string]time.Time{}, hash: map[string]string{}}
+	return &Summarizer{st: st, model: m, pub: pub, now: time.Now, dirty: map[string]bool{}, retry: map[string]time.Time{}, hash: map[string]string{},
+		ldirty: map[string]time.Time{}, lretry: map[string]time.Time{}, lhash: map[string]string{}}
 }
 
 // Touch marks the project as changed; the loop will summarize it when due.
@@ -64,6 +72,9 @@ func (s *Summarizer) Forget(projectID string) {
 	delete(s.dirty, projectID)
 	delete(s.retry, projectID)
 	delete(s.hash, projectID)
+	delete(s.ldirty, projectID)
+	delete(s.lretry, projectID)
+	delete(s.lhash, projectID)
 	s.mu.Unlock()
 }
 
@@ -73,11 +84,14 @@ func (s *Summarizer) Pending(projectID string) bool {
 	defer s.mu.Unlock()
 	_, r := s.retry[projectID]
 	_, h := s.hash[projectID]
-	return s.dirty[projectID] || r || h
+	_, ld := s.ldirty[projectID]
+	_, lr := s.lretry[projectID]
+	_, lh := s.lhash[projectID]
+	return s.dirty[projectID] || r || h || ld || lr || lh
 }
 
 // Start launches the loop (every minute) and returns right away; stops when ctx is cancelled.
-// On startup it marks projects without a summary as pending.
+// On startup it marks projects without a summary (or without a "where you left off" text) as pending.
 func (s *Summarizer) Start(ctx context.Context) {
 	if ps, err := s.st.ListProjects(); err == nil {
 		for _, p := range ps {
@@ -85,6 +99,7 @@ func (s *Summarizer) Start(ctx context.Context) {
 				s.Touch(p.ID)
 			}
 		}
+		s.seedLeftOff(ps)
 	}
 	go func() {
 		t := time.NewTicker(loopInterval)
@@ -100,8 +115,13 @@ func (s *Summarizer) Start(ctx context.Context) {
 	}()
 }
 
-// RunOnce processes the pending projects that are due.
+// RunOnce processes the pending projects that are due: summaries, then "where you left off" texts.
 func (s *Summarizer) RunOnce(ctx context.Context) {
+	s.runSummaries(ctx)
+	s.runLeftOff(ctx)
+}
+
+func (s *Summarizer) runSummaries(ctx context.Context) {
 	s.mu.Lock()
 	ids := make([]string, 0, len(s.dirty))
 	for id := range s.dirty {

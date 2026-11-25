@@ -6,7 +6,7 @@ vi.stubGlobal('localStorage', {
   setItem: (k: string, v: string) => { mem[k] = v },
   removeItem: (k: string) => { delete mem[k] },
 })
-import { apiFetch, setHub, getToken, seen, history, eventsAfter, listCommands, runCommand, setModel, registerPush, unregisterPush } from './api'
+import { apiFetch, setHub, getToken, seen, history, eventsAfter, listCommands, runCommand, setModel, registerPush, unregisterPush, getBriefing, visitProject, addPinned, deletePinned } from './api'
 
 beforeEach(() => { for (const k in mem) delete mem[k]; setHub('http://h:1/', 'tok') })
 
@@ -194,5 +194,33 @@ describe('push tokens', () => {
   it('registerPush surfaces the hub error', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'invalid push token' }), { status: 400 })))
     await expect(registerPush('a b')).rejects.toThrow('invalid push token')
+  })
+})
+
+describe('briefing', () => {
+  it('reads the briefing, records a visit and adds and deletes pinned notes', async () => {
+    const brief = { whereLeftOff: null, newSince: [], myTickets: [], meetings: { decisions: [], openPoints: [], actions: [] }, pinned: [], sessions: [], seenAt: 0, prevSeenAt: 0 }
+    const f = vi.fn(async (u: string) => {
+      if (u.endsWith('/briefing')) return new Response(JSON.stringify(brief), { status: 200 })
+      if (u.endsWith('/visit')) return new Response(JSON.stringify({ seenAt: 5, prevSeenAt: 1 }), { status: 200 })
+      if (u.endsWith('/pinned')) return new Response(JSON.stringify({ id: 'n1', text: 'hi', at: 3 }), { status: 201 })
+      return new Response(null, { status: 204 })
+    })
+    vi.stubGlobal('fetch', f)
+    await expect(getBriefing('p/1')).resolves.toEqual(brief)
+    await expect(visitProject('p/1')).resolves.toEqual({ seenAt: 5, prevSeenAt: 1 })
+    await expect(addPinned('p/1', 'hi')).resolves.toEqual({ id: 'n1', text: 'hi', at: 3 })
+    await expect(deletePinned('p/1', 'n 1')).resolves.toBe(undefined)
+    const calls = f.mock.calls.map((c: any) => [c[0], c[1].method ?? 'GET', c[1].body])
+    expect(calls).toEqual([
+      ['http://h:1/api/projects/p%2F1/briefing', 'GET', undefined],
+      ['http://h:1/api/projects/p%2F1/visit', 'POST', undefined],
+      ['http://h:1/api/projects/p%2F1/pinned', 'POST', JSON.stringify({ text: 'hi' })],
+      ['http://h:1/api/projects/p%2F1/pinned/n%201', 'DELETE', undefined],
+    ])
+  })
+  it('addPinned surfaces the hub error', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'the note is empty' }), { status: 400 })))
+    await expect(addPinned('p1', ' ')).rejects.toThrow('the note is empty')
   })
 })
