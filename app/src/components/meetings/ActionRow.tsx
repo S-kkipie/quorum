@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { ApiError } from '../../lib/api'
 import { createMeetingIssue } from '../../lib/meetingsApi'
 import type { MeetingAction } from '../../proto.gen'
 import { Badge } from '@/components/ui/badge'
@@ -29,6 +30,10 @@ export default function ActionRow({ meetingId, a, github, onIssue, onSeek }: {
       const r = await createMeetingIssue(meetingId, a.id)
       if (r.url) onIssue?.(a.id, r.url)
     } catch (e) {
+      // the issue exists but the hub could not link it (500) or its action changed (409): open it, never create
+      // a second one from this view
+      const url = e instanceof ApiError ? e.data?.url : undefined
+      if (typeof url === 'string' && /^https?:\/\//.test(url)) onIssue?.(a.id, url)
       setError(e instanceof Error ? e.message : 'error')
     } finally {
       setBusy(false)

@@ -11,6 +11,7 @@ vi.mock('../../lib/meetingsApi', async (orig) => ({ ...(await orig<typeof import
 import MeetingPage from './MeetingPage'
 import { initialState, reduce, type AppState } from '../../lib/store'
 import { proj } from '../../lib/fixtures.test-util'
+import { ApiError } from '../../lib/api'
 import type { Envelope } from '../../proto.gen'
 
 export const meeting = (o: Partial<Meeting> = {}): Meeting => ({
@@ -92,6 +93,34 @@ describe('MeetingPage while processing', () => {
   })
 })
 
+describe('MeetingPage waiting for a local summary', () => {
+  const machine = (name: string, online: boolean, transcribe: boolean) =>
+    ({ name, os: 'linux', env: 'wsl', version: '', online, lastSeen: 0, caps: { herdr: false, terminal: false, root: false, transcribe, meetingWorker: transcribe ? 'ready' : '' } })
+  const summarising = () => meeting({ status: 'summarising', progress: 0, provider: 'local', segments: ready().segments, summary: undefined })
+
+  it('names the machine it waits for', async () => {
+    api.getMeeting.mockResolvedValue(summarising())
+    render(<MeetingPage state={{ ...state(), machines: { gpu: machine('gpu', true, true), vps: machine('vps', true, false) } }} id="m1" />)
+    expect(await screen.findByText('Waiting for gpu to summarise.')).toBeTruthy()
+  })
+
+  it('an offline machine is asked to be turned on; none at all says so', async () => {
+    api.getMeeting.mockResolvedValue(summarising())
+    const { unmount } = render(<MeetingPage state={{ ...state(), machines: { gpu: machine('gpu', false, true) } }} id="m1" />)
+    expect(await screen.findByText(/Waiting for gpu to summarise: turn it on/)).toBeTruthy()
+    unmount()
+    render(<MeetingPage state={{ ...state(), machines: { vps: machine('vps', true, false) } }} id="m1" />)
+    expect(await screen.findByText(/No machine can summarise locally/)).toBeTruthy()
+  })
+
+  it('says nothing once the summary runs or for a hub provider', async () => {
+    api.getMeeting.mockResolvedValue(meeting({ ...summarising(), provider: 'ccapi' }))
+    render(<MeetingPage state={{ ...state(), machines: {} }} id="m1" />)
+    await screen.findByText('Summarising')
+    expect(screen.queryByText(/summarise locally|to summarise/)).toBeNull()
+  })
+})
+
 describe('MeetingPage when ready', () => {
   it('shows the sections in order and the owner\'s actions first', async () => {
     api.getMeeting.mockResolvedValue(ready())
@@ -116,6 +145,28 @@ describe('MeetingPage when ready', () => {
     expect(link.getAttribute('href')).toBe('https://github.com/acme/app/issues/7')
     expect(api.createMeetingIssue).toHaveBeenCalledWith('m1', 'a2')
     expect(within(actions).getAllByRole('button', { name: 'Create issue' })).toHaveLength(2)
+  })
+
+  it('an issue created but not linked opens it and is never created twice', async () => {
+    api.getMeeting.mockResolvedValue(ready())
+    api.createMeetingIssue.mockRejectedValueOnce(new ApiError('the issue was created but could not be recorded', 500, { url: 'https://github.com/acme/app/issues/8' }))
+      .mockRejectedValueOnce(new ApiError('the issue was created, but its action changed meanwhile', 409, { url: 'https://github.com/acme/app/issues/9' }))
+    let s = state()
+    const { rerender } = render(<MeetingPage state={s} id="m1" />)
+    let actions = await screen.findByRole('region', { name: 'Actions' })
+    fireEvent.click(within(actions).getAllByRole('button', { name: 'Create issue' })[0])
+    expect((await within(actions).findByRole('alert')).textContent).toContain('could not be recorded')
+    expect(within(actions).getByRole('link', { name: 'Open issue' }).getAttribute('href')).toBe('https://github.com/acme/app/issues/8')
+    fireEvent.click(within(actions).getAllByRole('button', { name: 'Create issue' })[0])
+    await waitFor(() => expect(within(actions).getAllByRole('link', { name: 'Open issue' })).toHaveLength(2))
+    // a refetch (the hub still has no link) keeps the links: no second create for those actions
+    s = reduce(s, { type: 'meeting_changed', payload: { id: 'm1', projectId: 'p1', status: 'ready' } } as unknown as Envelope)
+    rerender(<MeetingPage state={s} id="m1" />)
+    await waitFor(() => expect(api.getMeeting).toHaveBeenCalledTimes(2))
+    actions = screen.getByRole('region', { name: 'Actions' })
+    expect(within(actions).getAllByRole('link', { name: 'Open issue' })).toHaveLength(2)
+    expect(within(actions).getAllByRole('button', { name: 'Create issue' })).toHaveLength(1)
+    expect(api.createMeetingIssue).toHaveBeenCalledTimes(2)
   })
 
   it('an action that already has an issue opens it; other connectors get Copy', async () => {

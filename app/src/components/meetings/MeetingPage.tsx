@@ -68,6 +68,9 @@ export default function MeetingPage({ state, id, onBack }: { state: AppState; id
   const [editingTitle, setEditingTitle] = useState<string | null>(null)
   const [renamed, setRenamed] = useState(false)
   const [audio, setAudio] = useState('')
+  // issues created from this view, by action id and text: a hub that could not link one still never gets a
+  // second create for that action (a refetch or a re-summary may bring the action back without its link)
+  const [issues, setIssues] = useState<{ byId: Record<string, string>; byText: Record<string, string> }>({ byId: {}, byText: {} })
   const player = useRef<HTMLAudioElement>(null)
   const pendingSeek = useRef<number | null>(null)
   const live = state.meetingLive?.[id]
@@ -133,9 +136,18 @@ export default function MeetingPage({ state, id, onBack }: { state: AppState; id
   const github = project?.connector?.kind === 'github' && !!project.connector.settings?.repo?.trim()
   const projects = Object.values(state.projects).sort((a, b) => a.name.localeCompare(b.name))
   const s = m.summary
-  const actions = sortActions(m.actions ?? [])
+  const actions = sortActions(m.actions ?? []).map((a) => (a.issueUrl ? a : { ...a, issueUrl: issues.byId[a.id] || issues.byText[a.text] || undefined }))
+  const onIssue = (aid: string, url: string) => {
+    const text = (m.actions ?? []).find((x) => x.id === aid)?.text
+    setIssues((p) => ({ byId: { ...p.byId, [aid]: url }, byText: text ? { ...p.byText, [text]: url } : p.byText }))
+    setM((p) => (p ? { ...p, actions: (p.actions ?? []).map((x) => (x.id === aid ? { ...x, issueUrl: url } : x)) } : p))
+  }
   const transcribed = hasSegments && st.status !== 'transcribing' && st.status !== 'queued' && st.status !== 'uploaded'
-  const noWorker = st.status === 'queued' && !Object.values(state.machines).some((x) => x.online && x.caps?.transcribe)
+  const workers = Object.values(state.machines).filter((x) => x.caps?.transcribe).sort((a, b) => Number(b.online) - Number(a.online) || a.name.localeCompare(b.name))
+  const noWorker = st.status === 'queued' && !workers.some((x) => x.online)
+  // a local summary runs on a machine's Ollama: until it starts, say which machine it waits for
+  const localWait = st.status === 'summarising' && m.provider === 'local' && !st.progress && !st.stage
+  const waitFor = workers.filter((x) => x.online).map((x) => x.name)
   const meta = [date(m.startedAt || m.createdAt), duration(m.durationS)].filter(Boolean).join(' · ')
   const sec = (title: string, body: ReactNode) => <Section title={title}>{body}</Section>
 
@@ -188,6 +200,13 @@ export default function MeetingPage({ state, id, onBack }: { state: AppState; id
           <div role="status" aria-label="Processing" className="space-y-2 rounded-xl border border-line bg-surface p-3">
             <p className={`text-sm font-medium ${statusTone(st.status)}`}>{statusText(st.status, st.progress)}{stageText(st.stage) && st.status !== 'failed' ? <span className="font-normal text-muted-foreground"> · {stageText(st.stage)}</span> : null}</p>
             {(st.status === 'transcribing' || (st.status === 'summarising' && st.progress > 0)) && <Progress value={st.progress} aria-label="Progress" />}
+            {localWait && (
+              <p className={`text-xs text-muted-foreground ${wrap}`}>
+                {!workers.length ? <>No machine can summarise locally. Run <code>quorumd meetings setup</code> on a machine with a GPU, or re-summarise with another provider.</>
+                  : waitFor.length ? `Waiting for ${waitFor.join(' or ')} to summarise.`
+                  : `Waiting for ${workers.map((x) => x.name).join(' or ')} to summarise: turn it on.`}
+              </p>
+            )}
             {noWorker && <p className="text-xs text-muted-foreground">No machine can transcribe right now. Run <code>quorumd meetings setup</code> on a machine with a GPU, or turn it on.</p>}
             {st.status === 'failed' && (
               <>
@@ -211,8 +230,7 @@ export default function MeetingPage({ state, id, onBack }: { state: AppState; id
             {sec('Open points', <Points items={s?.openPoints ?? []} onSeek={seek} />)}
             {sec('Actions', actions.length ? (
               <ul className="divide-y divide-line">
-                {actions.map((a) => <ActionRow key={a.id} meetingId={id} a={a} github={github} onSeek={seek}
-                  onIssue={(aid, url) => setM((p) => (p ? { ...p, actions: (p.actions ?? []).map((x) => (x.id === aid ? { ...x, issueUrl: url } : x)) } : p))} />)}
+                {actions.map((a) => <ActionRow key={a.id} meetingId={id} a={a} github={github} onSeek={seek} onIssue={onIssue} />)}
               </ul>
             ) : <p className="text-xs text-muted-foreground">None.</p>)}
             {sec('Attendees', s?.attendees?.length ? <p className={`text-sm text-ink ${wrap}`}>{s.attendees.join(', ')}</p> : <p className="text-xs text-muted-foreground">Not stated.</p>)}
