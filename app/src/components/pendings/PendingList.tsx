@@ -48,7 +48,7 @@ export default function PendingList({ projectId, rev = 0, prevSeenAt = 0 }: { pr
     setError('')
     try {
       const p = await addPending(projectId, detail ? { text, detail } : { text })
-      setList((l) => [...(l ?? []).filter((x) => x.id !== p.id), p])
+      setList((l) => (l ?? []).some((x) => x.id === p.id) ? (l ?? []).map((x) => (x.id === p.id ? p : x)) : [...(l ?? []), p])
       setDraft('')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'error')

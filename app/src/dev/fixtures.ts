@@ -434,7 +434,7 @@ function pendingsFor(mode: FixtureMode): Pending[] {
       pend('pd4', 'Send the invoice', { status: 'done', note: 'Sent', doneAt: t - DAY, createdAt: t - 9 * DAY }),
     ]
   }
-  return (pendingStore[mode] = list)
+  return (pendingStore[mode] = list.sort((a, b) => a.createdAt - b.createdAt)) // oldest first, as the hub answers
 }
 const openPendings = (mode: FixtureMode) => pendingsFor(mode).filter((p) => p.status === 'open')
 

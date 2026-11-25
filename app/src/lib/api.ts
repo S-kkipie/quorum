@@ -125,9 +125,9 @@ export interface DevApi {
   eventsAfter?: (id: string, afterSeq: number, limit: number) => Promise<Event[]>
   history?: (id: string, cursor: string) => Promise<TranscriptPage>
   briefing?: (projectId: string) => Promise<Briefing>
-  /** Dev fixture meetings (list, detail, settings). */
   /** Dev fixture pending items (an in-memory list). */
   pendings?: DevPendings
+  /** Dev fixture meetings (list, detail, settings). */
   meetings?: { list: (q: MeetingQuery) => Promise<Meeting[]>; get: (id: string) => Promise<Meeting>; settings: () => Promise<MeetingSettings> }
 }
 let devApi: DevApi | null = null

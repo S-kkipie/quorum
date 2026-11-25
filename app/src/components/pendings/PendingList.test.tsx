@@ -103,3 +103,16 @@ describe('PendingList', () => {
     expect((await screen.findByRole('alert')).textContent).toBe('boom')
   })
 })
+
+describe('PendingList dedupe', () => {
+  it('a deduped add keeps the existing item in place', async () => {
+    vi.mocked(addPending).mockResolvedValue(pd('a', 'Alpha'))
+    render(<PendingList projectId="p1" />)
+    await screen.findByText('Alpha')
+    fireEvent.change(screen.getByLabelText('New pending item'), { target: { value: 'Alpha' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+    await waitFor(() => expect(addPending).toHaveBeenCalled())
+    await waitFor(() => expect((screen.getByLabelText('New pending item') as HTMLTextAreaElement).value).toBe(''))
+    expect(screen.getAllByRole('checkbox').map((c) => c.getAttribute('aria-label'))).toEqual(['Alpha', 'Bravo'])
+  })
+})

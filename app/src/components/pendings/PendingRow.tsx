@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { MoreHorizontal } from 'lucide-react'
 import type { Pending } from '../../proto.gen'
 import { deletePending, patchPending, PENDING_DETAIL_MAX, PENDING_TEXT_MAX, type PendingPatch } from '../../lib/pendingsApi'
@@ -8,8 +8,15 @@ import { Textarea } from '@/components/ui/textarea'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 
 const wrap = '[overflow-wrap:anywhere]'
+const NOTE_MAX = 2000
 
 /** An agent item the owner has not seen yet (added after the previous visit). */
+/** The text: a plain span, or a 44 px button that expands the detail and note when there are any. */
+function Label({ onClick, className, children, ...rest }: { onClick?: () => void; className: string; children: ReactNode; 'aria-expanded'?: boolean }) {
+  if (!onClick) return <span className={className}>{children}</span>
+  return <button type="button" onClick={onClick} className={`${className} min-h-11`} {...rest}>{children}</button>
+}
+
 export const isNewPending = (p: Pending, prevSeenAt: number) => p.source === 'agent' && p.createdAt > prevSeenAt
 
 /**
@@ -69,11 +76,11 @@ export default function PendingRow({ p, prevSeenAt = 0, clamp = false, onChange,
             className="h-5 w-5 cursor-pointer accent-accent" />
         </label>
         <div className="min-w-0 flex-1 py-2.5">
-          <button type="button" aria-expanded={extra ? open : undefined} onClick={() => extra && setOpen((o) => !o)}
-            className={`block w-full min-w-0 text-left text-sm ${wrap} ${clamp && !open ? 'line-clamp-3' : ''} ${isOpen ? 'text-ink' : 'text-muted-foreground'} ${p.status === 'done' ? 'line-through' : ''} ${extra ? '' : 'cursor-default'}`}>
+          <Label aria-expanded={extra ? open : undefined} onClick={extra ? () => setOpen((o) => !o) : undefined}
+            className={`block w-full min-w-0 text-left text-sm ${wrap} ${clamp && !open ? 'line-clamp-3' : ''} ${isOpen ? 'text-ink' : 'text-muted-foreground'} ${p.status === 'done' ? 'line-through' : ''}`}>
             {isNewPending(p, prevSeenAt) && <span role="img" aria-label="New" className="mr-1.5 inline-block h-2 w-2 rounded-full bg-accent align-middle" />}
             {p.text}
-          </button>
+          </Label>
           {(p.source === 'agent' || p.source === 'meeting' || !isOpen) && (
             <span className="block text-xs text-muted-foreground">{[p.source === 'agent' || p.source === 'meeting' ? p.source : '', !isOpen ? p.status : ''].filter(Boolean).join(' · ')}</span>
           )}
@@ -93,7 +100,7 @@ export default function PendingRow({ p, prevSeenAt = 0, clamp = false, onChange,
       </div>
       {closing && (
         <div className="ml-11 flex min-w-0 flex-col gap-2 pb-2">
-          <Input aria-label="Note" autoFocus value={note} onChange={(e) => setNote(e.target.value)} placeholder="Note (optional)"
+          <Input aria-label="Note" autoFocus value={note} onChange={(e) => setNote([...e.target.value].slice(0, NOTE_MAX).join(''))} placeholder="Note (optional)"
             onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void finish(true) } else if (e.key === 'Escape') setClosing(false) }}
             className="min-h-11 text-sm md:text-sm" />
           <div className="flex flex-wrap gap-2">
