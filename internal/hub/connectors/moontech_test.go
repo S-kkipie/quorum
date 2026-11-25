@@ -20,8 +20,8 @@ import (
 
 const mtPass = "pw-Very$ecret"
 
-// fakeMoontech is an httptest fake of the admin site's JSON API (made-up data only).
-type fakeMoontech struct {
+// fakeAdminSite is an httptest fake of the admin site's JSON API (made-up data only).
+type fakeAdminSite struct {
 	mu         sync.Mutex
 	srv        *httptest.Server
 	logins     int
@@ -39,8 +39,8 @@ type fakeMoontech struct {
 	lastBody   map[string]string
 }
 
-func newFakeMoontech(t *testing.T) *fakeMoontech {
-	f := &fakeMoontech{}
+func newFakeAdminSite(t *testing.T) *fakeAdminSite {
+	f := &fakeAdminSite{}
 	f.tickets = []map[string]any{
 		{"id": 11, "title": "Atlas · fix login", "detail": "the form loses focus", "status": "por_hacer", "person_name": "Ana", "product": "Acme",
 			"planned_start": "2026-11-20", "planned_end": "2026-11-27T15:30:00Z", "note_title": "Weekly sync", "updated_at": "2026-11-21T10:00:00Z"},
@@ -140,9 +140,9 @@ func newFakeMoontech(t *testing.T) *fakeMoontech {
 	return f
 }
 
-func (f *fakeMoontech) set(fn func(f *fakeMoontech)) { f.mu.Lock(); fn(f); f.mu.Unlock() }
+func (f *fakeAdminSite) set(fn func(f *fakeAdminSite)) { f.mu.Lock(); fn(f); f.mu.Unlock() }
 
-func (f *fakeMoontech) loginCount() int { f.mu.Lock(); defer f.mu.Unlock(); return f.logins }
+func (f *fakeAdminSite) loginCount() int { f.mu.Lock(); defer f.mu.Unlock(); return f.logins }
 
 func mtCfg(base string, extra ...string) proto.ConnectorConfig {
 	s := map[string]string{"baseUrl": base, "product": "Acme", "titlePrefix": " atlas ", "person": "Ana", "username": "ana"}
@@ -152,19 +152,19 @@ func mtCfg(base string, extra ...string) proto.ConnectorConfig {
 	return proto.ConnectorConfig{Kind: "moontech", Settings: s}
 }
 
-func newMT(t *testing.T, f *fakeMoontech, extra ...string) *moontechConnector {
+func newMT(t *testing.T, f *fakeAdminSite, extra ...string) *moontechConnector {
 	c, err := New(mtCfg(f.srv.URL, extra...), mtPass, nil)
 	require.NoError(t, err)
 	return c.(*moontechConnector)
 }
 
-func TestMoontechLoginBody(t *testing.T) {
+func TestAdminSiteLoginBody(t *testing.T) {
 	require.Equal(t, map[string]string{"username": "u", "password": "p"}, loginBody("u", "p"))
 }
 
-func TestMoontechListMapsAndFilters(t *testing.T) {
+func TestAdminSiteListMapsAndFilters(t *testing.T) {
 	for _, wrapped := range []bool{false, true} {
-		f := newFakeMoontech(t)
+		f := newFakeAdminSite(t)
 		f.wrapped = wrapped
 		c := newMT(t, f)
 		ts, err := c.List(context.Background(), 0)
@@ -197,8 +197,8 @@ func TestMoontechListMapsAndFilters(t *testing.T) {
 	}
 }
 
-func TestMoontechNoPrefixKeepsWholeProduct(t *testing.T) {
-	f := newFakeMoontech(t)
+func TestAdminSiteNoPrefixKeepsWholeProduct(t *testing.T) {
+	f := newFakeAdminSite(t)
 	ts, err := newMT(t, f, "titlePrefix", "").List(context.Background(), 0)
 	require.NoError(t, err)
 	require.Len(t, ts, 5)
@@ -207,15 +207,15 @@ func TestMoontechNoPrefixKeepsWholeProduct(t *testing.T) {
 	require.Len(t, ns, 3)
 }
 
-func TestMoontechPrefixWithPunctuation(t *testing.T) {
-	f := newFakeMoontech(t)
+func TestAdminSitePrefixWithPunctuation(t *testing.T) {
+	f := newFakeAdminSite(t)
 	ts, err := newMT(t, f, "titlePrefix", "Atlas:").List(context.Background(), 0)
 	require.NoError(t, err)
 	require.Len(t, ts, 4)
 }
 
-func TestMoontechListNotesFilters(t *testing.T) {
-	f := newFakeMoontech(t)
+func TestAdminSiteListNotesFilters(t *testing.T) {
+	f := newFakeAdminSite(t)
 	ns, err := newMT(t, f).ListNotes(context.Background())
 	require.NoError(t, err)
 	by := map[string]proto.MeetingNote{}
@@ -234,36 +234,36 @@ func TestMoontechListNotesFilters(t *testing.T) {
 	require.Equal(t, f.srv.URL+"/notes", by["2"].URL)
 }
 
-func TestMoontechReloginOnce(t *testing.T) {
-	f := newFakeMoontech(t)
+func TestAdminSiteReloginOnce(t *testing.T) {
+	f := newFakeAdminSite(t)
 	c := newMT(t, f)
 	_, err := c.List(context.Background(), 0)
 	require.NoError(t, err)
 	require.Equal(t, 1, f.loginCount())
 	// The session expires mid-session: one new login, then success.
-	f.set(func(f *fakeMoontech) { f.session = "" })
+	f.set(func(f *fakeAdminSite) { f.session = "" })
 	ts, err := c.List(context.Background(), 0)
 	require.NoError(t, err)
 	require.Len(t, ts, 4)
 	require.Equal(t, 2, f.loginCount())
 
 	// A 401 again after the new login is an error, with one login only.
-	f.set(func(f *fakeMoontech) { f.deny = true })
+	f.set(func(f *fakeAdminSite) { f.deny = true })
 	_, err = c.ListNotes(context.Background())
 	require.ErrorContains(t, err, "not authorized")
 	require.Equal(t, 3, f.loginCount())
 	require.NotContains(t, err.Error(), mtPass)
 }
 
-func TestMoontechBadLoginAndDownRedacted(t *testing.T) {
-	f := newFakeMoontech(t)
+func TestAdminSiteBadLoginAndDownRedacted(t *testing.T) {
+	f := newFakeAdminSite(t)
 	c, err := New(mtCfg(f.srv.URL), "wrong-"+mtPass, nil)
 	require.NoError(t, err)
 	_, err = c.List(context.Background(), 0)
 	require.ErrorContains(t, err, "login")
 	require.NotContains(t, err.Error(), mtPass)
 
-	f.set(func(f *fakeMoontech) { f.down = true })
+	f.set(func(f *fakeAdminSite) { f.down = true })
 	_, err = newMT(t, f).List(context.Background(), 0)
 	require.ErrorContains(t, err, "503")
 
@@ -273,15 +273,15 @@ func TestMoontechBadLoginAndDownRedacted(t *testing.T) {
 	require.NotContains(t, err.Error(), mtPass)
 }
 
-func TestMoontechReadOnly(t *testing.T) {
-	f := newFakeMoontech(t)
+func TestAdminSiteReadOnly(t *testing.T) {
+	f := newFakeAdminSite(t)
 	c := newMT(t, f)
 	require.ErrorContains(t, c.Comment(context.Background(), "11", "hi"), "read-only source")
 	require.ErrorContains(t, c.SetStatus(context.Background(), "11", "done"), "read-only source")
 	require.Zero(t, f.loginCount())
 }
 
-func TestMoontechSettings(t *testing.T) {
+func TestAdminSiteSettings(t *testing.T) {
 	_, err := New(proto.ConnectorConfig{Kind: "moontech", Settings: map[string]string{"product": "Acme"}}, mtPass, nil)
 	require.ErrorContains(t, err, "username")
 	_, err = New(proto.ConnectorConfig{Kind: "moontech", Settings: map[string]string{"username": "ana"}}, mtPass, nil)
@@ -290,7 +290,7 @@ func TestMoontechSettings(t *testing.T) {
 	require.ErrorContains(t, err, "http")
 	c, err := New(proto.ConnectorConfig{Kind: "moontech", Settings: map[string]string{"product": "Acme", "username": "ana"}}, mtPass, nil)
 	require.NoError(t, err)
-	require.Equal(t, "https://moontecx-admin.pages.dev", c.(*moontechConnector).baseURL)
+	require.Equal(t, mtDefaultBase, c.(*moontechConnector).baseURL)
 	require.Contains(t, Kinds(), "moontech")
 }
 
@@ -301,7 +301,7 @@ type synced struct {
 	notesChanged bool
 }
 
-func newMTSync(t *testing.T, f *fakeMoontech) (*store.Store, *Syncer, proto.Project, func() []synced) {
+func newMTSync(t *testing.T, f *fakeAdminSite) (*store.Store, *Syncer, proto.Project, func() []synced) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "hub.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { st.Close() })
@@ -336,8 +336,8 @@ type writerFunc func([]byte) (int, error)
 
 func (w writerFunc) Write(b []byte) (int, error) { return w(b) }
 
-func TestSyncMoontechOnSyncedAndNotes(t *testing.T) {
-	f := newFakeMoontech(t)
+func TestSyncAdminSiteOnSyncedAndNotes(t *testing.T) {
+	f := newFakeAdminSite(t)
 	st, sy, p, calls := newMTSync(t, f)
 	require.NoError(t, sy.SyncNow(p.ID))
 	ts, _ := st.ListTickets(p.ID)
@@ -364,7 +364,7 @@ func TestSyncMoontechOnSyncedAndNotes(t *testing.T) {
 	require.False(t, c[1].notesChanged)
 
 	// A status change and a new ticket.
-	f.set(func(f *fakeMoontech) {
+	f.set(func(f *fakeAdminSite) {
 		f.tickets[0]["status"] = "en_curso"
 		f.tickets = append(f.tickets, map[string]any{"id": 17, "title": "Atlas new one", "status": "por_hacer", "person_name": "Ana", "product": "Acme"})
 	})
@@ -379,15 +379,15 @@ func TestSyncMoontechOnSyncedAndNotes(t *testing.T) {
 	require.False(t, c[2].notesChanged)
 }
 
-func TestSyncMoontechDownKeepsState(t *testing.T) {
-	f := newFakeMoontech(t)
+func TestSyncAdminSiteDownKeepsState(t *testing.T) {
+	f := newFakeAdminSite(t)
 	st, sy, p, calls := newMTSync(t, f)
 	buf := captureLog(t)
 	require.NoError(t, sy.SyncNow(p.ID))
 	before, _ := st.ListTickets(p.ID)
 	notesBefore, _ := st.MeetingNotes(p.ID, "")
 
-	f.set(func(f *fakeMoontech) { f.down = true })
+	f.set(func(f *fakeAdminSite) { f.down = true })
 	err := sy.SyncNow(p.ID)
 	require.Error(t, err)
 	require.NotContains(t, err.Error(), mtPass)
@@ -401,7 +401,7 @@ func TestSyncMoontechDownKeepsState(t *testing.T) {
 	require.NotContains(t, pr.SyncError, mtPass)
 
 	// The session expired while the site was down; the next sync logs in again and recovers.
-	f.set(func(f *fakeMoontech) { f.down = false; f.session = "" })
+	f.set(func(f *fakeAdminSite) { f.down = false; f.session = "" })
 	require.NoError(t, sy.SyncNow(p.ID))
 	c := calls()
 	require.Len(t, c, 2)
@@ -412,12 +412,12 @@ func TestSyncMoontechDownKeepsState(t *testing.T) {
 	require.NotContains(t, buf.String(), mtPass)
 }
 
-func TestSyncMoontechNotesFailureKeepsNotesSavesTickets(t *testing.T) {
-	f := newFakeMoontech(t)
+func TestSyncAdminSiteNotesFailureKeepsNotesSavesTickets(t *testing.T) {
+	f := newFakeAdminSite(t)
 	st, sy, p, calls := newMTSync(t, f)
 	buf := captureLog(t)
 	require.NoError(t, sy.SyncNow(p.ID))
-	f.set(func(f *fakeMoontech) {
+	f.set(func(f *fakeAdminSite) {
 		f.notesDown = true
 		f.tickets[1]["status"] = "hecho"
 	})
@@ -439,24 +439,24 @@ func TestSyncMoontechNotesFailureKeepsNotesSavesTickets(t *testing.T) {
 	require.True(t, strings.Contains(buf.String(), "***"), "the echoed password is redacted")
 }
 
-func TestMoontechRelogin403(t *testing.T) {
-	f := newFakeMoontech(t)
+func TestAdminSiteRelogin403(t *testing.T) {
+	f := newFakeAdminSite(t)
 	f.authCode = 403
 	c := newMT(t, f)
 	_, err := c.List(context.Background(), 0)
 	require.NoError(t, err)
-	f.set(func(f *fakeMoontech) { f.session = "" })
+	f.set(func(f *fakeAdminSite) { f.session = "" })
 	_, err = c.List(context.Background(), 0)
 	require.NoError(t, err, "a 403 on an expired session logs in again")
 	require.Equal(t, 2, f.loginCount())
-	f.set(func(f *fakeMoontech) { f.deny = true })
+	f.set(func(f *fakeAdminSite) { f.deny = true })
 	_, err = c.ListNotes(context.Background())
 	require.ErrorContains(t, err, "not authorized")
 	require.Equal(t, 3, f.loginCount())
 }
 
-func TestMoontechUnexpectedObjectIsError(t *testing.T) {
-	f := newFakeMoontech(t)
+func TestAdminSiteUnexpectedObjectIsError(t *testing.T) {
+	f := newFakeAdminSite(t)
 	f.ticketsRaw = `{"error":"oops ` + mtPass + `"}`
 	f.notesRaw = `{"items":[]}`
 	c := newMT(t, f)
@@ -467,7 +467,7 @@ func TestMoontechUnexpectedObjectIsError(t *testing.T) {
 	require.ErrorContains(t, err, "unexpected response")
 
 	// The expected key with null is an empty list.
-	f.set(func(f *fakeMoontech) { f.ticketsRaw = `{"tickets":null}`; f.notesRaw = `{"notes":null}` })
+	f.set(func(f *fakeAdminSite) { f.ticketsRaw = `{"tickets":null}`; f.notesRaw = `{"notes":null}` })
 	ts, err := c.List(context.Background(), 0)
 	require.NoError(t, err)
 	require.Empty(t, ts)
@@ -476,8 +476,8 @@ func TestMoontechUnexpectedObjectIsError(t *testing.T) {
 	require.Empty(t, ns)
 }
 
-func TestSyncMoontechUnexpectedObjectKeepsState(t *testing.T) {
-	f := newFakeMoontech(t)
+func TestSyncAdminSiteUnexpectedObjectKeepsState(t *testing.T) {
+	f := newFakeAdminSite(t)
 	st, sy, p, calls := newMTSync(t, f)
 	buf := captureLog(t)
 	require.NoError(t, sy.SyncNow(p.ID))
@@ -487,7 +487,7 @@ func TestSyncMoontechUnexpectedObjectKeepsState(t *testing.T) {
 	require.NotEmpty(t, notesBefore)
 
 	// Tickets: an object without "tickets" fails the sync and keeps everything.
-	f.set(func(f *fakeMoontech) { f.ticketsRaw = `{"error":"session for ` + mtPass + `"}` })
+	f.set(func(f *fakeAdminSite) { f.ticketsRaw = `{"error":"session for ` + mtPass + `"}` })
 	err := sy.SyncNow(p.ID)
 	require.ErrorContains(t, err, "unexpected response")
 	require.NotContains(t, err.Error(), mtPass)
@@ -500,7 +500,7 @@ func TestSyncMoontechUnexpectedObjectKeepsState(t *testing.T) {
 	require.NotContains(t, pr.SyncError, mtPass)
 
 	// Notes: an object without "notes" keeps the notes; tickets still sync with no changes.
-	f.set(func(f *fakeMoontech) { f.ticketsRaw = ""; f.notesRaw = `{"error":"denied ` + mtPass + `"}` })
+	f.set(func(f *fakeAdminSite) { f.ticketsRaw = ""; f.notesRaw = `{"error":"denied ` + mtPass + `"}` })
 	require.NoError(t, sy.SyncNow(p.ID))
 	notesAfter, _ = st.MeetingNotes(p.ID, "")
 	require.ElementsMatch(t, notesBefore, notesAfter)

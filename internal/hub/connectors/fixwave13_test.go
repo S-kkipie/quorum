@@ -2,6 +2,7 @@ package connectors
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 
@@ -9,19 +10,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestMoontechIsReadOnlyFullListReusable(t *testing.T) {
+func TestAdminSiteIsReadOnlyFullListReusable(t *testing.T) {
 	require.True(t, ReadOnly("moontech"))
 	require.False(t, ReadOnly("github"))
 	require.Contains(t, ReadOnlyKinds(), "moontech")
-	f := newFakeMoontech(t)
+	f := newFakeAdminSite(t)
 	c := newMT(t, f)
 	require.True(t, c.FullList())
 	require.True(t, c.Reusable())
 }
 
 // A full-list source: a ticket deleted at the source, or moved to another product, leaves the store with its links.
-func TestSyncMoontechPrunesMissingTickets(t *testing.T) {
-	f := newFakeMoontech(t)
+func TestSyncAdminSitePrunesMissingTickets(t *testing.T) {
+	f := newFakeAdminSite(t)
 	st, sy, p, calls := newMTSync(t, f)
 	var mu sync.Mutex
 	var removed []proto.SessionTicket
@@ -42,7 +43,7 @@ func TestSyncMoontechPrunesMissingTickets(t *testing.T) {
 	require.NoError(t, st.UpsertSession(proto.SessionInfo{ID: "s1", Machine: "m", Root: "/r", State: proto.StateIdle}))
 	require.NoError(t, st.LinkSessionTicket(proto.SessionTicket{SessionID: "s1", TicketID: t11, Confirmed: true}))
 
-	f.set(func(f *fakeMoontech) {
+	f.set(func(f *fakeAdminSite) {
 		f.tickets[0]["product"] = "Globex" // 11 moved away
 		f.tickets = append(f.tickets[:1], f.tickets[2:]...)
 	})
@@ -60,10 +61,10 @@ func TestSyncMoontechPrunesMissingTickets(t *testing.T) {
 	mu.Unlock()
 }
 
-// The Moontech connector (with its cookie jar) is kept between syncs: one login for many syncs; a new token or
+// The admin-site connector (with its cookie jar) is kept between syncs: one login for many syncs; a new token or
 // configuration builds a new one.
-func TestSyncReusesMoontechConnector(t *testing.T) {
-	f := newFakeMoontech(t)
+func TestSyncReusesAdminSiteConnector(t *testing.T) {
+	f := newFakeAdminSite(t)
 	st, sy, p, _ := newMTSync(t, f)
 	for range 3 {
 		require.NoError(t, sy.SyncNow(p.ID))
@@ -87,7 +88,7 @@ func TestSyncReusesMoontechConnector(t *testing.T) {
 
 // A connector that is not Reusable is built again for each sync.
 func TestSyncDoesNotCacheOtherConnectors(t *testing.T) {
-	f := newFakeMoontech(t)
+	f := newFakeAdminSite(t)
 	_, sy, p, _ := newMTSync(t, f)
 	built := 0
 	sy.newConn = func(cfg proto.ConnectorConfig, token string, env []string) (Connector, error) {
@@ -114,4 +115,29 @@ func (p plainConn) Comment(ctx context.Context, id, body string) error {
 }
 func (p plainConn) SetStatus(ctx context.Context, id, status string) error {
 	return p.c.SetStatus(ctx, id, status)
+}
+
+// A full-list source that answers a valid but empty list never prunes the project down to zero; it logs once.
+func TestSyncAdminSiteEmptyListKeepsTickets(t *testing.T) {
+	f := newFakeAdminSite(t)
+	st, sy, p, _ := newMTSync(t, f)
+	buf := captureLog(t)
+	require.NoError(t, sy.SyncNow(p.ID))
+	before, _ := st.ListTickets(p.ID)
+	require.Len(t, before, 4)
+
+	f.set(func(f *fakeAdminSite) { f.tickets = nil; f.wrapped = true })
+	require.NoError(t, sy.SyncNow(p.ID))
+	require.NoError(t, sy.SyncNow(p.ID))
+	after, _ := st.ListTickets(p.ID)
+	require.Len(t, after, 4, "kept")
+	require.Equal(t, 1, strings.Count(buf.String(), "listed no tickets"), "logged once")
+
+	// a non-empty list prunes again
+	f.set(func(f *fakeAdminSite) {
+		f.tickets = []map[string]any{{"id": 11, "title": "Atlas · fix login", "status": "por_hacer", "person_name": "Ana", "product": "Acme"}}
+	})
+	require.NoError(t, sy.SyncNow(p.ID))
+	after, _ = st.ListTickets(p.ID)
+	require.Len(t, after, 1)
 }

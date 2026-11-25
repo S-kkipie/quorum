@@ -1,4 +1,4 @@
-# Project briefing ("Catch me up") and the Moontech ticket source — Design
+# Project briefing ("Catch me up") and the admin-site ticket source — Design
 
 Date: 2026-11-25. Status: approach A chosen by the owner; mockups approved
 (`.claude/quorum/artifacts/project-briefing-mockups.html`, local, not committed).
@@ -10,7 +10,7 @@ to make that load manageable, and the ticket system is part of it. The hardest m
 after days in another job.
 
 The owner asked for help remembering context per project. The context is **for the owner**, not for Claude: they
-want to be up to date in about 30 seconds. The unit is the **project**, for example Moonchat or Atlas, not the
+want to be up to date in about 30 seconds. The unit is the **project**, for example Atlas or Beacon, not the
 whole employer.
 
 ## Goals
@@ -34,10 +34,10 @@ whole employer.
      - **New session**, the existing launch.
      - **Continue where I left off**: a new session whose first prompt is a compact text version of the briefing,
        which the owner can edit before sending.
-2. **The Moontech ticket source.** A read-only connector for Moontech's admin site (the `moontecx-admin` app).
+2. **The admin-site ticket source.** A read-only connector for the employer's admin site (connector kind `moontech`).
    - It reads tickets, people and meeting notes through the site's JSON API, after logging in.
    - Each Quorum project gets a filter, set once in its connector settings:
-     - **product**, for example Moontecx or MUVO;
+     - **product**, for example Acme or Globex;
      - an optional **title prefix**, for example "Atlas";
      - **you are**: the person name used for "your tickets", here `Adrian`.
 3. **Last visit per project.** The hub records when the owner last looked at a project. "New since" is computed from
@@ -45,7 +45,7 @@ whole employer.
 
 ## Non-goals
 
-- Writing back to the Moontech ticket system: no comments, no status changes.
+- Writing back to the employer's ticket system: no comments, no status changes.
 - The Flightdeck-style session panel. It is a separate, later plan.
 - Multi-user support. Quorum stays single-owner, so "you" is one configured person per ticket source.
 - Briefings per employer.
@@ -110,10 +110,10 @@ whole employer.
 **Briefing updates:** they are pushed to apps as a `project_briefing_changed {projectId}` envelope, so an open page
 refetches.
 
-### Moontech connector (`kind: "moontech"`)
+### Admin-site connector (`kind: "moontech"`)
 
 **Settings:**
-- `baseUrl` (default `https://moontecx-admin.pages.dev`), `product`, `titlePrefix` (optional), `person`.
+- `baseUrl` (default: the employer's admin site URL, set in code), `product`, `titlePrefix` (optional), `person`.
 - `username` (not secret). The password is the connector's secret (see Credentials).
 
 **Login:**
@@ -164,7 +164,7 @@ this kind.
     here".
 - **"Continue where I left off".** It opens the existing launch dialog with a prefilled first prompt: a compact
   English text of the briefing, about 1,500 characters at most.
-- **Connector settings form.** The project's connector form gains a "Moontech" option with these fields: base URL,
+- **Connector settings form.** The project's connector form gains an admin-site option (kind `moontech`) with these fields: base URL,
   product, title prefix, you are, username, and a password field that is write-only and shows "Saved" once set.
 - **Visit tracking.** The project page posts the visit after it has been visible for 5 seconds.
 
@@ -172,7 +172,7 @@ this kind.
 
 - All repo content in English, with no personal data in committed fixtures. Use made-up products and people in
   tests.
-- Real Moontech data and credentials never enter the repo, tests or logs.
+- Real admin-site data and credentials never enter the repo, tests or logs.
 - Initial JS stays at 655 kB or less. The briefing lives in the lazily loaded Project page.
 - Use semantic tokens only, 44 px touch targets, and no horizontal scroll at 320 px.
 

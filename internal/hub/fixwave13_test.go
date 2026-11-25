@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestMoontechIdentityKeys(t *testing.T) {
+func TestAdminSiteIdentityKeys(t *testing.T) {
 	base := proto.ConnectorConfig{Kind: "moontech", Settings: map[string]string{
 		"baseUrl": "https://a.example", "product": "Acme", "titlePrefix": "Atlas", "person": "Ana", "username": "ana"}}
 	with := func(k, v string) proto.ConnectorConfig {

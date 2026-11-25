@@ -1,9 +1,9 @@
-# Project briefing and the Moontech ticket source — Implementation Plan (Plan 13)
+# Project briefing and the admin-site ticket source — Implementation Plan (Plan 13)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development. Steps use checkbox (`- [ ]`) syntax.
 
 **Goal:** Every project page opens with a "catch me up" briefing built from the owner's sessions, tickets, meeting
-notes and pinned notes. A read-only Moontech connector brings the employer's tickets and meeting notes into Quorum.
+notes and pinned notes. A read-only admin-site connector brings the employer's tickets and meeting notes into Quorum.
 
 **Architecture:**
 - The hub's ticket upsert diffs into a change log. Connectors can optionally list meeting notes. The summary package
@@ -19,7 +19,7 @@ notes and pinned notes. A read-only Moontech connector brings the employer's tic
 
 ## Global Constraints
 
-- All repo content is in English, with no personal data and no real Moontech data. Tests use made-up products and
+- All repo content is in English, with no personal data and no real admin-site data. Tests use made-up products and
   people (product `Acme`, people `Ana`, `Ben`).
 - Credentials never appear in the repo, tests, logs or app responses. Errors are redacted as in the existing
   connectors.
@@ -28,7 +28,7 @@ notes and pinned notes. A read-only Moontech connector brings the employer's tic
   - It is regenerated only on the spec's triggers, at most once per 10 minutes per project.
   - It goes through the existing quota-guarded summary model path.
   - No sessions means null.
-- **Read-only:** the Moontech connector's `Comment` and `SetStatus` return an error containing `read-only source`.
+- **Read-only:** the admin-site connector's `Comment` and `SetStatus` return an error containing `read-only source`.
 - **Visit rollover:** `POST /api/projects/{id}/visit` moves `seen_at` to `prev_seen_at` only when the stored
   `seen_at` is older than 30 minutes. The app posts it after the project page has been visible for 5 s.
 - **Meeting window:** meeting items cover notes dated within the last 14 days.
@@ -48,12 +48,12 @@ notes and pinned notes. A read-only Moontech connector brings the employer's tic
   with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
 - **Tests:** `go test ./...` (plus `-race` on `internal/hub/...`), `make proto` after proto changes,
   `cd app && npx vitest run`, `npm run build`.
-- **Browsers:** subagents never use a browser or any external site. The controller does the single real Moontech
+- **Browsers:** subagents never use a browser or any external site. The controller does the single real admin-site
   check.
 
 ## Review Focus
 
-1. **A sync where the Moontech site is down or returns 401 midway.** Tickets and notes keep their previous state,
+1. **A sync where the admin site is down or returns 401 midway.** Tickets and notes keep their previous state,
    there are no phantom "new" items, and the next sync recovers by logging in again.
 2. **The first sync of a project, with an empty store.** It must not flood "New since" with every ticket as "new".
    The first sync seeds the log without `new` entries, or marks them before `prevSeenAt`.
@@ -105,7 +105,7 @@ notes and pinned notes. A read-only Moontech connector brings the employer's tic
   - "Where you left off" round-trips.
 - [ ] **Commit** `hub: store change log, visits, pinned notes, meeting notes`.
 
-### Task 2: Moontech connector + NoteLister + syncer
+### Task 2: admin-site connector + NoteLister + syncer
 
 **Files:**
 - `internal/hub/connectors/moontech.go` (new) and `moontech_test.go`, using an `httptest` fake of the site.
@@ -124,7 +124,7 @@ notes and pinned notes. A read-only Moontech connector brings the employer's tic
     `OnSynced func(projectID string, changes []proto.TicketChange, notesChanged bool)`.
     Task 3 wires it to the briefing events and the summary triggers.
 - **Connector kind `moontech`:**
-  - Settings: `baseUrl` (default `https://moontecx-admin.pages.dev`), `product`, `titlePrefix`, `person`,
+  - Settings: `baseUrl` (default: the employer's admin site URL, set in code), `product`, `titlePrefix`, `person`,
     `username`. The token is the password.
   - Login is `POST {baseUrl}/api/auth/login` with the username and password. Find the field names in the site's
     public JS bundle by fetching the bundle **only in the controller's real check**. In code, use a constant pair
@@ -156,7 +156,7 @@ notes and pinned notes. A read-only Moontech connector brings the employer's tic
   - `Comment` and `SetStatus` return `read-only source`.
   - The password never appears in errors or logs (assert this with a captured logger).
   - The syncer calls `OnSynced` with the changes and `notesChanged`.
-- [ ] **Commit** `hub: read-only Moontech ticket and meeting-note source`.
+- [ ] **Commit** `hub: read-only admin-site ticket and meeting-note source`.
 
 ### Task 3: Briefing endpoint, "where you left off", events
 
@@ -215,7 +215,7 @@ notes and pinned notes. A read-only Moontech connector brings the employer's tic
 - `app/src/screens/Project.tsx`:
   - the briefing at the top, replacing the summary line;
   - the Sessions section wraps `NewSessionCard` and `ProjectSessions`.
-- `app/src/components/ConnectorForm.tsx`: a "Moontech" option. Fields: base URL, product, title prefix, you are,
+- `app/src/components/ConnectorForm.tsx`: an admin-site option (kind `moontech`). Fields: base URL, product, title prefix, you are,
   username, and a password that is write-only and shows "Saved". It is read-only, so the write-back UI is hidden.
 - `app/src/components/LaunchDialog.tsx`: an optional editable `initialPrompt`.
 - `app/src/lib/live.ts` or the store: refetch on `project_briefing_changed`.
@@ -248,15 +248,15 @@ notes and pinned notes. A read-only Moontech connector brings the employer's tic
   - The visit is posted only after 5 s of visibility.
   - The no-source hint.
   - `briefingPrompt` stays at 1,500 characters or less and includes the open tickets.
-  - The connector form saves the moontech settings and never echoes the password.
+  - The connector form saves the admin-site (`moontech`) settings and never echoes the password.
   - The 320 px layout has no overflow (structural).
   - The initial JS budget holds.
-- [ ] **Commit** `app: project briefing, Moontech source form, continue where I left off`.
+- [ ] **Commit** `app: project briefing, admin-site source form, continue where I left off`.
 
 ### Task 5: Controller — real check and QA
 
 - [ ] On the dev fixtures, check the briefing at 390, 1024 and 1600 px, light and dark.
-- [ ] Do one real check against Moontech, with the owner's authorisation already given.
+- [ ] Do one real check against the employer's admin site, with the owner's authorisation already given.
   - Confirm the login field names from the site's JS bundle.
   - Configure the target project in the deployed hub, with the password typed into the form by the controller.
   - Sync, and check that the briefing shows Adrian's tickets and the meeting items.

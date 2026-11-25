@@ -40,7 +40,7 @@ describe('TicketDetail', () => {
     rerender(<TicketDetail state={s} ticketId="t1" onCheckouts={onCheckouts} />)
     expect((screen.getByPlaceholderText('/path/to/repo') as HTMLInputElement).value).toBe('/Users/yo/repo')
   })
-  it('a read-only source (Moontech) hides proposals and the status change', async () => {
+  it('a read-only source (kind moontech) hides proposals and the status change', async () => {
     let s = setTickets(initialState(), 'p1', [{ ...tk('t1'), sessions: [] }])
     s = { ...s, projects: { p1: proj('p1', { connector: { kind: 'moontech', settings: {}, hasToken: true, intervalMin: 5 } }) }, proposals: { pr1: { id: 'pr1', ticketId: 't1', kind: 'comment', body: 'Done', status: 'pending', createdAt: 1 } as any } }
     render(<TicketDetail state={s} ticketId="t1" />)
