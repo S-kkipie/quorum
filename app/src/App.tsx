@@ -1,30 +1,34 @@
-import { lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Plus, Settings } from 'lucide-react'
+import { lazy, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { UNAUTH_EVENT, getToken, listMachines, listUsage, openTerminal, listProjects, loadProposals, listSessions, listTickets, listWorkspaces, setDevApi, type TicketView } from './lib/api'
 import { connectLive, type Live } from './lib/live'
 import { EarlyLaunches, pendingReducer, type Pending } from './lib/launch'
 import { addEvents, evictEvents, idleSessions, initialState, trimEvents, loadCommands, markSeen, reduce, replaceSessions, seed, setCheckouts, setConversations, setProjectsData, setTicketDetail, setTickets, setUsage } from './lib/store'
 import LaunchDialog from './components/LaunchDialog'
-import TicketDetail from './components/TicketDetail'
 import type { Checkout, Conversation, Envelope, Event, SessionCommands, TermFrame } from './proto.gen'
-import Config from './screens/Config'
-import Project from './screens/Project'
-import ProjectTickets from './screens/ProjectTickets'
 import Projects from './screens/Projects'
 import Pair from './screens/Pair'
-import Sessions from './screens/Sessions'
+import Inbox from './screens/Inbox'
 import { attentionCount } from './lib/sessions'
-import Starting from './screens/Starting'
-import Terminal from './screens/Terminal'
 import Viewer from './screens/Viewer'
 import { usePageVisible } from './lib/useMarkSeen'
 import { isNative } from './lib/native'
 import { frames } from './lib/frames'
+import { CLEAR, centreNav, centreOf, type Centre, type Nav, type Tab, type TermNav } from './lib/nav'
+import { useLayout } from './lib/useLayout'
+import AppShell from './components/shell/AppShell'
 import LazyBoundary from './components/LazyBoundary'
-import { Button } from './components/ui/button'
+import BottomNav, { type NavTab } from './components/shell/BottomNav'
+import PhoneHeader from './components/shell/PhoneHeader'
 
 // The session view (AI Elements, markdown) is the heaviest screen: it loads on first open.
 const Session = lazy(() => import('./screens/Session'))
+// Pages that are not the landing view load on first open too, so the initial bundle stays small.
+const Config = lazy(() => import('./screens/Config'))
+const Project = lazy(() => import('./screens/Project'))
+const ProjectTickets = lazy(() => import('./screens/ProjectTickets'))
+const TicketDetail = lazy(() => import('./components/TicketDetail'))
+const Terminal = lazy(() => import('./screens/Terminal'))
+const Starting = lazy(() => import('./screens/Starting'))
 
 /** Forgets the local event cache (unpair / logout); loaded on demand like the session view. */
 const clearLocalCache = () => import('./lib/cache').then((c) => c.clearCache()).catch(() => { /* no storage */ })
@@ -41,13 +45,7 @@ export default function App() {
   return <Main />
 }
 
-type Tab = 'projects' | 'sessions'
-/** Navigation saved in history.state (on the phone, the browser's "back" goes back). */
-/** Open terminal; root/label (if they come from "Terminal") let the screen offer "Open another". */
-export interface TermNav { machine: string; pane: string; root?: string; label?: string }
-/** Open local artifact of a session. */
-export interface ViewNav { machine: string; sessionId: string; path: string; images?: boolean; read?: boolean }
-interface Nav { tab?: Tab; project?: string | null; projectTickets?: string | null; checkouts?: boolean; ticket?: string | null; config?: string | null; session?: string | null; starting?: boolean; terminal?: TermNav | null; viewer?: ViewNav | null; depth?: number }
+export type { TermNav, ViewNav } from './lib/nav'
 const navNow = (): Nav => history.state ?? {}
 
 type Toggle = typeof import('./dev/DataToggle').default
@@ -64,7 +62,7 @@ function Main() {
   const [mode] = useState(devMode)
   const [dev, setDev] = useState<{ Toggle: Toggle } | null>(null)
   const [state, setState] = useState(initialState)
-  const [tab, setTab] = useState<Tab>(() => navNow().tab ?? 'projects')
+  const [tab, setTab] = useState<Tab>(() => navNow().tab ?? 'sessions')
   const [project, setProject] = useState<string | null>(() => navNow().project ?? null)
   // id of the project whose tickets screen is open
   const [projectTickets, setProjectTickets] = useState<string | null>(() => navNow().projectTickets ?? null)
@@ -75,8 +73,9 @@ function Main() {
   const [selected, setSelected] = useState<string | null>(() => navNow().session ?? null)
   const [starting, setStarting] = useState(() => !!navNow().starting)
   const [terminal, setTerminal] = useState<TermNav | null>(() => navNow().terminal ?? null)
-  const [viewer, setViewer] = useState<ViewNav | null>(() => navNow().viewer ?? null)
-  const [launching, setLaunching] = useState(false)
+  const [viewer, setViewer] = useState<Nav['viewer']>(() => navNow().viewer ?? null)
+  // the launch dialog, with its scope (the sidebar's job + or a project's "Start one")
+  const [launching, setLaunching] = useState<{ projectId?: string; workspaceId?: string } | null>(null)
   const [pending, setPending] = useState<Pending | null>(null)
   const pendingRef = useRef<Pending | null>(null)
   // results that arrive over the WS before the POST /api/launch answers
@@ -85,7 +84,7 @@ function Main() {
   startingRef.current = starting
   // always up-to-date handler for the dispatch (which is stable)
   const onOpenNew = useRef<(id: string) => void>(() => {})
-  const wide = useWide()
+  const wide = useLayout().mode === 'desktop'
   const dispatch = useCallback((e: Envelope) => {
     // terminal snapshots arrive up to 8/s: they go to their own store, not the reducer
     if (e.type === 'term_frame') {
@@ -115,7 +114,7 @@ function Main() {
   // viewKey identifies the "lineage" of the open session: it changes when another is opened, not when replaced (/clear, /resume).
   const [viewKey, setViewKey] = useState(() => selected ?? '')
   const apply = (n: Nav) => {
-    setTab(n.tab ?? 'projects')
+    setTab(n.tab ?? 'sessions')
     setProject(n.project ?? null)
     setProjectTickets(n.projectTickets ?? null)
     setCheckoutsOpen(!!n.checkouts)
@@ -133,10 +132,12 @@ function Main() {
     return () => window.removeEventListener('popstate', h)
   }, [])
   const cur: Nav = { tab, project, projectTickets, checkouts: checkoutsOpen, ticket, config, session: selected, starting, terminal, viewer }
-  /** Goes to another view: on the phone it pushes a history entry; on desktop it just switches. */
+  // Desktop: what the centre pane shows (the open session follows /clear through `current` below).
+  const centre = centreOf(cur)
+  /** Goes to another view: pushes a history entry (so Back returns), or replaces the current one. */
   const go = (n: Nav, replace = false) => {
     const depth = history.state?.depth ?? 0
-    if (!wide && !replace) {
+    if (!replace) {
       const next = { ...cur, ...n, depth: depth + 1 }
       history.pushState(next, '')
       apply(next)
@@ -146,9 +147,11 @@ function Main() {
       apply(next)
     }
   }
-  /** Back: on the phone, the previous history entry (if the app pushed it); otherwise go up one level. */
+  /** Desktop: shows a page in the centre, with nothing of the previous page left over. */
+  const goCentre = (c: Centre) => go(centreNav(c))
+  /** Back: the previous history entry (if the app pushed it); otherwise go up one level. */
   const back = () => {
-    if (!wide && (history.state?.depth ?? 0) > 0) { history.back(); return }
+    if ((history.state?.depth ?? 0) > 0) { history.back(); return }
     if (checkoutsOpen) go({ checkouts: false }, true)
     else if (viewer) go({ viewer: null }, true)
     else if (terminal) go({ terminal: null }, true)
@@ -165,9 +168,9 @@ function Main() {
   for (let i = 0; current && i < 20 && state.replacedBy[current]; i++) current = state.replacedBy[current]
   const openSession = (id: string) => {
     // the one already shown (maybe with another id after /clear): not remounted or pushed
-    if (id === current && (!wide || tab === 'sessions')) { setSelected(id); return }
-    // on desktop the session opens in the Sessions tab (list + chat)
-    if (wide) go({ tab: 'sessions', session: id })
+    if (id === current && (!wide || centre.kind === 'session')) { setSelected(id); return }
+    // on desktop the session takes the centre, whatever page was there
+    if (wide) go({ ...CLEAR, session: id })
     else go({ session: id })
     setViewKey(id)
   }
@@ -185,7 +188,7 @@ function Main() {
     pendingRef.current = null
     setPending(null)
     // replaces the "Starting…" history entry
-    go({ starting: false, terminal: null, viewer: null, session: id, ...(wide ? { tab: 'sessions' as Tab } : {}) }, true)
+    go(wide ? { ...CLEAR, session: id } : { starting: false, terminal: null, viewer: null, session: id }, true)
     setViewKey(id)
   }
   // when leaving "Starting…" the launch is no longer awaited
@@ -238,7 +241,8 @@ function Main() {
   // The session the owner is looking at (open and the page visible) reads as seen everywhere, so a
   // turn that ends in front of them never flickers "unread" before useMarkSeen's mark lands.
   const visible = usePageVisible()
-  const viewing = !!current && vanished.current !== current && visible && !viewer && !terminal && !starting && (!wide || (tab === 'sessions' && config === null))
+  // On desktop only the session in the centre counts (a project page or Settings in the centre is not viewing it).
+  const viewing = !!current && vanished.current !== current && visible && !viewer && (wide ? centre.kind === 'session' : !terminal && !starting)
   const shown = useMemo(() => (viewing && current ? markSeen(state, current) : state), [viewing, current, state])
   const attention = attentionCount(Object.values(shown.sessions).filter((x) => x.role !== 'service'))
 
@@ -292,11 +296,11 @@ function Main() {
     return () => l.close()
   }, [mode, load, dispatch])
 
-  const openLaunch = () => setLaunching(true)
+  const openLaunch = (scope: { projectId?: string; workspaceId?: string } = {}) => setLaunching(scope)
   const onLaunched = (p: { reqId: string; machine: string; label: string }) => {
     const now = Date.now()
     const r = early.current.replay({ ...p, startedAt: now }, now)
-    setLaunching(false)
+    setLaunching(null)
     if (r.open) { onOpenNew.current(r.open); return }
     pendingRef.current = r.pending
     setPending(r.pending)
@@ -319,36 +323,32 @@ function Main() {
   }
   const onViewTerminal = (machine: string, pane: string) => go({ terminal: { machine, pane } })
   const openConfig = (id: string) => go({ config: id, starting: false })
-  const dialog = launching && <LaunchDialog state={shown} onClose={() => setLaunching(false)} onLaunched={onLaunched} />
-  const top = (
-    <TopBar tab={tab} attention={attention} connected={connected} onTab={(t) => go({ tab: t, project: null, projectTickets: null, checkouts: false, ticket: null, config: null, starting: false, terminal: null, viewer: null, session: wide ? selected : null }, true)}
-      onLaunch={openLaunch} onConfig={() => openConfig('')} />
-  )
+  const dialog = launching && <LaunchDialog state={shown} projectId={launching.projectId} workspaceId={launching.workspaceId} onClose={() => setLaunching(null)} onLaunched={onLaunched} />
   const terminalView = terminal && (
-    <Terminal key={terminal.machine + '\x00' + terminal.pane} machine={terminal.machine} pane={terminal.pane} root={terminal.root} label={terminal.label}
-      onBack={back} onReopen={(pane) => go({ terminal: { ...terminal, pane } }, true)} />
+    <LazyBoundary><Terminal key={terminal.machine + '\x00' + terminal.pane} machine={terminal.machine} pane={terminal.pane} root={terminal.root} label={terminal.label}
+      onBack={back} onReopen={(pane) => go({ terminal: { ...terminal, pane } }, true)} /></LazyBoundary>
   )
   const viewerView = viewer && (
     <Viewer key={viewer.machine + '\x00' + viewer.sessionId + '\x00' + viewer.path} {...viewer}
       base={state.sessions[viewer.sessionId]?.root || state.sessions[viewer.sessionId]?.cwd || ''} onBack={back} />
   )
-  const startingView = starting && <Starting pending={pending} terminal={!!(pending && state.machines[pending.machine]?.caps?.terminal)} onBack={back} onViewTerminal={onViewTerminal} />
+  const startingView = starting && <LazyBoundary><Starting pending={pending} terminal={!!(pending && state.machines[pending.machine]?.caps?.terminal)} onBack={back} onViewTerminal={onViewTerminal} /></LazyBoundary>
   const sessionView = current && vanished.current !== current ? <LazyBoundary><Session key={viewKey} state={shown} id={current} onBack={wide ? undefined : back} onEvents={onEvents} onTrim={onTrim} onSeen={onSeen} onCommands={onCommands} reconnects={reconnects} onGuard={guardLaunch} busy={launchBusy} onViewTerminal={onViewTerminal} onOpenFile={(machine, path, o) => current && go({ viewer: { machine, sessionId: current, path, ...(o && 'images' in o ? { images: true } : o && 'read' in o ? { read: true } : {}) } })} /></LazyBoundary> : null
-  const sessionsList = <Sessions state={shown} onOpen={openSession} selected={current} />
-  const projectsView = <Projects state={shown} wide={wide} selected={project} onOpen={(id) => go({ project: id, projectTickets: null, checkouts: false, ticket: null })} onOpenSession={openSession} onConfig={() => openConfig('')} />
-  const configView = config !== null && <Config key={config} state={shown} editProject={config || null} onBack={back} />
+  const sessionsList = <Inbox state={shown} connected={connected} onOpen={openSession} onLaunch={() => openLaunch()} />
+  const projectsView = <Projects state={shown} wide={wide} selected={project} onOpen={(id) => (wide ? goCentre({ kind: 'project', id }) : go({ project: id, projectTickets: null, checkouts: false, ticket: null }))} onOpenSession={openSession} onConfig={() => openConfig('')} />
+  const configView = config !== null && <LazyBoundary><Config key={config} state={shown} editProject={config || null} onBack={back} /></LazyBoundary>
   const projectView = project && (
-    <Project key={project} state={shown} id={project} onBack={wide ? () => go({ project: null, projectTickets: null, checkouts: false, ticket: null }) : back}
+    <LazyBoundary><Project key={project} state={shown} id={project} onBack={back}
       onOpenTickets={(id) => go({ projectTickets: id })} onOpenSession={openSession} onEdit={openConfig} onTickets={onTickets} onCheckouts={onCheckouts} onConversations={onConversations}
       checkoutsOpen={checkoutsOpen} onCheckoutsOpenChange={(o) => (o ? go({ checkouts: true }) : back())}
-      pending={launchBusy} onLaunched={onLaunched} onGuard={guardLaunch} onTerminal={onTerminal} />
+      pending={launchBusy} onLaunched={onLaunched} onGuard={guardLaunch} onTerminal={onTerminal} /></LazyBoundary>
   )
   const ticketsView = projectTickets && (
-    <ProjectTickets key={projectTickets} state={shown} id={projectTickets} selectedTicket={ticket} onBack={wide ? () => go({ projectTickets: null, ticket: null }) : back}
-      onOpenTicket={(id) => go({ ticket: id })} onTickets={onTickets} />
+    <LazyBoundary><ProjectTickets key={projectTickets} state={shown} id={projectTickets} selectedTicket={ticket} onBack={back}
+      onOpenTicket={(id) => go({ ticket: id })} onTickets={onTickets} /></LazyBoundary>
   )
   const ticketView = ticket && (
-    <TicketDetail key={ticket} state={shown} ticketId={ticket} onBack={wide ? () => go({ ticket: null }) : back} onOpenSession={openSession} onLoaded={onTicket} onCheckouts={onCheckouts} onLaunched={onLaunched} />
+    <LazyBoundary><TicketDetail key={ticket} state={shown} ticketId={ticket} onBack={back} onOpenSession={openSession} onLoaded={onTicket} onCheckouts={onCheckouts} onLaunched={onLaunched} /></LazyBoundary>
   )
 
   const toggle = mode && dev && (
@@ -359,74 +359,50 @@ function Main() {
     }} />
   )
   if (wide) {
-    let body
-    if (viewerView) body = <main className="min-h-0 flex-1">{viewerView}</main>
-    else if (terminalView) body = <main className="min-h-0 flex-1">{terminalView}</main>
-    else if (starting) body = <main className="min-h-0 flex-1">{startingView}</main>
-    else if (config !== null) body = <main className="min-h-0 flex-1 overflow-y-auto">{configView}</main>
-    else if (tab === 'sessions') {
-      body = (
-        <div className="flex min-h-0 flex-1">
-          <aside className="w-[360px] shrink-0 overflow-y-auto border-r border-line">{sessionsList}</aside>
-          <main className="min-w-0 flex-1">{sessionView ?? <p className="p-6 text-sm text-muted-foreground">Pick a session.</p>}</main>
-        </div>
-      )
-    } else {
-      body = (
-        <div className="flex min-h-0 flex-1">
-          <main className="min-w-0 flex-1 overflow-auto">{projectsView}</main>
-          {project && (
-            <aside className="w-[min(560px,45vw)] shrink-0 overflow-y-auto border-l border-line">{ticketView || ticketsView || projectView}</aside>
-          )}
-        </div>
-      )
+    // the Viewer covers the whole window, as on the phone
+    if (viewerView) return <div className="app-shell">{viewerView}{dialog}{toggle}</div>
+    const scroll = 'min-h-0 flex-1 overflow-y-auto'
+    let page
+    switch (centre.kind) {
+      case 'terminal': page = <div className="min-h-0 flex-1">{terminalView}</div>; break
+      case 'starting': page = <div className="min-h-0 flex-1">{startingView}</div>; break
+      case 'settings': page = <div className={scroll}>{configView}</div>; break
+      // project pages keep a readable line length in a wide centre
+      case 'tickets': page = <div className={scroll}><div className="mx-auto w-full max-w-3xl">{ticketView || ticketsView}</div></div>; break
+      case 'project': page = <div className={scroll}><div className="mx-auto w-full max-w-3xl">{projectView}</div></div>; break
+      case 'session': page = <div className="min-h-0 flex-1">{sessionView}</div>; break
+      default: page = <div className="min-h-0 flex-1 overflow-auto">{projectsView}</div>
     }
-    return <div className="app-shell flex flex-col">{top}{body}{dialog}{toggle}</div>
+    return (
+      <>
+        <AppShell state={shown} centre={current && centre.kind === 'session' ? { kind: 'session', id: current } : centre} connected={connected}
+          onOpenSession={openSession} onOpenProject={(id) => goCentre({ kind: 'project', id })}
+          onLaunch={openLaunch} onSettings={() => goCentre({ kind: 'settings' })}>
+          {page}
+        </AppShell>
+        {dialog}{toggle}
+      </>
+    )
+  }
+  // the bottom nav: Sessions and Projects replace the root page; Settings opens general settings
+  const onNav = (n: NavTab) => {
+    if (n === 'settings') { if (config !== '') openConfig(''); return }
+    go({ tab: n, project: null, projectTickets: null, checkouts: false, ticket: null, config: null, starting: false, terminal: null, viewer: null, session: null }, true)
   }
   let view
-  if (viewerView) view = <div className="h-full">{viewerView}</div>
-  else if (terminalView) view = <div className="h-full">{terminalView}</div>
-  else if (startingView) view = <div className="h-full">{startingView}</div>
-  else if (sessionView) view = <div className="h-full">{sessionView}</div>
-  else if (configView) view = <div className="h-full overflow-y-auto pb-[env(safe-area-inset-bottom,0px)]">{configView}</div>
-  else if (ticketView) view = <div className="h-full overflow-y-auto pb-[env(safe-area-inset-bottom,0px)]">{ticketView}</div>
-  else if (ticketsView) view = <div className="h-full overflow-y-auto pb-[env(safe-area-inset-bottom,0px)]">{ticketsView}</div>
-  else if (projectView) view = <div className="h-full overflow-y-auto pb-[env(safe-area-inset-bottom,0px)]">{projectView}</div>
-  else view = <div className="flex h-full flex-col">{top}<div className="min-h-0 flex-1 overflow-y-auto pb-[env(safe-area-inset-bottom,0px)]">{tab === 'sessions' ? sessionsList : projectsView}</div></div>
-  return <div className="app-shell">{view}{dialog}{toggle}</div>
-}
-
-function TopBar({ tab, attention, connected, onTab, onLaunch, onConfig }: { tab: Tab; /** Sessions that need you or are done and unread. */ attention: number; connected: boolean; onTab: (t: Tab) => void; onLaunch: () => void; onConfig: () => void }) {
-  const tabCls = (t: Tab) => `min-h-11 px-2 sm:px-2.5 ${tab === t ? 'bg-chip text-ink' : 'text-muted-foreground hover:text-ink'}`
-  return (
-    <header className="sticky top-0 z-10 flex shrink-0 items-center gap-1.5 border-b border-line bg-background/90 px-2 py-2 backdrop-blur sm:gap-2 sm:px-3">
-      <h1 className="mr-1 hidden text-base font-semibold sm:block">Quorum</h1>
-      <nav role="tablist" className="flex shrink-0 gap-1">
-        <Button variant="ghost" role="tab" aria-selected={tab === 'projects'} onClick={() => onTab('projects')} className={tabCls('projects')}>Projects</Button>
-        <Button variant="ghost" role="tab" aria-selected={tab === 'sessions'} onClick={() => onTab('sessions')} className={tabCls('sessions')}>Sessions{attention > 0 && <span className="ml-1.5 rounded-full bg-state-done-soft px-1.5 text-xs text-state-done">{attention}</span>}</Button>
-      </nav>
-      <span className="ml-auto flex shrink-0 items-center gap-1 sm:gap-2">
-        <Button variant="ghost" size="sm" onClick={onConfig} aria-label="Settings" title="Settings" className="size-11 text-xs text-muted-foreground hover:text-ink min-[440px]:w-auto min-[440px]:px-3">
-          <Settings size={16} aria-hidden className="min-[440px]:hidden" /><span className="hidden min-[440px]:inline">Settings</span>
-        </Button>
-        <Button size="sm" onClick={onLaunch} aria-label="New session" title="New session" className="size-11 text-xs min-[440px]:w-auto min-[440px]:px-3">
-          <Plus size={16} aria-hidden className="min-[440px]:hidden" /><span className="hidden min-[440px]:inline">New session</span>
-        </Button>
-        <span className={`h-2 w-2 shrink-0 rounded-full ${connected ? 'bg-success' : 'bg-warning'}`} title={connected ? 'connected' : 'reconnecting…'} />
-        <span className={`hidden text-xs sm:inline ${connected ? 'text-success' : 'text-warning'}`}>{connected ? 'connected' : 'reconnecting…'}</span>
-      </span>
-    </header>
+  // the bottom nav is hidden only in a session and the Viewer
+  const withNav = (page: ReactNode, active: NavTab, scroll = true) => (
+    <div className="flex h-full flex-col"><div className={`min-h-0 flex-1 ${scroll ? 'overflow-y-auto' : ''}`}>{page}</div><BottomNav active={active} attention={attention} onNav={onNav} /></div>
   )
-}
-
-function useWide() {
-  const q = '(min-width: 1024px)'
-  const [wide, setWide] = useState(() => window.matchMedia(q).matches)
-  useEffect(() => {
-    const m = window.matchMedia(q)
-    const h = () => setWide(m.matches)
-    m.addEventListener('change', h)
-    return () => m.removeEventListener('change', h)
-  }, [])
-  return wide
+  if (viewerView) view = <div className="h-full">{viewerView}</div>
+  else if (terminalView) view = withNav(terminalView, tab, false)
+  else if (startingView) view = withNav(startingView, tab, false)
+  else if (sessionView) view = <div className="h-full">{sessionView}</div>
+  else if (configView) view = withNav(configView, 'settings')
+  else if (ticketView) view = withNav(ticketView, tab)
+  else if (ticketsView) view = withNav(ticketsView, tab)
+  else if (projectView) view = withNav(projectView, tab)
+  else if (tab === 'sessions') view = <div className="flex h-full flex-col">{sessionsList}<BottomNav active="sessions" attention={attention} onNav={onNav} /></div>
+  else view = <div className="flex h-full flex-col"><PhoneHeader title="Projects" connected={connected} onLaunch={() => openLaunch()} /><div className="min-h-0 flex-1 overflow-y-auto">{projectsView}</div><BottomNav active="projects" attention={attention} onNav={onNav} /></div>
+  return <div className="app-shell">{view}{dialog}{toggle}</div>
 }

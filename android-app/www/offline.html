@@ -6,29 +6,29 @@
   <meta name="color-scheme" content="light dark">
   <title>Quorum</title>
   <style>
-    /* Plan 9 "quiet paper" tokens, light and dark. Inline, with no other files: offline.html is served in place
+    /* Terminal green tokens (Plan 12), light and dark. Inline, with no other files: offline.html is served in place
        of the hub, where Capacitor serves only that one bundled file. The platform sans-serif stack stands in for
        Geist, so nothing needs the network. Keep this block the same in index.html and offline.html. */
     :root {
       color-scheme: light dark;
-      --background: #FAF9F6;
+      --background: #F7F8F7;
       --surface: #FFFFFF;
-      --ink: #1D1C1A;
-      --muted: #6E6A64;
-      --line: #E8E5DF;
-      --accent: #1F5F5B;
+      --ink: #111814;
+      --muted: #5D6861;
+      --line: #E0E6E2;
+      --accent: #0C7548;
       --on-accent: #FFFFFF;
       --danger: #B3261E;
     }
     @media (prefers-color-scheme: dark) {
       :root {
-        --background: #1B1A18;
-        --surface: #232220;
-        --ink: #ECEAE5;
-        --muted: #A19D96;
-        --line: #33312E;
-        --accent: #6FB8B1;
-        --on-accent: #0F1F1E;
+        --background: #0E1311;
+        --surface: #161C19;
+        --ink: #E3ECE7;
+        --muted: #8FA198;
+        --line: #24302A;
+        --accent: #3DDC97;
+        --on-accent: #06140D;
         --danger: #F2B8B5;
       }
     }
@@ -52,6 +52,7 @@
       border-radius: 12px;
       padding: 24px 20px;
     }
+    .mark { display: block; color: var(--accent); margin-bottom: 12px; }
     h1 { font-size: 22px; line-height: 1.3; font-weight: 600; margin: 0 0 4px; }
     p { margin: 0; }
     .muted { color: var(--muted); font-size: 15px; }
@@ -90,6 +91,7 @@
 </head>
 <body>
   <main>
+    <svg class="mark" width="40" height="40" viewBox="0 0 48 48" fill="currentColor" aria-hidden="true"><circle cx="24" cy="9" r="4.3"/><circle cx="34.6" cy="13.4" r="4.3"/><circle cx="39" cy="24" r="4.3"/><circle cx="24" cy="39" r="4.3"/><circle cx="13.4" cy="34.6" r="4.3"/><circle cx="9" cy="24" r="4.3"/><circle cx="13.4" cy="13.4" r="4.3"/><rect x="29" y="31" width="15" height="5.4" rx="2.7" transform="rotate(45 36.5 33.7)"/></svg>
     <h1>Can't reach the hub. Is Tailscale connected?</h1>
     <p class="muted">Your hub address is saved. Connect to Tailscale, then retry.</p>
     <div class="actions">

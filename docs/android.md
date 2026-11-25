@@ -130,3 +130,9 @@ If the hub cannot be reached when the app starts (for example, Tailscale is off)
   your hub over your tailnet, which Tailscale encrypts.
 - To revoke the phone, run `quorum-hub revoke device <name>` on the hub. The hub also deletes its push token, so no more
   notifications reach it.
+
+## Without Firebase
+
+`make apk` also builds without `google-services.json`: the app works the same, only push
+notifications are off (the shell tells the web app, which then never registers for push). Add the
+file later and run `make apk` again; installing the new APK over the old one keeps the pairing.

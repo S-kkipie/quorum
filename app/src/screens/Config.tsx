@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useState } from 'react'
 import ConnectorForm, { KINDS, connectorInput, draftFrom, validateConnector } from '../components/ConnectorForm'
 import WorkspaceForm from '../components/WorkspaceForm'
 import { createProject, deleteProject, listSuggestions, setProjectToken, syncProject, updateProject, type ProjectSuggestion } from '../lib/api'
 import type { AppState } from '../lib/store'
 import { isNative } from '../lib/native'
-import { useThemePref, type ThemePref } from '../lib/theme'
+import { resolveTheme, useThemePref, type ThemePref } from '../lib/theme'
+import { useRoving } from '../lib/roving'
 import type { Project } from '../proto.gen'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -21,32 +22,34 @@ export function repoName(url: string): string {
 
 const THEMES: [ThemePref, string, LucideIcon][] = [['system', 'System', Monitor], ['light', 'Light', Sun], ['dark', 'Dark', Moon]]
 
-/**
- * Theme choice for this device: a segmented control (System follows the OS). A radio group with a
- * roving tabindex: one tab stop (the checked option); arrows / Home / End move and select.
- */
-export function Appearance() {
-  const [pref, setPref] = useThemePref()
-  const radios = useRef<(HTMLButtonElement | null)[]>([])
-  const onKey = (e: KeyboardEvent<HTMLButtonElement>, i: number) => {
-    const n = THEMES.length
-    const to = e.key === 'ArrowDown' || e.key === 'ArrowRight' ? (i + 1) % n
-      : e.key === 'ArrowUp' || e.key === 'ArrowLeft' ? (i + n - 1) % n
-        : e.key === 'Home' ? 0 : e.key === 'End' ? n - 1 : -1
-    if (to < 0) return
-    e.preventDefault()
-    setPref(THEMES[to][0])
-    radios.current[to]?.focus()
-  }
+/** Theme choice for this device: a segmented control (System follows the OS). */
+function ThemeMode({ pref, setPref }: { pref: ThemePref; setPref: (p: ThemePref) => void }) {
+  const { ref, onKey } = useRoving(THEMES.map((t) => t[0]), setPref)
   return (
-    <div role="radiogroup" aria-label="Appearance" className="grid grid-cols-3 gap-1 rounded-xl border border-line bg-chip p-1">
+    <div role="radiogroup" aria-label="Theme" className="grid grid-cols-3 gap-1 rounded-xl border border-line bg-chip p-1">
       {THEMES.map(([value, label, Icon], i) => (
-        <button key={value} ref={(el) => { radios.current[i] = el }} type="button" role="radio" aria-checked={pref === value}
+        <button key={value} ref={ref(i)} type="button" role="radio" aria-checked={pref === value}
           tabIndex={pref === value ? 0 : -1} onKeyDown={(e) => onKey(e, i)} onClick={() => setPref(value)}
           className={`flex min-h-11 items-center justify-center gap-2 rounded-lg text-sm transition-colors focus-visible:outline-2 focus-visible:outline-accent ${pref === value ? 'bg-surface font-medium text-ink shadow-xs' : 'text-muted-foreground'}`}>
           <Icon aria-hidden className="size-4" />{label}
         </button>
       ))}
+    </div>
+  )
+}
+
+// The palette tiles and custom accent load with Settings (palette data stays out of the initial bundle).
+const PalettePicker = lazy(() => import('../components/PalettePicker'))
+
+/** Theme and palette for this device. */
+export function Appearance() {
+  const [pref, setPref] = useThemePref()
+  return (
+    <div className="space-y-3">
+      <ThemeMode pref={pref} setPref={setPref} />
+      <Suspense fallback={<div className="min-h-40" />}>
+        <PalettePicker theme={resolveTheme(pref)} />
+      </Suspense>
     </div>
   )
 }

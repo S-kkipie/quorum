@@ -7,12 +7,20 @@
 @custom-variant dark (&:is(.dark *));
 
 /*
- * "Quiet paper" design tokens (Plan 9). Light values live on :root, dark values on .dark (set on <html>
- * by the pre-paint script in index.html and by src/lib/theme.ts). src/lib/tokens.ts mirrors every hex
- * value below; its test checks they match and that each text/background pair meets WCAG AA.
+ * Design tokens (Plan 9; palettes from Plan 12). Light values live on :root, dark values on .dark (set
+ * on <html> by the pre-paint script in index.html and by src/lib/theme.ts). The default palette,
+ * Terminal green, is declared on :root / .dark; every other preset overrides its surface and accent
+ * tokens under `:root[data-palette="…"]` and `:root.dark[data-palette="…"]` (data-palette is set before
+ * first paint too). A `.dark` box inside a light page (the terminal screen) gets the same palette's dark
+ * values through `:root[data-palette="…"] .dark`. A custom accent sets --accent, --on-accent,
+ * --accent-soft and --ring inline on <html>, plus their dark values as --accent-dark, … and
+ * `data-accent`, which a nested `.dark` box picks up. The state, success / danger and diff tokens are shared by every palette. src/lib/palettes.ts
+ * and src/lib/tokens.ts mirror every hex value below; their test checks they match and that each
+ * text/background pair meets WCAG AA in every palette.
  *
  * Tailwind colour utilities (bg-*, text-*, border-*, ring-*, fill-*, …):
  *   background            page background
+ *   sidebar               the side pane background
  *   surface               cards, composer, menus, sheets          (shadcn: card, popover)
  *   ink                   primary text                            (shadcn: foreground)
  *   muted-foreground      secondary text
@@ -32,36 +40,36 @@
   color-scheme: light;
   --radius: 0.5rem;
 
-  --background: #FAF9F6;
+  /* Terminal green (default palette) */
+  --background: #F7F8F7;
+  --sidebar: #EFF2F0;
   --surface: #FFFFFF;
-  --ink: #1D1C1A;
-  --muted-foreground: #6E6A64;
-  --line: #E8E5DF;
-  --chip: #F1EFEA;
-  --bubble: #EEECE7;
-  --accent: #1F5F5B;
+  --ink: #111814;
+  --muted-foreground: #5D6861;
+  --line: #E0E6E2;
+  --chip: #EAEFEC;
+  --bubble: #E6EEE9;
+  --accent: #0C7548;
   --on-accent: #FFFFFF;
-  --accent-soft: #E6F0EE;
-  --success: #2B784B;
-  --warning: #A15C07;
+  --accent-soft: #DBE8E2;
+
+  /* shared base */
+  --success: #14793A;
+  --warning: #AD5009;
   --danger: #B3261E;
   --on-danger: #FFFFFF;
 
-  --state-needs: #A15C07;
-  --state-needs-soft: #F8EEDF;
-  --state-working: #1F5F5B;
-  --state-working-soft: #E6F0EE;
-  --state-background: #6B4FA0;
-  --state-background-soft: #EFEAF6;
-  --state-done: #2B784B;
-  --state-done-soft: #E5F1E9;
-  --state-idle: #6E6A64;
-  --state-idle-soft: #F1EFEA;
-  --state-closed: #6E6A64;
-  --state-closed-soft: #FAF9F6;
+  --state-needs: #AD5009;
+  --state-needs-soft: #FDF0E0;
+  --state-working: #2060EB;
+  --state-working-soft: #E8EFFD;
+  --state-background: #7C3AED;
+  --state-background-soft: #F1EAFD;
+  --state-done: #14793A;
+  --state-done-soft: #E5F3EA;
 
-  --add: #2B784B;
-  --add-soft: #E5F1E9;
+  --add: #14793A;
+  --add-soft: #E5F3EA;
   --del: #B3261E;
   --del-soft: #FAE8E6;
 }
@@ -69,7 +77,192 @@
 .dark {
   color-scheme: dark;
 
+  /* Terminal green (default palette) */
+  --background: #0E1311;
+  --sidebar: #0A0E0C;
+  --surface: #161C19;
+  --ink: #E3ECE7;
+  --muted-foreground: #8FA198;
+  --line: #24302A;
+  --chip: #1D2622;
+  --bubble: #1F2A25;
+  --accent: #3DDC97;
+  --on-accent: #06140D;
+  --accent-soft: #163326;
+
+  /* shared base */
+  --success: #4ADE80;
+  --warning: #F2A93B;
+  --danger: #F08A80;
+  --on-danger: #2A0F0C;
+
+  --state-needs: #F2A93B;
+  --state-needs-soft: #3A2C17;
+  --state-working: #60A5FA;
+  --state-working-soft: #172A45;
+  --state-background: #B794F6;
+  --state-background-soft: #2C2340;
+  --state-done: #4ADE80;
+  --state-done-soft: #16301F;
+
+  --add: #4ADE80;
+  --add-soft: #16301F;
+  --del: #F08A80;
+  --del-soft: #3A2220;
+}
+
+/* Graphite */
+:root[data-palette="graphite"] {
+  --background: #F6F7F8;
+  --sidebar: #EEF0F2;
+  --surface: #FFFFFF;
+  --ink: #16181C;
+  --muted-foreground: #5F6670;
+  --line: #E2E5E9;
+  --chip: #EDEFF2;
+  --bubble: #E9ECF0;
+  --accent: #2D55C8;
+  --on-accent: #FFFFFF;
+  --accent-soft: #DEE4F2;
+}
+:root.dark[data-palette="graphite"], :root[data-palette="graphite"] .dark {
+  --background: #16181B;
+  --sidebar: #121417;
+  --surface: #1E2125;
+  --ink: #E8EAED;
+  --muted-foreground: #9AA1AB;
+  --line: #2C3035;
+  --chip: #262A2F;
+  --bubble: #262A30;
+  --accent: #7C9BF0;
+  --on-accent: #0E1426;
+  --accent-soft: #262D3D;
+}
+/* Mono */
+:root[data-palette="mono"] {
+  --background: #FFFFFF;
+  --sidebar: #FAFAFA;
+  --surface: #FFFFFF;
+  --ink: #0A0A0A;
+  --muted-foreground: #6B6B6B;
+  --line: #EAEAEA;
+  --chip: #F2F2F2;
+  --bubble: #F2F2F2;
+  --accent: #0A0A0A;
+  --on-accent: #FFFFFF;
+  --accent-soft: #F2F2F2;
+}
+:root.dark[data-palette="mono"], :root[data-palette="mono"] .dark {
+  --background: #0A0A0A;
+  --sidebar: #000000;
+  --surface: #141414;
+  --ink: #EDEDED;
+  --muted-foreground: #929292;
+  --line: #262626;
+  --chip: #1C1C1C;
+  --bubble: #1F1F1F;
+  --accent: #EDEDED;
+  --on-accent: #0A0A0A;
+  --accent-soft: #1C1C1C;
+}
+/* Violet */
+:root[data-palette="violet"] {
+  --background: #FAFAFA;
+  --sidebar: #F4F4F5;
+  --surface: #FFFFFF;
+  --ink: #18181B;
+  --muted-foreground: #67676F;
+  --line: #E4E4E7;
+  --chip: #F1F1F3;
+  --bubble: #EFEEF6;
+  --accent: #6540FF;
+  --on-accent: #FFFFFF;
+  --accent-soft: #E8E4FB;
+}
+:root.dark[data-palette="violet"], :root[data-palette="violet"] .dark {
+  --background: #111113;
+  --sidebar: #0C0C0E;
+  --surface: #19191C;
+  --ink: #ECECEF;
+  --muted-foreground: #A1A1AA;
+  --line: #27272A;
+  --chip: #222226;
+  --bubble: #24222E;
+  --accent: #A38BFF;
+  --on-accent: #140C33;
+  --accent-soft: #282539;
+}
+/* Midnight */
+:root[data-palette="midnight"] {
+  --background: #F5F7FA;
+  --sidebar: #EDF1F6;
+  --surface: #FFFFFF;
+  --ink: #0F1B2D;
+  --muted-foreground: #58677C;
+  --line: #DDE4EE;
+  --chip: #E8EDF4;
+  --bubble: #E4EBF4;
+  --accent: #0A6BA0;
+  --on-accent: #FFFFFF;
+  --accent-soft: #D9E6EF;
+}
+:root.dark[data-palette="midnight"], :root[data-palette="midnight"] .dark {
+  --background: #0B1220;
+  --sidebar: #080E1A;
+  --surface: #111A2B;
+  --ink: #E2E8F2;
+  --muted-foreground: #8D9BB0;
+  --line: #1E2A3E;
+  --chip: #18233A;
+  --bubble: #1A2740;
+  --accent: #4CC3F0;
+  --on-accent: #04131D;
+  --accent-soft: #152E41;
+}
+/* Ember */
+:root[data-palette="ember"] {
+  --background: #FAF8F5;
+  --sidebar: #F3F0EB;
+  --surface: #FFFFFF;
+  --ink: #1C1915;
+  --muted-foreground: #6C645B;
+  --line: #E7E1D8;
+  --chip: #F0EBE4;
+  --bubble: #EFE9E1;
+  --accent: #A84B0A;
+  --on-accent: #FFFFFF;
+  --accent-soft: #F0E3D9;
+}
+:root.dark[data-palette="ember"], :root[data-palette="ember"] .dark {
+  --background: #161412;
+  --sidebar: #110F0D;
+  --surface: #1F1C19;
+  --ink: #EEE8E1;
+  --muted-foreground: #A39A8F;
+  --line: #302B26;
+  --chip: #29251F;
+  --bubble: #2C2722;
+  --accent: #F59E42;
+  --on-accent: #1E0F02;
+  --accent-soft: #3A2A1A;
+}
+/* Quiet paper */
+:root[data-palette="quiet-paper"] {
+  --background: #FAF9F6;
+  --sidebar: #F4F2EE;
+  --surface: #FFFFFF;
+  --ink: #1D1C1A;
+  --muted-foreground: #6A6660;
+  --line: #E8E5DF;
+  --chip: #F1EFEA;
+  --bubble: #EEECE7;
+  --accent: #1F5F5B;
+  --on-accent: #FFFFFF;
+  --accent-soft: #E0E7E3;
+}
+:root.dark[data-palette="quiet-paper"], :root[data-palette="quiet-paper"] .dark {
   --background: #1B1A18;
+  --sidebar: #171614;
   --surface: #232220;
   --ink: #ECEAE5;
   --muted-foreground: #A19D96;
@@ -78,29 +271,15 @@
   --bubble: #2E2C29;
   --accent: #6FB8B1;
   --on-accent: #0F1F1E;
-  --accent-soft: #22312F;
-  --success: #7CC497;
-  --warning: #E3A857;
-  --danger: #F08A80;
-  --on-danger: #2A0F0C;
+  --accent-soft: #283330;
+}
 
-  --state-needs: #E3A857;
-  --state-needs-soft: #352A1C;
-  --state-working: #6FB8B1;
-  --state-working-soft: #22312F;
-  --state-background: #B49BE0;
-  --state-background-soft: #2D2738;
-  --state-done: #7CC497;
-  --state-done-soft: #213027;
-  --state-idle: #A19D96;
-  --state-idle-soft: #2C2A27;
-  --state-closed: #A19D96;
-  --state-closed-soft: #1B1A18;
-
-  --add: #7CC497;
-  --add-soft: #1F2F24;
-  --del: #F08A80;
-  --del-soft: #3A2220;
+/* A custom accent inside a nested .dark box (the terminal screen): the dark values set inline on <html>. */
+:root[data-accent] .dark {
+  --accent: var(--accent-dark);
+  --on-accent: var(--on-accent-dark);
+  --accent-soft: var(--accent-soft-dark);
+  --ring: var(--ring-dark);
 }
 
 /* shadcn variable names, aliased to the tokens so the vendored primitives follow the theme. */
@@ -120,10 +299,16 @@
   --border: var(--line);
   --input: var(--line);
   --ring: var(--accent);
+  /* idle and closed states follow the palette */
+  --state-idle: var(--muted-foreground);
+  --state-idle-soft: var(--chip);
+  --state-closed: var(--muted-foreground);
+  --state-closed-soft: var(--background);
 }
 
 @theme inline {
   --color-background: var(--background);
+  --color-sidebar: var(--sidebar);
   --color-surface: var(--surface);
   --color-ink: var(--ink);
   --color-foreground: var(--foreground);

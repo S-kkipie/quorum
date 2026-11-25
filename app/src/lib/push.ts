@@ -25,6 +25,8 @@ export async function startPush(open: (session: string) => void): Promise<void> 
   if (started) return
   started = true
   try {
+    // The shell sets this to "false" when the APK was built without Firebase: register() would crash it.
+    if ((await Preferences.get({ key: 'pushAvailable' })).value === 'false') return
     let perm = (await PushNotifications.checkPermissions()).receive
     if (perm !== 'granted') perm = (await PushNotifications.requestPermissions()).receive
     if (perm !== 'granted') { started = false; return }

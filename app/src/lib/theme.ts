@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
-import { THEME_COLOR, type ThemeName } from './tokens'
+import { isHex } from './color'
+import { ACCENT_VARS, DEFAULT_PALETTE, PALETTE_BG, isPaletteId, type PaletteId } from './palette-ids'
+import type { ThemeName } from './tokens'
 
 /** The user's choice: follow the OS, or force one theme. Stored per device. */
 export type ThemePref = 'system' | 'light' | 'dark'
@@ -8,8 +10,21 @@ export type ThemePref = 'system' | 'light' | 'dark'
 export const THEME_KEY = 'quorum.theme'
 const QUERY = '(prefers-color-scheme: dark)'
 
-/** The choice in effect this page load (null until initTheme or setTheme runs). */
+/** localStorage key for the palette: `{id, accent?, vars?}` (vars: the derived inline variables per theme, for the pre-paint script). */
+export const PALETTE_KEY = 'quorum.palette'
+
+/** A preset, optionally with a custom accent on top of it. */
+export type PaletteChoice = { id: PaletteId; accent?: string }
+
+/** Inline variables per theme for a custom accent (set by palettes.ts `setPalette`). */
+type AccentVars = Record<ThemeName, Record<string, string>>
+
+/** What is stored under PALETTE_KEY. */
+export type StoredPalette = PaletteChoice & { vars?: AccentVars }
+
+/** The choices in effect this page load (null until initTheme or a setter runs). */
 let current: ThemePref | null = null
+let palette: StoredPalette | null = null
 
 function isPref(v: unknown): v is ThemePref {
   return v === 'system' || v === 'light' || v === 'dark'
@@ -32,20 +47,90 @@ export function resolveTheme(pref: ThemePref = getTheme()): ThemeName {
   return pref
 }
 
-/** Puts the resolved theme on <html> (`.dark`, color-scheme) and the browser chrome colour. */
-export function applyTheme(pref: ThemePref = getTheme()): ThemeName {
-  const theme = resolveTheme(pref)
+function validVars(v: unknown): AccentVars | null {
+  if (!v || typeof v !== 'object') return null
+  const out = {} as AccentVars
+  for (const t of ['light', 'dark'] as const) {
+    const src = (v as Record<string, unknown>)[t] as Record<string, unknown> | undefined
+    out[t] = {}
+    for (const k of ACCENT_VARS) {
+      const c = src?.[k]
+      if (!isHex(c)) return null
+      out[t][k] = c
+    }
+  }
+  return out
+}
+
+/** The stored palette with its custom accent variables; Terminal green when none (or an unreadable one) is stored. */
+function readPalette(): StoredPalette {
+  try {
+    const v = JSON.parse(localStorage.getItem(PALETTE_KEY) || 'null')
+    if (!v || !isPaletteId(v.id)) return { id: DEFAULT_PALETTE }
+    const vars = isHex(v.accent) ? validVars(v.vars) : null
+    return vars ? { id: v.id, accent: v.accent.toUpperCase(), vars } : { id: v.id }
+  } catch { return { id: DEFAULT_PALETTE } }
+}
+
+/** The stored palette choice (a preset, and a custom accent when one is set). */
+export function getPalette(): PaletteChoice {
+  const { id, accent } = readPalette()
+  return accent ? { id, accent } : { id }
+}
+
+/** The palette choice in effect this page load, or null before initTheme or a setter runs. */
+export function currentPalette(): PaletteChoice | null {
+  if (!palette) return null
+  return palette.accent ? { id: palette.id, accent: palette.accent } : { id: palette.id }
+}
+
+/** Puts a palette on <html> for a theme: `data-palette`, a custom accent's inline variables and the chrome colour. */
+function applyPalette(p: StoredPalette, theme: ThemeName): void {
   const root = document.documentElement
-  root.classList.toggle('dark', theme === 'dark')
-  root.style.colorScheme = theme
+  root.setAttribute('data-palette', p.id)
+  const vars = p.accent && p.vars ? p.vars[theme] : null
+  // the dark values too, for a .dark box inside a light page (the terminal screen; see index.css)
+  const dark = p.accent && p.vars ? p.vars.dark : null
+  for (const k of ACCENT_VARS) {
+    if (vars) root.style.setProperty(k, vars[k])
+    else root.style.removeProperty(k)
+    if (dark) root.style.setProperty(`${k}-dark`, dark[k])
+    else root.style.removeProperty(`${k}-dark`)
+  }
+  root.toggleAttribute('data-accent', !!dark)
   let meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')
   if (!meta) {
     meta = document.createElement('meta')
     meta.name = 'theme-color'
     document.head.appendChild(meta)
   }
-  meta.content = THEME_COLOR[theme]
+  meta.content = PALETTE_BG[p.id][theme === 'dark' ? 1 : 0]
+}
+
+/** Puts the resolved theme on <html> (`.dark`, color-scheme) with the palette in effect and the browser chrome colour. */
+export function applyTheme(pref: ThemePref = getTheme()): ThemeName {
+  const theme = resolveTheme(pref)
+  const root = document.documentElement
+  root.classList.toggle('dark', theme === 'dark')
+  root.style.colorScheme = theme
+  applyPalette(palette ?? readPalette(), theme)
   return theme
+}
+
+/**
+ * Stores and applies a palette record (palettes.ts `setPalette` derives a custom accent's variables
+ * first). The default preset with no accent is stored as nothing. Blocked storage keeps the choice
+ * until reload.
+ */
+export function storePalette(p: StoredPalette): void {
+  const vars = p.accent && isHex(p.accent) ? validVars(p.vars) : null
+  const rec: StoredPalette = vars ? { id: p.id, accent: p.accent!.toUpperCase(), vars } : { id: p.id }
+  try {
+    if (rec.id === DEFAULT_PALETTE && !rec.accent) localStorage.removeItem(PALETTE_KEY)
+    else localStorage.setItem(PALETTE_KEY, JSON.stringify(rec))
+  } catch { /* storage blocked: the choice lasts until reload */ }
+  palette = rec
+  applyTheme(current ?? getTheme())
 }
 
 export function setTheme(pref: ThemePref): void {
@@ -62,16 +147,23 @@ function themeEvent(e: StorageEvent): boolean {
   return e.key === THEME_KEY || e.key === null
 }
 
+/** True for a `storage` event that may change the palette. */
+export function paletteEvent(e: StorageEvent): boolean {
+  return e.key === PALETTE_KEY || e.key === null
+}
+
 /**
- * Applies the stored theme, follows OS changes while the choice is "system" and follows a choice
- * made in another open tab (`storage` event). Returns a cleanup.
+ * Applies the stored theme and palette, follows OS changes while the choice is "system" and follows
+ * a choice made in another open tab (`storage` event). Returns a cleanup.
  */
 export function initTheme(): () => void {
   current = getTheme()
+  palette = readPalette()
   applyTheme(current)
   const onStorage = (e: StorageEvent) => {
-    if (!themeEvent(e)) return
+    if (!themeEvent(e) && !paletteEvent(e)) return
     current = getTheme()
+    palette = readPalette()
     applyTheme(current)
   }
   window.addEventListener('storage', onStorage)

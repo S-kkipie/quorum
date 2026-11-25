@@ -1,15 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ChevronDown, ChevronLeft, Loader2, MonitorPlay, MoreHorizontal, Plus, Square, XCircle } from 'lucide-react'
+import { ChevronDown, ChevronLeft, Loader2, MonitorPlay, MoreHorizontal, PanelRight, Plus, Square, XCircle } from 'lucide-react'
 import AskCard from '../components/AskCard'
 import Composer from '../components/Composer'
 import ModelEffortSheet from '../components/ModelEffortSheet'
 import BackgroundSheet from '../components/BackgroundSheet'
 import StatePill from '../components/StatePill'
-import Transcript from '../components/Transcript'
+import Inspector from '../components/inspector/Inspector'
+import Transcript, { type Focus } from '../components/Transcript'
 import { UsageInline } from '../components/UsageStrip'
-import { abortSession, closeSession, listCommands, setModel } from '../lib/api'
+import { abortSession, hubUrl, closeSession, listCommands, setModel } from '../lib/api'
 import { accountUsageOf, contextTone, formatTokens, toneClass } from '../lib/meters'
 import { launchIn, loadPrefs } from '../lib/launch'
+import { shortcutBlocked } from '../lib/shortcuts'
+import { useLayout } from '../lib/useLayout'
 import { useMarkSeen } from '../lib/useMarkSeen'
 import { useSessionEvents, type Trim } from '../lib/useSessionEvents'
 import type { AppState } from '../lib/store'
@@ -90,6 +93,20 @@ export default function Session({ state, id, onBack, onEvents, onTrim, onSeen, o
     return () => { off = true }
   }, [id, reconnects])
 
+  const layout = useLayout()
+  const toggleRef = useRef<HTMLButtonElement>(null)
+  const [focus, setFocus] = useState<Focus>()
+  const jump = useCallback((key: string) => setFocus((f) => ({ key, n: (f?.n ?? 0) + 1 })), [])
+  // Ctrl/Cmd+. toggles the inspector (not while a modal dialog is open)
+  const toggle = useRef(layout.toggleInspector)
+  toggle.current = layout.toggleInspector
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key === '.' && !shortcutBlocked(e)) { e.preventDefault(); toggle.current() }
+    }
+    window.addEventListener('keydown', h)
+    return () => window.removeEventListener('keydown', h)
+  }, [])
   const [sheet, setSheet] = useState(false)
   const [bgSheet, setBgSheet] = useState(false)
   // a background row whose task left the live items (or whose session is closed) stopped without a task_end;
@@ -179,6 +196,8 @@ export default function Session({ state, id, onBack, onEvents, onTrim, onSeen, o
               <Square size={narrow ? 14 : 11} aria-hidden className="fill-current" />{!narrow && 'Interrupt'}
             </Button>
           )}
+          <Button ref={toggleRef} variant="ghost" size="icon" onClick={layout.toggleInspector} aria-label="Inspector" aria-pressed={layout.inspectorOpen} title="Inspector (Ctrl+.)"
+            className="size-11 shrink-0 text-muted-foreground hover:text-ink"><PanelRight size={20} aria-hidden /></Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="icon" aria-label="More actions" className="size-11 shrink-0 text-muted-foreground hover:text-ink"><MoreHorizontal size={20} aria-hidden /></Button>
@@ -224,6 +243,8 @@ export default function Session({ state, id, onBack, onEvents, onTrim, onSeen, o
           </div>
         )}
       </header>
+      <div className="relative flex min-h-0 flex-1">
+      <div className="flex min-w-0 flex-1 flex-col">
       {error && (
         <p role="alert" className="flex items-center gap-2 bg-del-soft px-3 py-1 text-xs text-danger">
           <span className="min-w-0 flex-1">{error}</span>
@@ -246,9 +267,16 @@ export default function Session({ state, id, onBack, onEvents, onTrim, onSeen, o
         onLoadMore={loadOlder}
         onAtBottom={setAtBottom}
         onOpenFile={onOpenFile ? (path, o) => (o ? onOpenFile(s.machine, path, o) : onOpenFile(s.machine, path)) : undefined}
+        focus={focus}
       />
       {asks.map((a) => <AskCard key={a.askId} session={id} ask={a} onDone={() => setDismissed((d) => ({ ...d, [a.askId]: true }))} />)}
       <Composer session={s} commands={state.commands[id]} />
+      </div>
+      <Inspector placement={layout.inspector} open={layout.inspectorOpen} onClose={layout.toggleInspector} ignore={toggleRef}
+        session={s} usage={usage} events={events} hasMore={hasMore} onJump={jump}
+        // a hub /v/ link opens in a tab, like markdown /v/ links elsewhere (the Viewer takes machine, session and path)
+        onOpenArtifact={(l) => window.open(/^https?:/.test(l.url) ? l.url : hubUrl() + l.url, '_blank', 'noopener')} />
+      </div>
       <BackgroundSheet open={bgSheet} onOpenChange={setBgSheet} background={s.background} />
       {(showModel || showEffort) && (
         <ModelEffortSheet open={sheet} onOpenChange={setSheet} options={modelOptions} current={current?.value} effort={s.effort} efforts={efforts} onPick={chooseModel} />

@@ -8,7 +8,7 @@ import { PathLinksProvider } from '@/components/ai-elements/pathLinks'
 import { Shimmer } from '@/components/ai-elements/shimmer'
 import type { Event } from '../proto.gen'
 import { formatTokens } from '../lib/meters'
-import { buildTimeline, type Item, type OpenOpts } from '../lib/timeline'
+import { buildTimeline, itemKey, type Item, type OpenOpts } from '../lib/timeline'
 import ArtifactCard from './timeline/ArtifactCard'
 import CommandCard from './timeline/CommandCard'
 import PastedImages from './timeline/PastedImages'
@@ -54,7 +54,8 @@ function HistoryLoader({ firstKey, hasMore, autoLoad, onLoadMore, onAtBottom }: 
 /** A row of the virtual list: a timeline item, the collapsed earlier conversation, or the top row. */
 type Row = { key: string } & ({ kind: 'item'; item: Item } | { kind: 'earlier'; count: number } | { kind: 'head' })
 
-const itemKey = (r: Item): string => `${r.t}:${r.t === 'command' ? r.id : r.seq}`
+/** A request to scroll to a row by its key; a new `n` asks again for the same key. */
+export type Focus = { key: string; n: number }
 
 /** A row height before it is measured. */
 const ESTIMATE = 72
@@ -67,7 +68,7 @@ const observeRect: typeof observeElementRect = (instance, cb) =>
   observeElementRect(instance, (r) => cb(r.height > 0 ? r : { width: r.width, height: window.innerHeight || 800 }))
 
 /** Renders only the rows near the viewport of the Conversation's scroll element; heights are measured. */
-function VirtualRows({ rows, render }: { rows: Row[]; render: (r: Row) => ReactNode }) {
+function VirtualRows({ rows, render, focus }: { rows: Row[]; render: (r: Row) => ReactNode; focus?: Focus }) {
   const { scrollRef } = useStickToBottomContext()
   const list = useRef<HTMLDivElement>(null)
   // the scroll element's ref is attached after this child's layout effects: render again once it is
@@ -82,6 +83,14 @@ function VirtualRows({ rows, render }: { rows: Row[]; render: (r: Row) => ReactN
     scrollMargin: list.current?.offsetTop ?? 0,
     observeElementRect: observeRect,
   })
+  // scroll to the requested row once it is in the list (a folded one is unfolded by the parent first)
+  const done = useRef(0)
+  const at = focus ? rows.findIndex((r) => r.key === focus.key) : -1
+  useEffect(() => {
+    if (!focus || at < 0 || done.current === focus.n) return
+    done.current = focus.n
+    v.scrollToIndex(at, { align: 'center' })
+  }, [focus, at, v])
   const items = v.getVirtualItems()
   const margin = v.options.scrollMargin
   return (
@@ -107,7 +116,9 @@ export const hhmm = (ms: number) => { const d = new Date(ms); return `${pad2(d.g
  */
 const answer = 'w-full max-w-[70ch] break-words font-serif text-[15.5px] leading-[1.6] text-ink'
 
-export default function Transcript({ events, base = '', machine = '', sessionId = '', live, liveAgent, working, bgEnded, hasMore, autoLoad = true, loading, notice, onLoadMore, onAtBottom, onOpenFile }: {
+export default function Transcript({ events, base = '', machine = '', sessionId = '', live, liveAgent, working, bgEnded, hasMore, autoLoad = true, loading, notice, onLoadMore, onAtBottom, onOpenFile, focus }: {
+  /** scrolls to a row (the inspector's changed files) */
+  focus?: Focus
   autoLoad?: boolean
   events: Event[]
   /** session root, else cwd: decides which artifact cards can be opened */
@@ -163,6 +174,10 @@ export default function Transcript({ events, base = '', machine = '', sessionId 
     for (const it of items) out.push({ key: itemKey(it), kind: 'item', item: it })
     return out
   }, [items, collapsed, newestCompact, notice, loading, hasMore])
+  // a row folded away by a compact is unfolded when the inspector asks for it
+  const wantFolded = !!focus && collapsed && !rows.some((r) => r.key === focus.key) && items.some((it) => itemKey(it) === focus.key)
+  const [unfoldedFor, setUnfoldedFor] = useState(0)
+  if (wantFolded && focus && unfoldedFor !== focus.n) { setUnfoldedFor(focus.n); setExpanded(true) }
   const firstKey = rows.find((r) => r.kind !== 'head')?.key
 
   const more = useRef(onLoadMore)
@@ -247,7 +262,7 @@ export default function Transcript({ events, base = '', machine = '', sessionId 
     <PathLinksProvider base={linkBase} onOpen={openPath}>
     <Conversation className="min-h-0" initial="instant">
       <ConversationContent className="gap-0 px-3 py-2 sm:px-4">
-        <VirtualRows rows={rows} render={renderRow} />
+        <VirtualRows rows={rows} render={renderRow} focus={focus} />
         {live && (
           <Message from="assistant" role="article" aria-label="Claude" className="my-2 max-w-full">
             <MessageContent className={answer}>

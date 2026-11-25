@@ -2,7 +2,6 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import { closeTerminal, openTerminal, readTerminal, sendTerminal, watchTerminal } from '../lib/api'
 import { parseAnsi, type Span } from '../lib/ansi'
 import { frames } from '../lib/frames'
-import { TOKENS } from '../lib/tokens'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
@@ -11,9 +10,10 @@ const KEYS: [string, string][] = [
   ['Esc', 'esc'], ['Tab', 'tab'], ['Ctrl-C', 'ctrl+c'], ['↑', 'up'], ['↓', 'down'], ['←', 'left'], ['→', 'right'], ['Ctrl-D', 'ctrl+d'], ['Ctrl-L', 'ctrl+l'],
 ]
 const clamp = (lo: number, hi: number, v: number) => Math.max(lo, Math.min(hi, v))
-// the terminal screen is dark in both themes: its box carries .dark, so tokens inside resolve to dark values
-const FG = TOKENS.dark.ink
-const BG = TOKENS.dark.background
+// the terminal screen is dark in both themes: its box carries .dark, so tokens inside resolve to the
+// current palette's dark values, a custom accent included (index.css); inverse video falls back to them
+const FG = 'var(--ink)'
+const BG = 'var(--background)'
 
 function spanStyle(s: Span): CSSProperties {
   let fg = s.fg, bg = s.bg

@@ -54,11 +54,21 @@ public class MainActivity extends BridgeActivity {
         if (!Objects.equals(Hub.stored(this), hub)) restart();
     };
 
+    static final String KEY_PUSH = "pushAvailable";
+
+    /** True when the APK was built with google-services.json (its plugin generates google_app_id). */
+    private boolean pushAvailable() {
+        return getResources().getIdentifier("google_app_id", "string", getPackageName()) != 0;
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         registerPlugin(HubShellPlugin.class);
         createNotificationChannel();
         storage = Hub.storage(this);
+        // The web app reads this before registering for push: without google-services.json there is no
+        // Firebase, and PushNotifications.register() would crash the app.
+        storage.edit().putString(KEY_PUSH, pushAvailable() ? "true" : "false").apply();
         hub = Hub.stored(this);
         if (hub != null) config = hubConfig(hub);
         super.onCreate(savedInstanceState);

@@ -17,7 +17,7 @@ const { listeners, push, local, localRemove, prefs, api, native } = vi.hoisted((
       removeAllListeners: vi.fn(async () => {}),
       addListener: vi.fn(async (name: string, fn: (e: any) => void) => { listeners[name] = fn; return { remove: async () => {} } }),
     },
-    prefs: { remove: vi.fn(async (_: { key: string }) => {}) },
+    prefs: { remove: vi.fn(async (_: { key: string }) => {}), get: vi.fn(async (_: { key: string }) => ({ value: null as string | null })) },
     api: { registerPush: vi.fn(async (_: string) => {}), unregisterPush: vi.fn(async (_: string) => {}) },
     native: { notify: vi.fn(async (_t: string, _b: string) => {}) },
   }
@@ -36,6 +36,7 @@ beforeEach(() => {
   for (const k of Object.keys(listeners)) delete listeners[k]
   push.checkPermissions.mockResolvedValue({ receive: 'prompt' })
   push.requestPermissions.mockResolvedValue({ receive: 'granted' })
+  prefs.get.mockResolvedValue({ value: null })
   stopPush()
 })
 
@@ -48,6 +49,14 @@ describe('push', () => {
     expect(api.registerPush).toHaveBeenCalledWith('tok-1')
     listeners.registration({ value: 'tok-2' })
     expect(api.registerPush).toHaveBeenLastCalledWith('tok-2')
+  })
+
+  it('never registers in an APK built without Firebase (the shell sets pushAvailable=false)', async () => {
+    prefs.get.mockResolvedValue({ value: 'false' })
+    await startPush(() => {})
+    expect(prefs.get).toHaveBeenCalledWith({ key: 'pushAvailable' })
+    expect(push.requestPermissions).not.toHaveBeenCalled()
+    expect(push.register).not.toHaveBeenCalled()
   })
 
   it('does not ask again when permission is already granted', async () => {

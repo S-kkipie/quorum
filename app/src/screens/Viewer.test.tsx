@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { cleanup, render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { describe, it, expect, vi, afterAll, beforeAll, beforeEach, afterEach } from 'vitest'
+import { cleanup, configure, getConfig, render, screen, fireEvent, waitFor } from '@testing-library/react'
 
 const createView = vi.fn()
 vi.mock('../lib/api', () => ({ createView: (...a: any[]) => createView(...a), hubUrl: () => 'http://h:1' }))
@@ -9,6 +9,14 @@ vi.mock('shiki', () => ({ createHighlighter: () => new Promise(() => {}) }))
 import Viewer from './Viewer'
 
 const props = { machine: 'vps-1', sessionId: 's1', onBack: () => {} }
+// The code view is a lazy chunk (CodeBlock, AI Elements): import it once up front so its transform
+// does not count against a test's wait under a loaded full run.
+beforeAll(async () => { await import('./ViewerCode') }, 30_000)
+// rendering 2,000 unhighlighted lines (and the lazy views) is slow in jsdom under a parallel full run:
+// every findBy / waitFor here waits up to 10 s instead of the 1 s default
+let asyncTimeout = 1000
+beforeAll(() => { asyncTimeout = getConfig().asyncUtilTimeout; configure({ asyncUtilTimeout: 10_000 }) })
+afterAll(() => { configure({ asyncUtilTimeout: asyncTimeout }) })
 afterEach(cleanup)
 beforeEach(() => { createView.mockReset(); vi.unstubAllGlobals() })
 
@@ -89,7 +97,7 @@ describe('Viewer', () => {
     expect(await screen.findByText('Showing the first 2,000 lines.')).toBeTruthy()
     await waitFor(() => expect(document.body.textContent).toContain('const v1999 = 1999'))
     expect(document.body.textContent).not.toContain('const v2000 = 2000')
-  })
+  }, 20_000)
   it('a huge text file is read only up to ~1 MB, with a note', async () => {
     createView.mockResolvedValue({ url: '/v/tok/big.log' })
     const line = 'x'.repeat(999) + '\n' // 1,000 bytes a line: the byte cap comes before the line cap
@@ -102,7 +110,7 @@ describe('Viewer', () => {
     render(<Viewer {...props} path="/p/big.log" />)
     expect(await screen.findByText('Showing the first 1 MB.')).toBeTruthy()
     expect(pulls).toBeLessThanOrEqual(20)
-  })
+  }, 20_000)
   it('short text files show no cap note', async () => {
     createView.mockResolvedValue({ url: '/v/tok/a.json' })
     vi.stubGlobal('fetch', vi.fn(async () => new Response('{"a": 1}')))

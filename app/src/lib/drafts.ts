@@ -18,16 +18,27 @@ function writeIndex(list: Entry[]) {
   try { localStorage.setItem(INDEX, JSON.stringify(list)) } catch { /* ignore */ }
 }
 
+/**
+ * Text typed but not yet saved (inside the debounce). A composer that mounts while another one for
+ * the same id is still pending (the session view remounts when the layout crosses a breakpoint, and
+ * the old composer only flushes when it unmounts, after the new one has rendered) reads it from here.
+ */
+const unsaved = new Map<string, string>()
+
 export function loadDraft(id: string): string {
+  const u = unsaved.get(id)
+  if (u !== undefined) return u
   try { return localStorage.getItem(PREFIX + id) ?? '' } catch { return '' }
 }
 
 export function clearDraft(id: string): void {
+  unsaved.delete(id)
   try { localStorage.removeItem(PREFIX + id) } catch { /* ignore */ }
   writeIndex(readIndex().filter((e) => e.id !== id))
 }
 
 export function saveDraft(id: string, text: string): void {
+  unsaved.delete(id)
   if (!text) { clearDraft(id); return }
   try { localStorage.setItem(PREFIX + id, text) } catch { return }
   const list = readIndex().filter((e) => e.id !== id)
@@ -65,6 +76,7 @@ export function useDraft(id: string): [string, (t: string) => void, () => void] 
   const set = useCallback((t: string) => {
     setState((s) => ({ ...s, text: t }))
     pending.current = { id, text: t }
+    unsaved.set(id, t)
     clearTimeout(timer.current)
     timer.current = setTimeout(flush, DEBOUNCE_MS)
   }, [id, flush])

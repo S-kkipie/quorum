@@ -1,13 +1,9 @@
 import { useState } from 'react'
-import { MoreHorizontal } from 'lucide-react'
-import { closeSession } from '../lib/api'
 import { since, stateStyle, toMs } from '../lib/projects'
 import { displayState, stateDetail, type SessionRow } from '../lib/sessions'
 import { sessionTitle } from '../lib/title'
 import { useWakeClock } from '../lib/useWakeClock'
-import { Button } from './ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './ui/dropdown-menu'
+import SessionCloseMenu from './SessionCloseMenu'
 
 /** One row of a merged session list: a live session opens, a closed conversation is resumed. */
 export default function SessionRowView({ row, project, active, disabled, detailed, onOpen, onResume }: {
@@ -22,8 +18,6 @@ export default function SessionRowView({ row, project, active, disabled, detaile
   onOpen?: (id: string) => void
   onResume?: (row: Extract<SessionRow, { kind: 'closed' }>) => void
 }) {
-  const [confirm, setConfirm] = useState(false)
-  const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const now = useWakeClock(row.kind === 'live' ? [row.session] : [])
   const cls = `flex min-h-11 w-full items-center gap-3 px-3 py-1.5 text-left hover:bg-chip active:bg-chip disabled:opacity-40 ${active ? 'bg-chip' : ''}`
@@ -34,19 +28,6 @@ export default function SessionRowView({ row, project, active, disabled, detaile
     const detail = stateDetail(s, now)
     const { title, short } = sessionTitle(s)
     const closable = s.role !== 'service'
-    async function close() {
-      setBusy(true)
-      setError('')
-      try {
-        await closeSession(s.id)
-        setConfirm(false)
-      } catch (e) {
-        setConfirm(false)
-        setError(e instanceof Error ? e.message : 'error')
-      } finally {
-        setBusy(false)
-      }
-    }
     return (
       <li>
         <div className="flex items-center">
@@ -64,30 +45,9 @@ export default function SessionRowView({ row, project, active, disabled, detaile
               {detailed && <span className="block text-muted-foreground">{s.contextPct > 0 ? `${s.contextPct}% · ` : ''}{since(toMs(s.updatedAt))}</span>}
             </span>
           </button>
-          {closable && (
-            <DropdownMenu modal={false}>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" aria-label="Session actions" className="size-11 shrink-0 text-muted-foreground"><MoreHorizontal /></Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem className="min-h-11" onSelect={() => setConfirm(true)}>Close session</DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
+          {closable && <SessionCloseMenu id={s.id} onError={setError} />}
         </div>
         {error && <p role="alert" className="px-3 pb-1 text-xs text-danger">{error}</p>}
-        <Dialog open={confirm} onOpenChange={setConfirm}>
-          <DialogContent showCloseButton={false}>
-            <DialogHeader>
-              <DialogTitle>Close session</DialogTitle>
-              <DialogDescription>Close this session? Claude stops in its terminal.</DialogDescription>
-            </DialogHeader>
-            <DialogFooter>
-              <Button variant="outline" className="min-h-11" onClick={() => setConfirm(false)}>Cancel</Button>
-              <Button className="min-h-11" disabled={busy} onClick={close}>Close</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
       </li>
     )
   }

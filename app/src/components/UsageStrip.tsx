@@ -2,7 +2,7 @@ import { Fragment } from 'react'
 import type { AccountUsage, UsageWindow } from '../proto.gen'
 import { USAGE_STALE_MS as STALE_MS, resetIn, toneClass, usageTone } from '../lib/meters'
 
-function Win({ label, w, now }: { label: string; w: UsageWindow; now: number }) {
+export function Win({ label, w, now }: { label: string; w: UsageWindow; now: number }) {
   // a window Claude Code did not report has no reset time: show nothing rather than "0%"
   if (!w.resetsAt) return null
   const tone = usageTone(w.pct)

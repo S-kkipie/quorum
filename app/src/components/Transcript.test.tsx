@@ -336,6 +336,12 @@ describe('Transcript: compacts and earlier conversation', () => {
     // what was folded is in memory: nothing is fetched
     expect(onLoadMore).not.toHaveBeenCalled()
   })
+  it('a focus on a row folded by a compact unfolds it', () => {
+    const { rerender } = render(<Transcript events={convo} />)
+    expect(screen.queryByText('first question')).toBeNull()
+    rerender(<Transcript events={convo} focus={{ key: 'user:1', n: 1 }} />)
+    expect(screen.getByText('first question')).toBeTruthy()
+  })
   it('a newer compact folds the conversation again', () => {
     const { rerender } = render(<Transcript events={convo} />)
     fireEvent.click(screen.getByRole('button', { name: 'Earlier conversation (2 messages)' }))

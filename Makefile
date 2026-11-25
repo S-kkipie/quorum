@@ -4,7 +4,7 @@ export CGO_ENABLED
 TYGO := go run github.com/gzuidhof/tygo@v0.2.20
 PLATFORMS := linux/amd64 linux/arm64 windows/amd64 darwin/arm64
 
-.PHONY: proto test typecheck app build cross quorum quorum-service apk
+.PHONY: proto test typecheck app build cross quorum quorum-service apk desktop
 
 proto:
 	cd internal/proto && $(TYGO) generate --config tygo.yaml
@@ -53,7 +53,7 @@ QUORUM_ANDROID_SECRETS ?= $(HOME)/.config/quorum/android
 ANDROID_HOME ?= $(HOME)/Android/sdk
 # Capacitor 8 compiles with Java 21 (sourceCompatibility and jvmToolchain 21).
 APK_JAVA_HOME ?= $(or $(wildcard $(HOME)/.jdk21),$(JAVA_HOME))
-APK_SECRETS := release.keystore keystore.properties google-services.json
+APK_SECRETS := release.keystore keystore.properties
 
 apk:
 	@for f in $(APK_SECRETS); do \
@@ -65,10 +65,16 @@ apk:
 	@if [ -z "$(APK_JAVA_HOME)" ]; then echo "make apk: set JAVA_HOME to a JDK 21. See docs/android.md." >&2; exit 1; fi
 	cd android-app && npm ci --no-audit --no-fund && npx cap sync android
 	@# google-services.json is copied in for the build only and removed afterwards, even when the build fails.
-	@cp "$(QUORUM_ANDROID_SECRETS)/google-services.json" android-app/android/app/google-services.json; \
+	@if [ -f "$(QUORUM_ANDROID_SECRETS)/google-services.json" ]; then cp "$(QUORUM_ANDROID_SECRETS)/google-services.json" android-app/android/app/google-services.json; \
+	else echo "make apk: no google-services.json: building without push notifications (see docs/android.md)."; fi; \
 	cd android-app/android && JAVA_HOME="$(APK_JAVA_HOME)" ANDROID_HOME="$(ANDROID_HOME)" ./gradlew --no-daemon -q assembleRelease \
 		-PquorumKeystore="$(QUORUM_ANDROID_SECRETS)/release.keystore" \
 		-PquorumKeystoreProperties="$(QUORUM_ANDROID_SECRETS)/keystore.properties"; \
 	status=$$?; rm -f app/google-services.json; exit $$status
 	cp android-app/android/app/build/outputs/apk/release/app-release.apk android-app/quorum.apk
 	@echo "built android-app/quorum.apk"
+
+# Builds the Windows desktop app (a WebView2 window on the hub's web app) into bin/Quorum.exe.
+desktop:
+	mkdir -p bin
+	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-H windowsgui -s -w" -o bin/Quorum.exe ./cmd/quorum-desktop

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { launch } from '../lib/api'
 import { loadPrefs, savePrefs } from '../lib/launch'
+import { projectCheckouts } from '../lib/projects'
 import type { AppState } from '../lib/store'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogFooter, DialogTitle } from '@/components/ui/dialog'
@@ -18,22 +19,33 @@ export function BypassToggle({ checked, root, onChange }: { checked: boolean; ro
   )
 }
 
-export default function LaunchDialog({ state, onClose, onLaunched, projectId = '' }: {
+export default function LaunchDialog({ state, onClose, onLaunched, projectId = '', workspaceId = '' }: {
   state: AppState
   onClose: () => void
   /** /api/launch was called: the app switches to "Starting…". */
   onLaunched: (p: { reqId: string; machine: string; label: string }) => void
   projectId?: string
+  /** Scoped to a job (the sidebar's +): folder suggestions come from its projects. */
+  workspaceId?: string
 }) {
   const online = Object.values(state.machines).filter((m) => m.online).map((m) => m.name).sort()
-  const prefs = loadPrefs(projectId || '_')
+  const prefsKey = projectId || (workspaceId ? 'ws:' + workspaceId : '_')
+  const prefs = loadPrefs(prefsKey)
   const [machine, setMachine] = useState(prefs.machine && online.includes(prefs.machine) ? prefs.machine : online[0] ?? '')
   const [dir, setDir] = useState('')
   const [bypass, setBypass] = useState(prefs.bypass)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
-  const dirs = [...new Set(Object.values(state.sessions).filter((s) => s.machine === machine && s.role !== 'service').map((s) => s.cwd))].sort()
+  // folder suggestions: the checkouts of the projects in scope, then the folders this machine ran sessions in
+  // (for a job, only its projects' sessions; for a project, all of them, since "other folder" picks one outside it)
+  const scoped = projectId ? [projectId] : workspaceId ? Object.values(state.projects).filter((p) => p.workspaceId === workspaceId).map((p) => p.id) : null
+  const inScope = (pid: string) => !workspaceId || !!scoped?.includes(pid)
+  const dirs = [...new Set([
+    ...(scoped ?? []).flatMap((pid) => projectCheckouts(state, pid)).filter((c) => c.machine === machine).map((c) => c.root),
+    ...Object.values(state.sessions).filter((s) => s.machine === machine && s.role !== 'service' && inScope(s.projectId)).map((s) => s.cwd),
+  ])].filter(Boolean).sort()
+  const scopeName = projectId ? state.projects[projectId]?.name : workspaceId ? state.workspaces[workspaceId]?.name : ''
   const root = !!state.machines[machine]?.caps?.root
 
   async function go() {
@@ -42,7 +54,7 @@ export default function LaunchDialog({ state, onClose, onLaunched, projectId = '
     try {
       const useBypass = bypass && !root
       const r = await launch({ machine, dir: dir.trim(), permissionMode: useBypass ? 'bypass' : 'default', projectId: projectId || undefined })
-      savePrefs(projectId || '_', { machine, bypass })
+      savePrefs(prefsKey, { machine, bypass })
       onLaunched({ reqId: r.reqId, machine, label: dir.trim() })
     } catch (e) {
       setError(e instanceof Error ? e.message : 'error')
@@ -58,7 +70,7 @@ export default function LaunchDialog({ state, onClose, onLaunched, projectId = '
         onInteractOutside={(e) => { if (dir.trim()) e.preventDefault() }}
         onEscapeKeyDown={(e) => { if (dir.trim()) e.preventDefault() }}
         className="top-auto bottom-0 left-0 max-w-none translate-x-0 translate-y-0 gap-0 rounded-b-none rounded-t-xl p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:top-[50%] sm:bottom-auto sm:left-[50%] sm:max-w-md sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-lg sm:pb-4 max-sm:motion-safe:starting:translate-y-full max-sm:motion-safe:starting:scale-100 max-sm:data-[state=closed]:slide-out-to-bottom max-sm:data-[state=closed]:zoom-out-100">
-        <DialogTitle className="text-base font-semibold">New session</DialogTitle>
+        <DialogTitle className="truncate text-base font-semibold">{scopeName ? `New session · ${scopeName}` : 'New session'}</DialogTitle>
         {online.length === 0 ? (
           <p className="mt-3 text-sm text-muted-foreground">No machines online.</p>
         ) : (

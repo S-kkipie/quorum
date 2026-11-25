@@ -267,6 +267,9 @@ function hideDeviceCommands(flat: Item[], device: Set<Item>): void {
   for (let i = flat.length - 1; i >= 0; i--) if (drop.has(flat[i])) flat.splice(i, 1)
 }
 
+/** The transcript row key of an item (the inspector scrolls to a row by it). */
+export const itemKey = (r: Item): string => `${r.t}:${r.t === 'command' ? r.id : r.seq}`
+
 /**
  * Turns session events (seq order) into timeline items: tool_start/tool_end paired by id,
  * consecutive Reads of the same agent merged, one artifact card per viewable file (the last one wins).
