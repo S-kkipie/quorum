@@ -56,6 +56,8 @@ type Syncer struct {
 	gen     map[string]int  // rises with Invalidate: the project's connector changed
 	again   map[string]bool // a SyncNow arrived while another sync was running
 	conns   map[string]cachedConn
+	// emptyWarned: a full-list source answered an empty list while tickets are stored (logged once)
+	emptyWarned map[string]bool
 }
 
 // cachedConn is a Reusable connector of a project and the configuration it was built from.
@@ -67,7 +69,7 @@ type cachedConn struct {
 func NewSyncer(st Store, pub func(proto.Envelope)) *Syncer {
 	return &Syncer{st: st, pub: pub, newConn: New, now: time.Now, tick: 30 * time.Second,
 		base: context.Background(), running: map[string]bool{}, gen: map[string]int{}, again: map[string]bool{},
-		conns: map[string]cachedConn{}}
+		conns: map[string]cachedConn{}, emptyWarned: map[string]bool{}}
 }
 
 func clampInterval(m int) time.Duration {
@@ -346,7 +348,26 @@ func (s *Syncer) fetch(ctx context.Context, p proto.Project, g int) (res fetchRe
 	}
 	before, _ := s.st.ListTickets(p.ID)
 	now := s.now().UnixMilli()
+	full := false
 	if fl, ok := conn.(FullLister); ok && fl.FullList() {
+		full = true
+		if len(out) == 0 && len(before) > 0 {
+			// never prune a project down to zero: an empty list is more likely a glitch at the source
+			full = false
+			s.mu.Lock()
+			warn := !s.emptyWarned[p.ID]
+			s.emptyWarned[p.ID] = true
+			s.mu.Unlock()
+			if warn {
+				log.Printf("sync: project %s: the source listed no tickets; keeping the %d stored ones", p.ID, len(before))
+			}
+		} else if len(out) > 0 {
+			s.mu.Lock()
+			delete(s.emptyWarned, p.ID)
+			s.mu.Unlock()
+		}
+	}
+	if full {
 		res.changes, res.removed, err = s.st.ReplaceAllTickets(p.ID, out, now)
 	} else {
 		res.changes, err = s.st.ReplaceTickets(p.ID, out, now)
