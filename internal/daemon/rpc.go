@@ -24,6 +24,8 @@ type Host struct {
 	WS         *launch.Workspaces
 	Terms      *Terminals
 	TerminalOn bool
+	// HubURL is the hub's base URL (meeting jobs carry URLs relative to it).
+	HubURL string
 
 	// active terminal watchers per pane (see terminal.go)
 	wmu     sync.Mutex
@@ -41,6 +43,7 @@ func NewHost(cfg Config) *Host {
 		WS:         &launch.Workspaces{},
 		Terms:      &Terminals{},
 		TerminalOn: cfg.TerminalOn(),
+		HubURL:     cfg.Hub,
 	}
 	dir, err := ConfigDir()
 	if err != nil {
@@ -60,7 +63,8 @@ func (h *Host) herdrUp(ctx context.Context) bool {
 // Caps computes the machine's current capabilities.
 func (h *Host) Caps(ctx context.Context) proto.MachineCaps {
 	up := h.herdrUp(ctx)
-	return proto.MachineCaps{Herdr: up, Terminal: up && h.TerminalOn, Root: geteuid() == 0}
+	mw := meetingWorkerState()
+	return proto.MachineCaps{Herdr: up, Terminal: up && h.TerminalOn, Root: geteuid() == 0, Transcribe: mw == "ready", MeetingWorker: mw}
 }
 
 // launch opens the session in herdr if it answers; the fallback (launch.Run) is only used

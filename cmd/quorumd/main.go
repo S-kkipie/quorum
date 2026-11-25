@@ -80,8 +80,28 @@ func main() {
 		if err := daemon.ReloadRunning(cfg); err != nil {
 			fmt.Fprintln(os.Stderr, "warning: the daemon did not reload; it will link on next start:", err)
 		}
+	case "meetings":
+		sub := ""
+		if len(os.Args) > 2 {
+			sub = os.Args[2]
+		}
+		switch sub {
+		case "setup":
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			err := daemon.MeetingsSetup(ctx, os.Stdout)
+			stop()
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "error:", err)
+				os.Exit(1)
+			}
+		case "status":
+			daemon.MeetingsStatus(os.Stdout)
+		default:
+			fmt.Fprintln(os.Stderr, "usage: quorumd meetings [setup|status]")
+			os.Exit(2)
+		}
 	default:
-		fmt.Fprintln(os.Stderr, "usage: quorumd [serve|ensure --json|attach --session <id>|hold|link <hubURL> <code>]")
+		fmt.Fprintln(os.Stderr, "usage: quorumd [serve|ensure --json|attach --session <id>|hold|link <hubURL> <code>|meetings setup|status]")
 		os.Exit(2)
 	}
 }

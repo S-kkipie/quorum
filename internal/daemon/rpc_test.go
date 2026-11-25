@@ -22,6 +22,7 @@ import (
 func TestMain(m *testing.M) {
 	dir, _ := os.MkdirTemp("", "qd")
 	os.Setenv("HERDR_SOCKET_PATH", filepath.Join(dir, "no-herdr.sock"))
+	os.Setenv("QUORUM_MEETINGS_DIR", filepath.Join(dir, "meetings")) // never the machine's real worker
 	code := m.Run()
 	os.RemoveAll(dir)
 	os.Exit(code)

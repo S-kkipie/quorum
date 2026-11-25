@@ -41,6 +41,7 @@ func Serve(ctx context.Context, cfg Config) error {
 		reg.SetTranscriptIndex(loadTranscriptIndex(filepath.Join(dir, "transcripts.json"), maxIndexedTranscripts))
 	}
 	go runUploadSweep(ctx)
+	defer meetingJobs.shutdown() // a meeting worker never outlives the daemon
 	lk := &linker{reg: reg, parent: ctx}
 	lk.start(cfg)
 	reload := func() error {
