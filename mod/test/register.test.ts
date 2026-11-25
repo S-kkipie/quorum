@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import { disabled, quorum } from '../hooks/register'
+import { disabled, isOwnPendingTool, quorum } from '../hooks/register'
 
 // The kit has no processes or network: quorumd does not exist here, so the session ends up
 // "no daemon", but the role is decided earlier and /quorum reports it.
@@ -539,4 +539,33 @@ test('pending tools are registered at session.start and tool.run answers through
   expect(String(r.result)).toBe('Added to Zorvan: "Ask Quillon" (id p1)')
   expect(posts[0]!.body.text).toBe('Ask Quillon')
   expect(typeof posts[0]!.body.clientKey).toBe('string')
+})
+
+// Quorum's own pending tools are allowed without a prompt; everything else goes down the chain.
+test('tool.check allows the three Quorum pending tools without asking', async ($, on) => {
+  const o = on as unknown as (...a: unknown[]) => void
+  mock.env(on as never, { CCAPI_SERVER: '1' })
+  mock.clock(on as never)
+  let chain = 0
+  o('tool.check', async () => { chain++; return { decision: 'ask' } })
+  for (const tool of ['mcp__quorum__pending_add', 'mcp__quorum__pending_list', 'mcp__quorum__pending_done']) {
+    const r = await ($ as never as { tool: { check(x: unknown): Promise<{ decision: string }> } }).tool.check({ tool, input: {} })
+    expect(r.decision).toBe('allow')
+  }
+  expect(chain).toBe(0)
+})
+
+test('tool.check leaves other mcp__quorum__ names and normal tools on the existing path', async ($, on) => {
+  const o = on as unknown as (...a: unknown[]) => void
+  mock.env(on as never, { CCAPI_SERVER: '1' })
+  mock.clock(on as never)
+  let chain = 0
+  o('tool.check', async () => { chain++; return { decision: 'ask' } })
+  for (const tool of ['mcp__quorum__other', 'Bash']) {
+    const r = await ($ as never as { tool: { check(x: unknown): Promise<{ decision: string }> } }).tool.check({ tool, input: {} })
+    expect(r.decision).toBe('ask')
+  }
+  expect(chain).toBe(2)
+  expect(isOwnPendingTool('mcp__quorum__pending_add')).toBe(true)
+  expect(isOwnPendingTool('mcp__quorum__pending_x')).toBe(false)
 })

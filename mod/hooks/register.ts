@@ -57,6 +57,11 @@ export function disabled(v: string | undefined): boolean {
 
 const STATE_TEXT = { connected: 'connected', reconnecting: 'reconnecting', 'no-daemon': 'no daemon' } as const
 
+const OWN_PENDING_TOOLS = new Set(['mcp__quorum__pending_add', 'mcp__quorum__pending_list', 'mcp__quorum__pending_done'])
+export function isOwnPendingTool(tool: unknown): boolean {
+  return typeof tool === 'string' && OWN_PENDING_TOOLS.has(tool)
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
@@ -352,6 +357,8 @@ export const register: Register = on => {
   // with this hook's `$` sustains the wait (an in-flight `$` does not spend the 10 s
   // of its own). On failure, the verdict.
   on('tool.check', async ($, e, next) => {
+    // Quorum's own pending tools only touch the owner's pending list: never ask.
+    if (isOwnPendingTool(e.tool)) return { decision: 'allow', reason: 'Quorum pending list' } as never
     const verdict = await next(e)
     const c = quorum.control
     if (!c) return verdict
