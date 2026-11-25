@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -39,6 +40,9 @@ func TestSanitizeUploadName(t *testing.T) {
 		{long + ".pdf", "", strings.Repeat("a", 96) + ".pdf"},
 		{long, "", strings.Repeat("a", 100)},
 		{"emoji😀.png", "", "emoji_.png"},
+		{"a..pdf", "", "a.pdf"},
+		{"report. .pdf", "", "report._.pdf"},
+		{"x" + strings.Repeat(".", 120), "", "x"},
 	}
 	for _, c := range cases {
 		got := SanitizeUploadName(c.name, c.mime)
@@ -56,14 +60,7 @@ func uploadFx(t *testing.T) string {
 	uploadsRoot = func() (string, error) { return root, nil }
 	t.Cleanup(func() {
 		uploadsRoot = old
-		uploads.mu.Lock()
-		for tok, u := range uploads.pending {
-			u.mu.Lock()
-			u.drop()
-			u.mu.Unlock()
-			delete(uploads.pending, tok)
-		}
-		uploads.mu.Unlock()
+		uploads.reapIdle(time.Now().Add(100 * 365 * 24 * time.Hour)) // drops every upload left
 	})
 	return root
 }
@@ -231,8 +228,10 @@ func TestSweepUploads(t *testing.T) {
 	newF := mk("2026-11-20/abcdef-new.png", 29*24*time.Hour)
 	mixedOld := mk("2026-11-21/aaaaaa-a.png", 40*24*time.Hour)
 	mixedNew := mk("2026-11-21/bbbbbb-b.png", time.Hour)
-	stalePart := mk("2026-11-21/cccccc-c.png.part", 2*24*time.Hour)
-	freshPart := mk("2026-11-21/dddddd-d.png.part", time.Minute)
+	stalePart := mk("2026-11-21/.0123456789abcdef.quorum-part", 2*24*time.Hour)
+	freshPart := mk("2026-11-21/.fedcba9876543210.quorum-part", time.Minute)
+	// an upload that happens to be named like a partial file keeps its 30 days
+	realPart := mk("2026-11-21/eeeeee-backup.part", 2*24*time.Hour)
 	if runtime.GOOS != "windows" {
 		// a symlink is never followed: its target survives
 		target := filepath.Join(t.TempDir(), "keep.txt")
@@ -247,7 +246,7 @@ func TestSweepUploads(t *testing.T) {
 		_, err := os.Lstat(p)
 		require.True(t, os.IsNotExist(err), p)
 	}
-	for _, p := range []string{newF, mixedNew, freshPart} {
+	for _, p := range []string{newF, mixedNew, freshPart, realPart} {
 		_, err := os.Lstat(p)
 		require.NoError(t, err, p)
 	}
@@ -263,4 +262,141 @@ func requireNoFiles(t *testing.T, root string) {
 		}
 		return nil
 	})
+}
+
+// I1: an over-size chunk (drops under u.mu, then removes the token) racing begins (reap under
+// s.mu) must never deadlock.
+func TestUploadChunkAndBeginDoNotDeadlock(t *testing.T) {
+	uploadFx(t)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 200; i++ {
+			tok := beginUp(t, "a.bin", "", 1)
+			var wg sync.WaitGroup
+			wg.Add(2)
+			go func() {
+				defer wg.Done()
+				_, _ = callUp(t, "upload_chunk", map[string]any{"token": tok, "offset": 0, "data": base64.StdEncoding.EncodeToString([]byte("abc"))})
+			}()
+			go func() {
+				defer wg.Done()
+				if tk, err := callUp(t, "upload_begin", map[string]any{"name": "b.bin", "size": 1}); err == nil {
+					_, _ = callUp(t, "upload_abort", map[string]any{"token": tk["token"]})
+				}
+				uploads.reapIdle(time.Now())
+			}()
+			wg.Wait()
+		}
+	}()
+	select {
+	case <-done:
+	case <-time.After(20 * time.Second):
+		t.Fatal("deadlock between upload_chunk and upload_begin")
+	}
+}
+
+func TestUploadQuotaAndFreeSpace(t *testing.T) {
+	uploadFx(t)
+	oldUsed, oldFree := uploadsUsed, diskFree
+	t.Cleanup(func() { uploadsUsed, diskFree = oldUsed, oldFree })
+	used := uploadQuota - 10
+	free := uint64(100 << 30)
+	uploadsUsed = func(string) int64 { return used }
+	diskFree = func(string) (uint64, error) { return free, nil }
+
+	_, err := callUp(t, "upload_begin", map[string]any{"name": "a.bin", "size": 11})
+	require.ErrorIs(t, err, errUploadFull)
+	require.Contains(t, err.Error(), "5 GB")
+	tok := beginUp(t, "a.bin", "", 6)
+	// the size declared by an upload in progress counts too
+	_, err = callUp(t, "upload_begin", map[string]any{"name": "b.bin", "size": 5})
+	require.ErrorIs(t, err, errUploadFull)
+	_, err = callUp(t, "upload_begin", map[string]any{"name": "b.bin", "size": 4})
+	require.NoError(t, err)
+	_, _ = callUp(t, "upload_abort", map[string]any{"token": tok})
+	// an unknown size reserves the largest file
+	used = uploadQuota - uploadMaxSize
+	_, err = callUp(t, "upload_begin", map[string]any{"name": "c.bin"})
+	require.ErrorIs(t, err, errUploadFull)
+
+	used = 0
+	free = uploadFreeMin + 100
+	_, err = callUp(t, "upload_begin", map[string]any{"name": "d.bin", "size": 101})
+	require.ErrorIs(t, err, errUploadDisk)
+	require.Contains(t, err.Error(), "1 GB")
+	_, err = callUp(t, "upload_begin", map[string]any{"name": "d.bin", "size": 50})
+	require.NoError(t, err)
+	free = uploadFreeMin - 1
+	_, err = callUp(t, "upload_begin", map[string]any{"name": "e.bin", "size": 0})
+	require.ErrorIs(t, err, errUploadDisk)
+}
+
+func TestUploadsUsedCountsSavedFilesOnly(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "2026-11-25"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "2026-11-25", "abcdef-a.bin"), make([]byte, 7), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "2026-11-25", ".0011223344556677.quorum-part"), make([]byte, 5), 0o600))
+	require.EqualValues(t, 7, uploadsUsed(root))
+	free, err := freeSpace(root)
+	require.NoError(t, err)
+	require.Greater(t, free, uint64(0))
+}
+
+func TestUploadRefusesRootWithSpace(t *testing.T) {
+	uploadFx(t)
+	root := filepath.Join(t.TempDir(), "my files", "uploads")
+	uploadsRoot = func() (string, error) { return root, nil }
+	_, err := callUp(t, "upload_begin", map[string]any{"name": "a.txt", "size": 1})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "has a space in its path")
+	_, err = os.Lstat(root)
+	require.True(t, os.IsNotExist(err), "nothing is created")
+}
+
+func TestUploadsRootIsUserCache(t *testing.T) {
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		t.Skip("no user cache dir")
+	}
+	root, err := uploadsRoot()
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(cache, "quorum", "uploads"), root)
+}
+
+func TestUploadPartNameAndNoReplace(t *testing.T) {
+	root := uploadFx(t)
+	out, err := callUp(t, "upload_begin", map[string]any{"name": "a.txt", "size": 3})
+	require.NoError(t, err)
+	tok, final := out["token"].(string), out["path"].(string)
+	entries, _ := os.ReadDir(filepath.Join(root, time.Now().Format("2006-01-02")))
+	require.Len(t, entries, 1)
+	require.Regexp(t, `^\.[0-9a-f]{16}\.quorum-part$`, entries[0].Name())
+	_, err = callUp(t, "upload_chunk", map[string]any{"token": tok, "offset": 0, "data": base64.StdEncoding.EncodeToString([]byte("new"))})
+	require.NoError(t, err)
+	// a file that appeared at the final name meanwhile is never replaced
+	require.NoError(t, os.WriteFile(final, []byte("old"), 0o600))
+	_, err = callUp(t, "upload_end", map[string]any{"token": tok})
+	require.Error(t, err)
+	got, _ := os.ReadFile(final)
+	require.Equal(t, "old", string(got))
+	entries, _ = os.ReadDir(filepath.Dir(final))
+	require.Len(t, entries, 1, "the partial file is gone")
+}
+
+func TestUploadRecreatesDayFolderRemovedBySweep(t *testing.T) {
+	uploadFx(t)
+	old := createPartHook
+	t.Cleanup(func() { createPartHook = old })
+	n := 0
+	createPartHook = func(dir string) {
+		if n++; n == 1 {
+			require.NoError(t, os.Remove(dir)) // the sweep removed the empty folder just now
+		}
+	}
+	out, err := callUp(t, "upload_begin", map[string]any{"name": "a.txt", "size": 1})
+	require.NoError(t, err)
+	require.Equal(t, 2, n)
+	_, err = os.Stat(filepath.Dir(out["path"].(string)))
+	require.NoError(t, err)
 }

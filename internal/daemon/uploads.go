@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -21,7 +22,8 @@ import (
 )
 
 // Files the owner attaches to a message from the app are uploaded once to the session's machine
-// and saved as <config dir>/uploads/<yyyy-mm-dd>/<6 hex>-<sanitized name>; the prompt then
+// and saved as <user cache dir>/quorum/uploads/<yyyy-mm-dd>/<6 hex>-<sanitized name> (Linux
+// ~/.cache/quorum/uploads, Windows %LocalAppData%\quorum\uploads); the prompt then
 // mentions them as @<absolute path>. The hub streams each file as upload_begin, upload_chunk
 // (in order, base64, at most uploadChunkMax bytes) and upload_end; upload_abort drops it.
 
@@ -35,7 +37,12 @@ const (
 	uploadIdle = 5 * time.Minute
 	// uploadPendingMax caps the uploads in progress at once.
 	uploadPendingMax = 16
-	uploadPartSuffix = ".part"
+	// a file being written is .<hex>.quorum-part: never a name a sanitized upload can have
+	uploadPartSuffix = ".quorum-part"
+	// uploadQuota caps the uploads folder (saved files plus the declared sizes in progress).
+	uploadQuota int64 = 5 << 30
+	// uploadFreeMin is the free disk space an upload must leave.
+	uploadFreeMin uint64 = 1 << 30
 )
 
 var (
@@ -45,15 +52,36 @@ var (
 	errUploadSize   = errors.New("size mismatch")
 	errUploadBusy   = errors.New("too many uploads in progress")
 	errUploadDir    = errors.New("the uploads folder is not usable")
+	errUploadFull   = errors.New("the uploads folder on the machine is full (5 GB); uploads older than 30 days are deleted")
+	errUploadDisk   = errors.New("not enough free disk space on the machine (1 GB must stay free)")
 )
 
 // uploadsRoot is the folder uploads live in (a variable for tests).
 var uploadsRoot = func() (string, error) {
-	dir, err := ConfigDir()
+	dir, err := os.UserCacheDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "uploads"), nil
+	return filepath.Join(dir, "quorum", "uploads"), nil
+}
+
+// diskFree reports the bytes available to this user on the disk holding path (a variable for tests).
+var diskFree = freeSpace
+
+// uploadsUsed adds up the sizes of the regular files under root, symlinks not followed (a variable for tests).
+var uploadsUsed = func(root string) int64 {
+	var n int64
+	_ = filepath.WalkDir(root, func(_ string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		// a partial file in progress is counted by its declared size instead
+		if info, err := d.Info(); err == nil && info.Mode().IsRegular() && !isPart(d.Name()) {
+			n += info.Size()
+		}
+		return nil
+	})
+	return n
 }
 
 // uploadNow is the clock of the uploads (a variable for tests).
@@ -104,6 +132,10 @@ func SanitizeUploadName(name, mime string) string {
 	if len(stem)+len(ext) > uploadNameMax {
 		stem = stem[:uploadNameMax-len(ext)]
 	}
+	// no trailing dots (Windows drops them, and "a..pdf" reads badly)
+	if stem = strings.TrimRight(stem, ". "); stem == "" {
+		stem = "file"
+	}
 	return stem + ext
 }
 
@@ -113,9 +145,9 @@ type pendingUpload struct {
 	part   string // the file being written
 	final  string // where it goes on upload_end
 	name   string
-	size   int64 // declared size, -1 when unknown
+	size   int64 // declared size, -1 when unknown (set once, read without mu)
 	off    int64
-	last   time.Time
+	last   atomic.Int64 // unix nanos of the last chunk (read without mu)
 	closed bool
 }
 
@@ -129,6 +161,15 @@ func (u *pendingUpload) drop() {
 	os.Remove(u.part)
 }
 
+// lockedDrop takes u.mu and drops the file.
+func (u *pendingUpload) lockedDrop() {
+	u.mu.Lock()
+	u.drop()
+	u.mu.Unlock()
+}
+
+// uploadSet holds the uploads in progress. Lock order: s.mu is never held while taking a u.mu,
+// and a u.mu is never held while taking s.mu.
 type uploadSet struct {
 	mu      sync.Mutex
 	pending map[string]*pendingUpload
@@ -161,11 +202,18 @@ func realDir(dir string) error {
 	return nil
 }
 
-// uploadDayDir returns (creating it) today's uploads folder.
-func uploadDayDir(now time.Time) (string, error) {
+// hasSpace reports whether p holds whitespace: a mention @<path> ends at the first one.
+func hasSpace(p string) bool { return strings.IndexFunc(p, unicode.IsSpace) >= 0 }
+
+// uploadRootDir returns the uploads root (created, and checked to be a real folder whose path a
+// mention can carry).
+func uploadRootDir() (string, error) {
 	root, err := uploadsRoot()
 	if err != nil {
 		return "", errUploadDir
+	}
+	if hasSpace(root) {
+		return "", fmt.Errorf("the uploads folder %s has a space in its path, which a Claude Code mention cannot hold", root)
 	}
 	if err := os.MkdirAll(filepath.Dir(root), 0o700); err != nil {
 		return "", errUploadDir
@@ -173,6 +221,11 @@ func uploadDayDir(now time.Time) (string, error) {
 	if err := realDir(root); err != nil {
 		return "", errUploadDir
 	}
+	return root, nil
+}
+
+// uploadDayDir returns (creating it) the day's folder under root.
+func uploadDayDir(root string, now time.Time) (string, error) {
 	day := filepath.Join(root, now.Format("2006-01-02"))
 	if err := realDir(day); err != nil {
 		return "", errUploadDir
@@ -180,15 +233,20 @@ func uploadDayDir(now time.Time) (string, error) {
 	return day, nil
 }
 
-// reapIdle drops the uploads that got no chunk for uploadIdle (the caller holds s.mu).
+// reapIdle drops the uploads that got no chunk for uploadIdle: the tokens are taken out under
+// s.mu, then each file is dropped under its own lock.
 func (s *uploadSet) reapIdle(now time.Time) {
+	var idle []*pendingUpload
+	s.mu.Lock()
 	for tok, u := range s.pending {
-		u.mu.Lock()
-		if now.Sub(u.last) > uploadIdle {
-			u.drop()
+		if now.Sub(time.Unix(0, u.last.Load())) > uploadIdle {
+			idle = append(idle, u)
 			delete(s.pending, tok)
 		}
-		u.mu.Unlock()
+	}
+	s.mu.Unlock()
+	for _, u := range idle {
+		u.lockedDrop()
 	}
 }
 
@@ -204,6 +262,54 @@ func (s *uploadSet) remove(tok string) *pendingUpload {
 	u := s.pending[tok]
 	delete(s.pending, tok)
 	return u
+}
+
+// abort takes the upload out and drops its file.
+func (s *uploadSet) abort(tok string) {
+	if u := s.remove(tok); u != nil {
+		u.lockedDrop()
+	}
+}
+
+func randHex(n int) (string, error) {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+// createPartHook runs before each partial file is created (tests).
+var createPartHook = func(dir string) {}
+
+// createPart picks a free final name in dir and creates its partial file.
+func createPart(dir, name string) (part, final string, f *os.File, err error) {
+	createPartHook(dir)
+	for try := 0; try < 8; try++ {
+		pre, err := randHex(3)
+		if err != nil {
+			return "", "", nil, err
+		}
+		final = filepath.Join(dir, pre+"-"+name)
+		if _, err := os.Lstat(final); err == nil {
+			continue
+		}
+		ph, err := randHex(8)
+		if err != nil {
+			return "", "", nil, err
+		}
+		part = filepath.Join(dir, "."+ph+uploadPartSuffix)
+		// O_EXCL never follows a symlink and never reuses a file
+		f, err = os.OpenFile(part, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if errors.Is(err, os.ErrExist) {
+			continue
+		}
+		if err != nil {
+			return "", "", nil, err
+		}
+		return part, final, f, nil
+	}
+	return "", "", nil, os.ErrExist
 }
 
 func rpcUploadBegin(_ context.Context, _ *Host, params json.RawMessage) (any, error) {
@@ -223,47 +329,59 @@ func rpcUploadBegin(_ context.Context, _ *Host, params json.RawMessage) (any, er
 		return nil, errUploadBig
 	}
 	now := uploadNow()
-	uploads.mu.Lock()
-	defer uploads.mu.Unlock()
 	uploads.reapIdle(now)
-	if len(uploads.pending) >= uploadPendingMax {
-		return nil, errUploadBusy
-	}
-	dir, err := uploadDayDir(now)
+	root, err := uploadRootDir()
 	if err != nil {
 		return nil, err
 	}
+	// what this upload may take: its declared size, else the most a file may be
+	need := size
+	if need < 0 {
+		need = uploadMaxSize
+	}
+	uploads.mu.Lock()
+	defer uploads.mu.Unlock()
+	if len(uploads.pending) >= uploadPendingMax {
+		return nil, errUploadBusy
+	}
+	var inFlight int64
+	for _, u := range uploads.pending {
+		if u.size >= 0 {
+			inFlight += u.size
+		} else {
+			inFlight += uploadMaxSize
+		}
+	}
+	if uploadsUsed(root)+inFlight+need > uploadQuota {
+		return nil, errUploadFull
+	}
+	if free, err := diskFree(root); err == nil && (free < uploadFreeMin || free-uploadFreeMin < uint64(inFlight+need)) {
+		return nil, errUploadDisk
+	}
 	name := SanitizeUploadName(p.Name, p.Mime)
-	var u *pendingUpload
-	for try := 0; try < 8 && u == nil; try++ {
-		var b [3]byte
-		if _, err := rand.Read(b[:]); err != nil {
+	var part, final string
+	var f *os.File
+	// the daily sweep may remove an empty day folder between creating it and the file: once more
+	for try := 0; ; try++ {
+		dir, err := uploadDayDir(root, now)
+		if err != nil {
 			return nil, err
 		}
-		final := filepath.Join(dir, hex.EncodeToString(b[:])+"-"+name)
-		if _, err := os.Lstat(final); err == nil {
-			continue
+		part, final, f, err = createPart(dir, name)
+		if err == nil {
+			break
 		}
-		part := final + uploadPartSuffix
-		// O_EXCL never follows a symlink and never reuses a file
-		f, err := os.OpenFile(part, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-		if errors.Is(err, os.ErrExist) {
-			continue
+		if !errors.Is(err, os.ErrNotExist) || try > 0 {
+			return nil, errors.New("could not create the file")
 		}
-		if err != nil {
-			return nil, fmt.Errorf("could not create the file")
-		}
-		u = &pendingUpload{f: f, part: part, final: final, name: filepath.Base(final), size: size, last: now}
 	}
-	if u == nil {
-		return nil, fmt.Errorf("could not create the file")
-	}
-	var t [16]byte
-	if _, err := rand.Read(t[:]); err != nil {
-		u.drop()
+	u := &pendingUpload{f: f, part: part, final: final, name: filepath.Base(final), size: size}
+	u.last.Store(now.UnixNano())
+	tok, err := randHex(16)
+	if err != nil {
+		u.lockedDrop()
 		return nil, err
 	}
-	tok := hex.EncodeToString(t[:])
 	uploads.pending[tok] = u
 	return map[string]any{"token": tok, "path": u.final, "name": u.name}, nil
 }
@@ -290,36 +408,58 @@ func rpcUploadChunk(_ context.Context, _ *Host, params json.RawMessage) (any, er
 		uploads.abort(p.Token)
 		return nil, errors.New("invalid chunk")
 	}
+	size, err := u.write(p.Offset, data)
+	if errors.Is(err, errUploadBig) || errors.Is(err, errUploadWrite) {
+		// the file is already dropped; the token goes once u.mu is released (lock order)
+		uploads.remove(p.Token)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return map[string]int64{"size": size}, nil
+}
+
+var errUploadWrite = errors.New("could not write the file")
+
+// write appends data at off under u.mu; on a size or disk error the file is dropped.
+func (u *pendingUpload) write(off int64, data []byte) (int64, error) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	if u.closed {
-		return nil, errUploadToken
+		return 0, errUploadToken
 	}
-	if p.Offset != u.off {
-		return nil, errUploadOffset
+	if off != u.off {
+		return 0, errUploadOffset
 	}
 	end := u.off + int64(len(data))
 	if end > uploadMaxSize || (u.size >= 0 && end > u.size) {
 		u.drop()
-		uploads.remove(p.Token)
-		return nil, errUploadBig
+		return 0, errUploadBig
 	}
 	if _, err := u.f.Write(data); err != nil {
 		u.drop()
-		uploads.remove(p.Token)
-		return nil, errors.New("could not write the file")
+		return 0, errUploadWrite
 	}
 	u.off = end
-	u.last = uploadNow()
-	return map[string]int64{"size": u.off}, nil
+	u.last.Store(uploadNow().UnixNano())
+	return u.off, nil
 }
 
-func (s *uploadSet) abort(tok string) {
-	if u := s.remove(tok); u != nil {
-		u.mu.Lock()
-		u.drop()
-		u.mu.Unlock()
+// finalize moves the closed partial file to its final name without ever replacing a file: a
+// hard link fails if the name exists; where links are not supported, a checked rename.
+func finalize(part, final string) error {
+	err := os.Link(part, final)
+	if err == nil {
+		os.Remove(part)
+		return nil
 	}
+	if errors.Is(err, os.ErrExist) {
+		return err
+	}
+	if _, err := os.Lstat(final); err == nil {
+		return os.ErrExist
+	}
+	return os.Rename(part, final)
 }
 
 func rpcUploadEnd(_ context.Context, _ *Host, params json.RawMessage) (any, error) {
@@ -345,13 +485,9 @@ func rpcUploadEnd(_ context.Context, _ *Host, params json.RawMessage) (any, erro
 	u.closed = true
 	if err := u.f.Close(); err != nil {
 		os.Remove(u.part)
-		return nil, errors.New("could not write the file")
+		return nil, errUploadWrite
 	}
-	if _, err := os.Lstat(u.final); err == nil {
-		os.Remove(u.part)
-		return nil, errors.New("could not save the file")
-	}
-	if err := os.Rename(u.part, u.final); err != nil {
+	if err := finalize(u.part, u.final); err != nil {
 		os.Remove(u.part)
 		return nil, errors.New("could not save the file")
 	}
@@ -369,8 +505,14 @@ func rpcUploadAbort(_ context.Context, _ *Host, params json.RawMessage) (any, er
 	return map[string]bool{"ok": true}, nil
 }
 
-// sweepUploads deletes the uploads (and stray partial files) older than uploadKeep and the
-// day folders left empty. Symlinks are never followed nor removed through.
+// isPart: a partial file name (.<hex>.quorum-part).
+func isPart(name string) bool {
+	return strings.HasPrefix(name, ".") && strings.HasSuffix(name, uploadPartSuffix)
+}
+
+// sweepUploads deletes the uploads older than uploadKeep, the partial files older than a day
+// (an upload in progress is never that old) and the day folders left empty. Symlinks are never
+// followed nor removed through.
 func sweepUploads(now time.Time) {
 	root, err := uploadsRoot()
 	if err != nil {
@@ -401,10 +543,7 @@ func sweepUploads(now time.Time) {
 				left++
 				continue
 			}
-			old := info.ModTime().Before(cutoff)
-			if strings.HasSuffix(f.Name(), uploadPartSuffix) && info.ModTime().Before(partCutoff) {
-				old = true
-			}
+			old := info.ModTime().Before(cutoff) || (isPart(f.Name()) && info.ModTime().Before(partCutoff))
 			if old && (info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0) {
 				if os.Remove(filepath.Join(dir, f.Name())) == nil {
 					continue
@@ -418,21 +557,27 @@ func sweepUploads(now time.Time) {
 	}
 }
 
-// runUploadSweep sweeps once at start and then daily until ctx ends.
+// runUploadSweep sweeps once at start and then daily, and drops idle uploads every minute,
+// until ctx ends.
 func runUploadSweep(ctx context.Context) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("quorumd: uploads sweep: %v", r)
 		}
 	}()
-	t := time.NewTicker(24 * time.Hour)
-	defer t.Stop()
+	day := time.NewTicker(24 * time.Hour)
+	defer day.Stop()
+	minute := time.NewTicker(time.Minute)
+	defer minute.Stop()
+	sweepUploads(uploadNow())
 	for {
-		sweepUploads(uploadNow())
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.C:
+		case <-day.C:
+			sweepUploads(uploadNow())
+		case <-minute.C:
+			uploads.reapIdle(uploadNow())
 		}
 	}
 }
