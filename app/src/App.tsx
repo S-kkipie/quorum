@@ -290,7 +290,7 @@ function Main() {
     let off = false
     Promise.all([import('./dev/fixtures'), import('./dev/DataToggle')]).then(([f, t]) => {
       if (off) return
-      setDevApi({ listConversations: f.fixtureConversations(mode), listEvents: f.fixtureEvents(mode), history: f.fixtureHistory(mode), listCommands: f.fixtureCommands(mode), briefing: f.fixtureBriefing(mode), meetings: f.fixtureMeetings(mode) })
+      setDevApi({ listConversations: f.fixtureConversations(mode), listEvents: f.fixtureEvents(mode), history: f.fixtureHistory(mode), listCommands: f.fixtureCommands(mode), briefing: f.fixtureBriefing(mode), meetings: f.fixtureMeetings(mode), pendings: f.fixturePendings(mode) })
       setState(f.fixtureState(mode))
       setConnected(true)
       setDev({ Toggle: t.default })

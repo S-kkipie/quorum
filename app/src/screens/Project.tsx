@@ -15,6 +15,7 @@ import type { AppState } from '../lib/store'
 import type { SessionRow } from '../lib/sessions'
 import type { Checkout, Conversation } from '../proto.gen'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import PendingList from '../components/pendings/PendingList'
 import ProjectMeetings from '../components/meetings/ProjectMeetings'
 
 export default function Project({ state, id, onBack, onOpenTickets, onOpenSession, onEdit, onTickets, onCheckouts, onConversations, checkoutsOpen, onCheckoutsOpenChange, pending = false, onLaunched, onGuard, onTerminal, onOpenMeeting }: {
@@ -116,6 +117,8 @@ export default function Project({ state, id, onBack, onOpenTickets, onOpenSessio
       ) : (
         briefingError && <p className="px-3 pt-2 text-xs text-muted-foreground [overflow-wrap:anywhere]">Briefing unavailable: {briefingError}</p>
       )}
+
+      <PendingList projectId={id} rev={state.briefingRev?.[id] ?? 0} prevSeenAt={b?.prevSeenAt ?? 0} />
 
       <ProjectMeetings state={state} projectId={id} onOpenMeeting={onOpenMeeting} />
 

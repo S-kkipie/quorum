@@ -1,4 +1,5 @@
 import type { MeetingQuery, MeetingSettings } from './meetingsApi'
+import type { DevPendings } from './pendingsApi'
 import type { AccountUsage, Briefing as BriefingGen, Checkout, Conversation, ConnectorConfig, Event, Meeting, PinnedNote, Project, Proposal, SessionCommands, SessionInfo, Ticket, TranscriptPage, WhereLeftOff, Workspace } from '../proto.gen'
 
 export interface Machine {
@@ -125,6 +126,8 @@ export interface DevApi {
   history?: (id: string, cursor: string) => Promise<TranscriptPage>
   briefing?: (projectId: string) => Promise<Briefing>
   /** Dev fixture meetings (list, detail, settings). */
+  /** Dev fixture pending items (an in-memory list). */
+  pendings?: DevPendings
   meetings?: { list: (q: MeetingQuery) => Promise<Meeting[]>; get: (id: string) => Promise<Meeting>; settings: () => Promise<MeetingSettings> }
 }
 let devApi: DevApi | null = null

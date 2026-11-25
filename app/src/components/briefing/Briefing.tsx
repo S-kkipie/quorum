@@ -6,6 +6,7 @@ import NewSince from './NewSince'
 import MyTickets from './MyTickets'
 import Meetings, { meetingCount } from './Meetings'
 import PinnedNotes from './PinnedNotes'
+import Pendings from './Pendings'
 
 const arr = <T,>(x: T[] | null | undefined): T[] => (Array.isArray(x) ? x : [])
 
@@ -16,7 +17,7 @@ export function normalizeBriefing(x: Partial<Data> | null | undefined): Data {
   const m = x.meetings ?? e.meetings
   return {
     whereLeftOff: x.whereLeftOff?.text ? x.whereLeftOff : null,
-    newSince: arr(x.newSince), myTickets: arr(x.myTickets), pinned: arr(x.pinned), sessions: arr(x.sessions),
+    newSince: arr(x.newSince), pendings: arr(x.pendings), myTickets: arr(x.myTickets), pinned: arr(x.pinned), sessions: arr(x.sessions),
     meetings: { decisions: arr(m.decisions), openPoints: arr(m.openPoints), actions: arr(m.actions) },
     seenAt: x.seenAt ?? 0, prevSeenAt: x.prevSeenAt ?? 0,
   }
@@ -86,7 +87,7 @@ export default function Briefing({ b, projectId, hasSource, hasPerson = true, pi
   onOpenSession?: (id: string) => void
   onEditSource?: () => void
 }) {
-  const left = !!b.whereLeftOff || b.newSince.length > 0
+  const left = !!b.whereLeftOff || b.newSince.length > 0 || b.pendings.length > 0
   const right = b.myTickets.length > 0
   const meetings = meetingCount(b.meetings) > 0
   const pinned = b.pinned.length > 0 || pinOpen
@@ -104,6 +105,7 @@ export default function Briefing({ b, projectId, hasSource, hasPerson = true, pi
           {left && (
             <div className="flex min-w-0 flex-col gap-3">
               {b.whereLeftOff && <WhereLeftOff w={b.whereLeftOff} />}
+              {b.pendings.length > 0 && <Pendings items={b.pendings} prevSeenAt={b.prevSeenAt} onChange={(f) => onBriefing((x) => ({ ...x, pendings: f(x.pendings) }))} />}
               {b.newSince.length > 0 && <NewSince items={b.newSince} prevSeenAt={b.prevSeenAt} onOpenSession={onOpenSession} />}
             </div>
           )}

@@ -8,7 +8,7 @@ export const PIN_MAX = 500
 export const BRIEFING_PROMPT_MAX = 1500
 
 export const emptyBriefing = (): Briefing => ({
-  whereLeftOff: null, newSince: [], myTickets: [], meetings: { decisions: [], openPoints: [], actions: [] }, pinned: [], sessions: [], seenAt: 0, prevSeenAt: 0,
+  whereLeftOff: null, newSince: [], pendings: [], myTickets: [], meetings: { decisions: [], openPoints: [], actions: [] }, pinned: [], sessions: [], seenAt: 0, prevSeenAt: 0,
 })
 
 /** The local calendar day of a timestamp, as a sortable number (device time zone). */
@@ -53,7 +53,7 @@ export function latestSession(b: Briefing): SessionInfo | undefined {
 
 /** Whether the briefing has anything to show above the Sessions section. */
 export const hasContent = (b: Briefing) =>
-  !!b.whereLeftOff || b.newSince.length > 0 || b.myTickets.length > 0 || b.pinned.length > 0 ||
+  !!b.whereLeftOff || b.newSince.length > 0 || b.pendings.length > 0 || b.myTickets.length > 0 || b.pinned.length > 0 ||
   b.meetings.decisions.length + b.meetings.openPoints.length + b.meetings.actions.length > 0
 
 const clip = (s: string, n: number) => {
@@ -68,8 +68,8 @@ const isoDay = (ms: number) => {
 /**
  * The first prompt of "Continue where I left off": a compact English text of the briefing, at most
  * BRIEFING_PROMPT_MAX characters. The data is copied as is (long lines are clipped); when it does not fit,
- * the least important lines go first (new since, decisions, open points, pinned notes, actions), and the
- * open tickets last.
+ * the least important lines go first (new since, decisions, open points, pinned notes, actions), then the
+ * pending items, and the open tickets last.
  */
 export function briefingPrompt(b: Briefing, now = Date.now()): string {
   const head = 'Catch me up on this project. Here is its briefing from Quorum' + (b.whereLeftOff ? '; the first section is generated, the rest is stored data.' : ', all of it stored data.') +
@@ -94,6 +94,7 @@ export function briefingPrompt(b: Briefing, now = Date.now()): string {
         ...b.meetings.decisions.map((x) => `- Decision: ${clip(x.text, 160)} (${x.date})`),
       ],
     },
+    { title: 'Pending', lines: b.pendings.map((x) => '- ' + clip(x.text, 160)), drop: 4 },
     { title: 'Pinned notes', lines: b.pinned.map((n) => '- ' + clip(n.text, 200)), drop: 3 },
   ]
   const render = () => [head, ...sections.filter((s) => s.lines.length).map((s) => `## ${s.title}\n${s.lines.join('\n')}`), tail].join('\n\n')

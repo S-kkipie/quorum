@@ -1,7 +1,8 @@
-import type { AccountUsage, BackgroundItem, Meeting, MeetingAction, MeetingItem, MeetingSegment, Ticket, Checkout, Conversation, Event, ModelOption, Project, Proposal, SessionCommand, SessionCommands, SessionInfo, SessionState, TranscriptPage, Workspace } from '../proto.gen'
+import type { AccountUsage, BackgroundItem, Meeting, MeetingAction, MeetingItem, MeetingSegment, Pending, Ticket, Checkout, Conversation, Event, ModelOption, Project, Proposal, SessionCommand, SessionCommands, SessionInfo, SessionState, TranscriptPage, Workspace } from '../proto.gen'
 import { addEvents, initialState, setConversations, setProjectsData, setUsage, type AppState } from '../lib/store'
 import type { Briefing, Machine } from '../lib/api'
 import type { MeetingQuery, MeetingSettings } from '../lib/meetingsApi'
+import type { DevPendings, PendingPatch } from '../lib/pendingsApi'
 
 /** Dev-only fixtures for the Break UI pass: extreme but plausible data, no hub needed. */
 export type DataMode = 'demo' | 'worst' | 'empty' | 'one' | 'huge'
@@ -400,7 +401,65 @@ const bTicket = (id: string, title: string, o: Partial<Ticket> = {}): Ticket => 
   id, projectId: 'p1', externalId: id, title, status: 'todo', rawStatus: 'por_hacer', assignee: 'Ana', url: '', body: '', comments: [], updatedAt: NOW, ...o,
 })
 const item = (text: string, noteTitle = 'Weekly with Ben', date = '2027-01-14'): MeetingItem => ({ text, noteTitle, date })
-const noBriefing = (): Briefing => ({ whereLeftOff: null, newSince: [], myTickets: [], meetings: { decisions: [], openPoints: [], actions: [] }, pinned: [], sessions: [], seenAt: 0, prevSeenAt: 0 })
+const noBriefing = (): Briefing => ({ whereLeftOff: null, newSince: [], pendings: [], myTickets: [], meetings: { decisions: [], openPoints: [], actions: [] }, pinned: [], sessions: [], seenAt: 0, prevSeenAt: 0 })
+
+// --- Pending items (Plan 15): an in-memory list per mode, shared by the briefing and the project list ---
+
+const pend = (id: string, text: string, o: Partial<Pending> = {}): Pending => ({
+  id, projectId: 'p1', text, detail: '', note: '', source: 'manual', sourceRef: '', status: 'open', createdAt: NOW, updatedAt: NOW, doneAt: 0, ...o,
+})
+const pendingStore: Partial<Record<FixtureMode, Pending[]>> = {}
+function pendingsFor(mode: FixtureMode): Pending[] {
+  const made = pendingStore[mode]
+  if (made) return made
+  const t = Date.now()
+  let list: Pending[] = []
+  if (mode === 'one') list = [pend('pd1', 'Ask Ben about the staging certificate', { createdAt: t - 3 * DAY })]
+  else if (mode === 'huge') list = Array.from({ length: 200 }, (_, i) => pend('pd' + i, `Pending item ${i + 1}`, { createdAt: t - (200 - i) * 60 * MIN, source: i % 3 === 0 ? 'agent' : 'manual' }))
+  else if (mode === 'worst') {
+    list = [
+      pend('pw1', longTitle(300, 'Pending'), { detail: longTitle(4000, 'Detail'), createdAt: t - 5 * DAY }),
+      pend('pw2', LONG_PATH, { source: 'agent', createdAt: t - DAY }),
+      pend('pw3', 'Überprüfung der Synchronisierung 日本語', { source: 'meeting', createdAt: t - 4 * DAY, sourceRef: 'mt1' }),
+      pend('pw4', 'x', { createdAt: t - 6 * DAY }),
+      pend('pw5', 'Already done', { status: 'done', note: 'Shipped on Friday', doneAt: t - DAY, createdAt: t - 7 * DAY }),
+      pend('pw6', 'Dropped for now', { status: 'dropped', createdAt: t - 8 * DAY }),
+      ...Array.from({ length: 54 }, (_, i) => pend('pwx' + i, `Pending item ${i + 1}`, { createdAt: t - (54 - i) * 60 * MIN, source: i % 4 === 0 ? 'agent' : 'manual' })),
+    ]
+  } else if (mode !== 'empty') {
+    list = [
+      pend('pd1', 'Ask Ben about the staging certificate', { createdAt: t - 4 * DAY }),
+      pend('pd2', 'Review the export spec', { detail: 'Sections 3 and 4 still need an owner.', source: 'meeting', createdAt: t - 3 * DAY }),
+      pend('pd3', 'Check why the nightly import is slow', { source: 'agent', createdAt: t - 60 * MIN }),
+      pend('pd4', 'Send the invoice', { status: 'done', note: 'Sent', doneAt: t - DAY, createdAt: t - 9 * DAY }),
+    ]
+  }
+  return (pendingStore[mode] = list)
+}
+const openPendings = (mode: FixtureMode) => pendingsFor(mode).filter((p) => p.status === 'open')
+
+/** Dev fixture pending items: list, add, edit and delete, kept in memory for the page's lifetime. */
+export function fixturePendings(mode: FixtureMode): DevPendings {
+  const all = pendingsFor(mode)
+  return {
+    list: async (_projectId, every) => (every ? [...all] : openPendings(mode)),
+    add: async (projectId, b) => {
+      const dup = all.find((p) => p.status === 'open' && p.text === b.text)
+      if (dup) return dup
+      const p = pend('pn' + all.length + '-' + Date.now(), b.text, { projectId, detail: b.detail ?? '', createdAt: Date.now(), updatedAt: Date.now() })
+      all.push(p)
+      return p
+    },
+    patch: async (id, b: PendingPatch) => {
+      const i = all.findIndex((p) => p.id === id)
+      if (i < 0) throw new Error('no such item')
+      const now = Date.now()
+      all[i] = { ...all[i], ...b, updatedAt: now, doneAt: b.status === 'done' ? now : b.status === 'open' ? 0 : all[i].doneAt }
+      return all[i]
+    },
+    remove: async (id) => { const i = all.findIndex((p) => p.id === id); if (i >= 0) all.splice(i, 1) },
+  }
+}
 
 /** Briefings per mode, relative to the real clock (the overdue check compares with today). */
 export function fixtureBriefing(mode: FixtureMode): (projectId: string) => Promise<Briefing> {
@@ -408,10 +467,10 @@ export function fixtureBriefing(mode: FixtureMode): (projectId: string) => Promi
   return async (projectId) => {
     const t = Date.now()
     const sessions = Object.values(s.sessions).filter((x) => x.projectId === projectId)
-    if (mode === 'empty') return noBriefing()
+    if (mode === 'empty') return { ...noBriefing(), pendings: openPendings(mode) }
     if (mode === 'one') {
       return {
-        ...noBriefing(), sessions, prevSeenAt: t - 2 * DAY, seenAt: t,
+        ...noBriefing(), sessions, pendings: openPendings(mode), prevSeenAt: t - 2 * DAY, seenAt: t,
         whereLeftOff: { text: 'You were wiring the Acme export.', at: t - DAY, sessions: 1 },
         newSince: [{ kind: 'session', title: 'Session finished: Only session', detail: 'vps-1', at: t - DAY, ref: sessions[0]?.id ?? '' }],
         myTickets: [bTicket('a1', 'Acme · export', { plannedEnd: t + 3 * DAY })],
@@ -421,7 +480,7 @@ export function fixtureBriefing(mode: FixtureMode): (projectId: string) => Promi
     }
     if (mode === 'huge') {
       return {
-        ...noBriefing(), sessions: sessions.slice(0, 50), prevSeenAt: t - 3 * DAY, seenAt: t,
+        ...noBriefing(), sessions: sessions.slice(0, 50), pendings: openPendings(mode), prevSeenAt: t - 3 * DAY, seenAt: t,
         whereLeftOff: { text: 'You were load-testing the Acme solver on five machines; two runs still fail on vps-3.', at: t - DAY, sessions: 3 },
         newSince: Array.from({ length: 20 }, (_, i) => ({ kind: (['session', 'ticket', 'note'] as const)[i % 3], title: `Change ${i + 1}`, detail: i % 3 === 1 ? 'To do → In progress' : '', at: t - i * 60 * MIN, ref: sessions[i]?.id ?? 'x' + i })),
         myTickets: Array.from({ length: 60 }, (_, i) => bTicket('h' + i, `Acme · task ${i + 1}`, { plannedEnd: i % 4 ? t + (i - 10) * DAY : undefined, status: i % 5 === 0 ? 'in_progress' : 'todo' })),
@@ -431,7 +490,7 @@ export function fixtureBriefing(mode: FixtureMode): (projectId: string) => Promi
     }
     // worst: long and unbroken text, unicode, overdue and parked tickets, every kind of item
     return {
-      ...noBriefing(), sessions, prevSeenAt: t - 3 * DAY, seenAt: t,
+      ...noBriefing(), sessions, pendings: openPendings(mode), prevSeenAt: t - 3 * DAY, seenAt: t,
       whereLeftOff: { text: longTitle(480, 'You were finishing the importer at ' + LONG_PATH + ' and'), at: t - DAY, sessions: 3 },
       newSince: [
         { kind: 'session', title: 'Session finished: ' + longTitle(200, 'Recap'), detail: 'vps-1', at: t - DAY, ref: sessions[0]?.id ?? '' },
