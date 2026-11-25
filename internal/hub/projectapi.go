@@ -264,8 +264,9 @@ func (s *Server) handlePatchProject(w http.ResponseWriter, r *http.Request) {
 }
 
 // identityKeys are the settings that identify the ticket source: if they change,
-// the stored ExternalIDs no longer point to the same thing.
-var identityKeys = []string{"repo", "baseURL", "companyId", "projectId", "command"}
+// the stored ExternalIDs (and meeting notes) no longer point to the same thing. Moontech's
+// baseUrl, product and titlePrefix pick which tickets and notes are the project's.
+var identityKeys = []string{"repo", "baseURL", "companyId", "projectId", "command", "baseUrl", "product", "titlePrefix"}
 
 func connectorIdentityChanged(a, b proto.ConnectorConfig) bool {
 	ka, kb := a.Kind, b.Kind

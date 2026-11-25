@@ -68,12 +68,15 @@ func TestBriefingSections(t *testing.T) {
 
 	today := now.Format(time.DateOnly)
 	old := now.AddDate(0, 0, -20).Format(time.DateOnly)
+	kickoff := proto.MeetingNote{ExternalID: "n0", Title: "Kickoff", Date: old, Decisions: "- Old decision", Actions: "- Ana: old action"}
+	_, err = st.ReplaceMeetingNotes(p.ID, []proto.MeetingNote{kickoff}, ms(-3*time.Hour)) // seeds: never new
+	require.NoError(t, err)
 	_, err = st.ReplaceMeetingNotes(p.ID, []proto.MeetingNote{
 		{ExternalID: "n1", Title: "Weekly", Date: today, Summary: "Planning v2.",
 			Decisions: "- Ship v2\n  on Friday\n- Drop IE", OpenPoints: "- Budget?",
 			Actions: "- Ana: send the report\n- Ben: review\nana: book the room\n- Anabel: not Ana\n- Ana:"},
-		{ExternalID: "n0", Title: "Kickoff", Date: old, Decisions: "- Old decision", Actions: "- Ana: old action"},
-	})
+		kickoff,
+	}, ms(-25*time.Minute))
 	require.NoError(t, err)
 
 	_, err = st.AddPinned(p.ID, "Staging password is in the vault", ms(-5*time.Hour))
@@ -151,7 +154,7 @@ func TestBriefingNoPersonHasNoTicketsOrActions(t *testing.T) {
 	p := briefingProject(t, st, "")
 	_, err := st.ReplaceTickets(p.ID, []proto.Ticket{{ExternalID: "1", Title: "a", Status: "todo", Assignee: ""}}, 1)
 	require.NoError(t, err)
-	_, err = st.ReplaceMeetingNotes(p.ID, []proto.MeetingNote{{ExternalID: "n", Date: time.Now().Format(time.DateOnly), Actions: "- : x\n- Ana: y"}})
+	_, err = st.ReplaceMeetingNotes(p.ID, []proto.MeetingNote{{ExternalID: "n", Date: time.Now().Format(time.DateOnly), Actions: "- : x\n- Ana: y"}}, 1)
 	require.NoError(t, err)
 	b, err := s.briefing(p.ID, time.Now())
 	require.NoError(t, err)

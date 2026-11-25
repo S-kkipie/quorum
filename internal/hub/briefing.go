@@ -121,11 +121,15 @@ func (s *Server) touchesOwner(projectID string, changes []proto.TicketChange) bo
 // ---- Handlers ----
 
 func (s *Server) handleBriefing(w http.ResponseWriter, r *http.Request) {
-	b, err := s.briefing(r.PathValue("id"), s.hub.now())
+	id := r.PathValue("id")
+	b, err := s.briefing(id, s.hub.now())
 	if err != nil {
 		s.fail(w, err, "project not found")
 		return
 	}
+	// "where you left off" is generated only when looked at: the current text goes out now, a new one
+	// arrives through project_briefing_changed.
+	s.sum.RequestLeftOff(id)
 	writeJSON(w, 200, b)
 }
 
@@ -209,16 +213,11 @@ func (s *Server) briefing(projectID string, now time.Time) (proto.Briefing, erro
 	b.MyTickets = myTickets(tickets, person)
 
 	from := now.AddDate(0, 0, -meetingWindowDays).Format(time.DateOnly)
-	if b.PrevSeenAt > 0 {
-		if d := time.UnixMilli(b.PrevSeenAt).Format(time.DateOnly); d < from {
-			from = d // the notes "new since" needs reach further back than the meeting window
-		}
-	}
 	notes, err := s.st.MeetingNotes(projectID, from)
 	if err != nil {
 		return b, err
 	}
-	b.Meetings = meetings(notes, now.AddDate(0, 0, -meetingWindowDays).Format(time.DateOnly), person)
+	b.Meetings = meetings(notes, from, person)
 
 	sessions, ends, err := s.projectSessions(projectID)
 	if err != nil {
@@ -231,10 +230,14 @@ func (s *Server) briefing(projectID string, now time.Time) (proto.Briefing, erro
 		if err != nil {
 			return b, err
 		}
+		newNotes, err := s.st.NotesSeenSince(projectID, b.PrevSeenAt)
+		if err != nil {
+			return b, err
+		}
 		var items []proto.BriefingItem
 		items = append(items, sessionItems(sessions, ends, b.PrevSeenAt)...)
 		items = append(items, ticketItems(changes, tickets, person)...)
-		items = append(items, noteItems(notes, b.PrevSeenAt)...)
+		items = append(items, noteItems(newNotes)...)
 		sort.SliceStable(items, func(i, j int) bool { return items[i].At > items[j].At })
 		if len(items) > maxNewSince {
 			items = items[:maxNewSince]
@@ -244,20 +247,22 @@ func (s *Server) briefing(projectID string, now time.Time) (proto.Briefing, erro
 	return b, nil
 }
 
-// projectSessions returns the project's work sessions (live and closed), most recently updated first, with
-// when each last finished.
+// projectSessions returns the project's work sessions (live and closed; membership by SessionInfo.ProjectID),
+// most recently updated first, with when each last finished.
 func (s *Server) projectSessions(projectID string) ([]proto.SessionInfo, map[string]store.SessionEnd, error) {
 	all, err := s.st.ListSessions(true)
 	if err != nil {
 		return nil, nil, err
 	}
 	var out []proto.SessionInfo
+	ids := []string{}
 	for _, si := range all {
 		if si.ProjectID == projectID && si.Role != proto.RoleService {
 			out = append(out, si)
+			ids = append(ids, si.ID)
 		}
 	}
-	ends, err := s.st.ProjectSessionEnds(projectID)
+	ends, err := s.st.SessionEnds(ids)
 	return out, ends, err
 }
 
@@ -447,23 +452,16 @@ func statusLabel(t proto.Ticket) string {
 	return statusName(t.Status)
 }
 
-// noteItems: the meeting notes dated on or after the day of the previous visit (a note only has a date).
-func noteItems(ns []proto.MeetingNote, since int64) []proto.BriefingItem {
-	day := time.UnixMilli(since).Format(time.DateOnly)
+// noteItems: the meeting notes the hub first stored after the previous visit (a seeded note never counts),
+// at the time they were first seen.
+func noteItems(ns []store.NewNote) []proto.BriefingItem {
 	var out []proto.BriefingItem
 	for _, n := range ns {
-		if n.Date == "" || n.Date < day {
-			continue
-		}
-		at := since + 1 // a note dated the previous visit's day sorts just after it
-		if d, err := time.ParseInLocation(time.DateOnly, n.Date, time.Local); err == nil && d.UnixMilli() > since {
-			at = d.UnixMilli()
-		}
 		detail := excerpt(n.Summary, maxDetail)
 		if detail == "" {
 			detail = "New meeting note"
 		}
-		out = append(out, proto.BriefingItem{Kind: "note", Title: firstNonEmpty(strings.TrimSpace(n.Title), "Meeting note"), Detail: detail, At: at, Ref: n.ExternalID})
+		out = append(out, proto.BriefingItem{Kind: "note", Title: firstNonEmpty(strings.TrimSpace(n.Title), "Meeting note"), Detail: detail, At: n.FirstSeenAt, Ref: n.ExternalID})
 	}
 	return out
 }

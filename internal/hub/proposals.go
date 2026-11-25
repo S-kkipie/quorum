@@ -49,10 +49,21 @@ func (h *Hub) draftFromTurnEnd(ev proto.Event) {
 	}
 	body := "Progress (Quorum, " + si.Machine + "):\n" + ans
 	for _, l := range ls {
-		if l.Confirmed {
+		if l.Confirmed && !h.readOnlyTicket(l.TicketID) {
 			h.draftComment(l.TicketID, body)
 		}
 	}
+}
+
+// readOnlyTicket: the ticket's source is read-only (it never takes a comment or status); an unknown ticket counts
+// as read-only.
+func (h *Hub) readOnlyTicket(ticketID string) bool {
+	t, err := h.st.Ticket(ticketID)
+	if err != nil {
+		return true
+	}
+	p, err := h.st.GetProject(t.ProjectID)
+	return err != nil || connectors.ReadOnly(p.Connector.Kind)
 }
 
 func (h *Hub) draftComment(ticketID, body string) {
@@ -106,6 +117,10 @@ func (s *Server) handleCreateProposal(w http.ResponseWriter, r *http.Request) {
 	}
 	if b.Kind != "status" {
 		apiErr(w, 400, "invalid proposal kind")
+		return
+	}
+	if p, err := s.st.GetProject(t.ProjectID); err == nil && connectors.ReadOnly(p.Connector.Kind) {
+		apiErr(w, 400, "the ticket source is read-only")
 		return
 	}
 	if !store.ValidStatus(b.Status) {

@@ -57,6 +57,12 @@ func NewServer(st *store.Store, opts ...Options) *Server {
 	if err := st.FailInterruptedProposals(); err != nil {
 		log.Printf("hub: interrupted proposals: %v", err)
 	}
+	// a read-only source never takes a proposal: drop the pending ones drafted before that rule
+	if n, err := st.DeletePendingProposalsOfKinds(connectors.ReadOnlyKinds()); err != nil {
+		log.Printf("hub: read-only proposals: %v", err)
+	} else if n > 0 {
+		log.Printf("hub: dropped %d pending proposals of read-only ticket sources", n)
+	}
 	s.mux.HandleFunc("GET /api/ping", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"ok": true, "version": proto.Version})
 	})
@@ -74,6 +80,15 @@ func NewServer(st *store.Store, opts ...Options) *Server {
 	s.hub.leftOff = s.sum.TouchLeftOff
 	s.sum.OnLeftOff = s.hub.briefingChanged
 	s.sync.OnSynced = s.onSynced
+	s.sync.OnLinksRemoved = func(_ string, ls []proto.SessionTicket) {
+		for _, l := range ls {
+			machine := ""
+			if si, err := st.Session(l.SessionID); err == nil {
+				machine = si.Machine
+			}
+			s.hub.publishLink(machine, l)
+		}
+	}
 	s.sync.OnChange = func(id string) {
 		s.sum.Touch(id)
 		s.hub.suggestProject(id) // the branch ticket of an open session may have arrived by now
