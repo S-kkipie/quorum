@@ -116,6 +116,50 @@ def test_others_channel_is_diarized_and_me_stays_me(tmp_path, local_http):
 
 
 @needs_ffmpeg
+def test_transcribe_passes_prompt_to_engine(tmp_path, local_http):
+    src = tone_file(tmp_path / "rec.flac", "lt(t,2)", "between(t,3,4)")
+    job = {"step": "transcribe", "audioURL": serve(local_http, src), "settings": {"prompt": "Vocabulary: zorvanite."}}
+    work = tmp_path / "w"
+    work.mkdir()
+    engines = []
+
+    def factory():
+        engines.append(w.FakeEngine())
+        return engines[-1]
+
+    w.run_transcribe(job, w.Emitter(io.StringIO()), work, factory, lambda: w.FakeDiarizer(speakers=1, every=3))
+    assert engines[0].prompts == ["Vocabulary: zorvanite."]
+
+
+def test_engine_uses_soft_vad_and_no_previous_text(monkeypatch):
+    import types
+
+    seen = {}
+
+    class StubModel:
+        def __init__(self, *a, **k):
+            pass
+
+        def transcribe(self, audio, **kw):
+            seen.update(kw)
+            return iter([]), types.SimpleNamespace(language="en")
+
+    monkeypatch.setitem(sys.modules, "faster_whisper", types.SimpleNamespace(WhisperModel=StubModel))
+    eng = w.FasterWhisperEngine("stub")
+    eng.transcribe([0.0] * 16000, "en", lambda p: None, "Vocabulary: zorvanite.")
+    assert seen == dict(
+        language="en",
+        beam_size=5,
+        vad_filter=True,
+        vad_parameters=dict(threshold=0.25, min_silence_duration_ms=1500, speech_pad_ms=500),
+        condition_on_previous_text=False,
+        initial_prompt="Vocabulary: zorvanite.",
+    )
+    eng.transcribe([0.0] * 16000, "en", lambda p: None)
+    assert seen["initial_prompt"] is None
+
+
+@needs_ffmpeg
 def test_without_channel_metadata_the_channels_are_mixed(tmp_path, local_http):
     src = tone_file(tmp_path / "rec.flac", "lt(t,2)", "between(t,3,4)")
     job = {"step": "transcribe", "audioURL": serve(local_http, src), "settings": {}}
@@ -124,9 +168,9 @@ def test_without_channel_metadata_the_channels_are_mixed(tmp_path, local_http):
     calls = []
 
     class Engine(w.FakeEngine):
-        def transcribe(self, audio, language, on_progress):
+        def transcribe(self, audio, language, on_progress, prompt=None):
             calls.append(len(audio))
-            return super().transcribe(audio, language, on_progress)
+            return super().transcribe(audio, language, on_progress, prompt)
 
     res = w.run_transcribe(job, w.Emitter(io.StringIO()), work, Engine, lambda: w.FakeDiarizer(speakers=2, every=3))
     assert len(calls) == 1  # one mixed track

@@ -27,7 +27,7 @@ import (
 // (only the local summary provider uses it); the setup only says how to install it.
 
 const (
-	setupWhisperModel = "large-v3-turbo"
+	setupWhisperModel = "large-v3"
 	setupOllamaModel  = "gemma3:12b"
 	setupOllamaURL    = "http://127.0.0.1:11434"
 )
@@ -96,7 +96,7 @@ func MeetingsSetup(ctx context.Context, out io.Writer) error {
 		}
 	}
 
-	say("Downloading the Whisper model %s (about 1.6 GB, once)…", setupWhisperModel)
+	say("Downloading the Whisper model %s (about 3 GB, once)…", setupWhisperModel)
 	if err := runWorker(ctx, dir, out, false, "--download-model", setupWhisperModel); err != nil {
 		return fmt.Errorf("the Whisper model could not be downloaded: %w", err)
 	}

@@ -156,6 +156,16 @@ const transcriptBody = `{"result":{"segments":[{"start_ms":1200,"end_ms":3000,"s
 	{"start_ms":0,"end_ms":1100,"speaker":"Speaker 1","text":"first"},{"start_ms":3100,"end_ms":3200,"speaker":"","text":"  "}],
 	"duration_s":61.6,"language":"es"}}`
 
+func TestTranscribeJobUsesLargeV3(t *testing.T) {
+	f := newJobFx(t)
+	gpu := f.connect(t, "gpu", true)
+	f.uploadMeeting(t, "", "fake audio bytes")
+	p := gpu.start()
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(p.Settings, &raw))
+	require.Equal(t, "large-v3", raw["model"])
+}
+
 func TestMeetingJobAssignedToTranscribeMachine(t *testing.T) {
 	f := newJobFx(t)
 	plain := f.connect(t, "plain", false)
@@ -171,7 +181,7 @@ func TestMeetingJobAssignedToTranscribeMachine(t *testing.T) {
 	var set proto.MeetingTranscribeSettings
 	require.NoError(t, json.Unmarshal(p.Settings, &set))
 	require.Equal(t, "es", set.Language)
-	require.Equal(t, "large-v3-turbo", set.Model)
+	require.Equal(t, "large-v3", set.Model)
 	eventually(t, func() bool { return f.status(m.ID) == "transcribing" })
 
 	// the signed audio URL needs no device token

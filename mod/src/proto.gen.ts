@@ -910,6 +910,10 @@ export interface MeetingTranscribeSettings {
   channels: string;
   speakers: number /* int */;
   model: string;
+  /**
+   * Prompt is the vocabulary hint passed to Whisper as its initial prompt.
+   */
+  prompt?: string;
 }
 /**
  * MeetingJobResult is the body the daemon POSTs to a job's result URL: Error when the worker failed

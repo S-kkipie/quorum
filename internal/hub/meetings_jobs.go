@@ -35,7 +35,7 @@ const (
 	maxSegments  = 100000
 	maxSegText   = 4000
 	// defaultWhisperModel is the transcription model the spike chose.
-	defaultWhisperModel = "large-v3-turbo"
+	defaultWhisperModel = "large-v3"
 	defaultLanguage     = "es"
 )
 

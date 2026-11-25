@@ -57,7 +57,7 @@ from typing import Callable, Iterable
 
 WORKER_VERSION = "1"
 SAMPLE_RATE = 16000
-WHISPER_MODEL = "large-v3-turbo"
+WHISPER_MODEL = "large-v3"
 DIAR_THRESHOLD = 0.8
 OLLAMA_URL = "http://127.0.0.1:11434"
 OLLAMA_MODEL = "gemma3:12b"
@@ -234,10 +234,18 @@ class FasterWhisperEngine:
         except Exception as e:  # noqa: BLE001 - shown to the owner
             raise WorkerError(describe_model_error(model, e)) from e
 
-    def transcribe(self, audio, language: str | None, on_progress: Callable[[float], None]):
+    def transcribe(self, audio, language: str | None, on_progress: Callable[[float], None], prompt: str | None = None):
         duration = max(len(audio) / SAMPLE_RATE, 0.001)
         try:
-            segs, info = self.model.transcribe(audio, language=language, vad_filter=True, beam_size=5)
+            segs, info = self.model.transcribe(
+                audio,
+                language=language,
+                beam_size=5,
+                vad_filter=True,
+                vad_parameters=dict(threshold=0.25, min_silence_duration_ms=1500, speech_pad_ms=500),
+                condition_on_previous_text=False,
+                initial_prompt=prompt or None,
+            )
             out = []
             for s in segs:
                 out.append(Segment(float(s.start), float(s.end), s.text.strip()))
@@ -267,9 +275,11 @@ class FakeEngine:
 
     def __init__(self, *_, **__):
         self.calls = 0
+        self.prompts = []
 
-    def transcribe(self, audio, language, on_progress):
+    def transcribe(self, audio, language, on_progress, prompt=None):
         self.calls += 1
+        self.prompts.append(prompt)
         out = []
         for i, (a, b) in enumerate(voiced_spans(audio)):
             out.append(Segment(a, b, f"words {i + 1}"))
@@ -406,6 +416,7 @@ def run_transcribe(job: dict, emit: Emitter, workdir: Path, engine_factory=None,
         language = None
     speakers = int(settings.get("speakers") or 0)
     model = settings.get("model") or WHISPER_MODEL
+    prompt = settings.get("prompt") or None
     engine_factory = engine_factory or (lambda: FasterWhisperEngine(model))
     diarizer_factory = diarizer_factory or (lambda: SherpaDiarizer(speakers))
 
@@ -429,7 +440,7 @@ def run_transcribe(job: dict, emit: Emitter, workdir: Path, engine_factory=None,
             lo, hi = 10 + 70 * i / len(tracks), 10 + 70 * (i + 1) / len(tracks)
             audio = load_wav(path)
             longest = max(longest, len(audio))
-            segs, lang = engine.transcribe(audio, language, span(emit, lo, hi, "transcribing"))
+            segs, lang = engine.transcribe(audio, language, span(emit, lo, hi, "transcribing"), prompt)
             audio = None
             detected = detected or lang or ""
             results.append((label, path, segs))

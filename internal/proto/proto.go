@@ -792,6 +792,8 @@ type MeetingTranscribeSettings struct {
 	Channels string `json:"channels"`
 	Speakers int    `json:"speakers"`
 	Model    string `json:"model"`
+	// Prompt is the vocabulary hint passed to Whisper as its initial prompt.
+	Prompt string `json:"prompt,omitempty"`
 }
 
 // MeetingJobResult is the body the daemon POSTs to a job's result URL: Error when the worker failed
