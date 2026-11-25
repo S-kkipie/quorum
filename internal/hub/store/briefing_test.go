@@ -114,18 +114,23 @@ func TestVisitRollover(t *testing.T) {
 
 	seen, prev, rolled, err = s.Visit(p.ID, t0+30*minMs)
 	require.NoError(t, err)
-	require.False(t, rolled, "exactly 30 minutes is not older than 30 minutes")
+	require.False(t, rolled, "20 minutes after the last visit")
 	require.Equal(t, t0, seen)
 
-	seen, prev, rolled, err = s.Visit(p.ID, t0+31*minMs)
+	seen, prev, rolled, err = s.Visit(p.ID, t0+60*minMs)
+	require.NoError(t, err)
+	require.False(t, rolled, "exactly 30 minutes after the last visit is not older than 30 minutes")
+	require.Equal(t, t0, seen)
+
+	seen, prev, rolled, err = s.Visit(p.ID, t0+91*minMs)
 	require.NoError(t, err)
 	require.True(t, rolled)
-	require.Equal(t, t0+31*minMs, seen)
+	require.Equal(t, t0+91*minMs, seen)
 	require.Equal(t, t0, prev)
 
 	seen, prev, err = s.Visits(p.ID)
 	require.NoError(t, err)
-	require.Equal(t, t0+31*minMs, seen)
+	require.Equal(t, t0+91*minMs, seen)
 	require.Equal(t, t0, prev)
 
 	_, _, err = s.Visits("nope")
@@ -162,22 +167,22 @@ func TestMeetingNotes(t *testing.T) {
 	s, p := briefingStore(t)
 	n1 := proto.MeetingNote{ExternalID: "n1", Title: "Sync", Date: "2026-11-10", Decisions: "- ship it", UpdatedAt: 1}
 	n2 := proto.MeetingNote{ExternalID: "n2", Title: "Review", Date: "2026-11-20", Actions: "- Ana: draft", UpdatedAt: 1}
-	changed, err := s.ReplaceMeetingNotes(p.ID, []proto.MeetingNote{n1, n2})
+	changed, err := s.ReplaceMeetingNotes(p.ID, []proto.MeetingNote{n1, n2}, 1)
 	require.NoError(t, err)
 	require.True(t, changed)
-	changed, err = s.ReplaceMeetingNotes(p.ID, []proto.MeetingNote{n1, n2})
+	changed, err = s.ReplaceMeetingNotes(p.ID, []proto.MeetingNote{n1, n2}, 1)
 	require.NoError(t, err)
 	require.False(t, changed)
 
 	n1.UpdatedAt = 99
-	changed, err = s.ReplaceMeetingNotes(p.ID, []proto.MeetingNote{n1, n2})
+	changed, err = s.ReplaceMeetingNotes(p.ID, []proto.MeetingNote{n1, n2}, 1)
 	require.NoError(t, err)
 	require.False(t, changed, "only updatedAt moved")
 	got, _ := s.MeetingNotes(p.ID, "")
 	require.Equal(t, int64(99), got[1].UpdatedAt, "the new updatedAt is stored anyway")
 
 	n2.Summary = "edited"
-	changed, err = s.ReplaceMeetingNotes(p.ID, []proto.MeetingNote{n1, n2})
+	changed, err = s.ReplaceMeetingNotes(p.ID, []proto.MeetingNote{n1, n2}, 1)
 	require.NoError(t, err)
 	require.True(t, changed)
 
@@ -187,13 +192,13 @@ func TestMeetingNotes(t *testing.T) {
 	got, _ = s.MeetingNotes(p.ID, "")
 	require.Equal(t, []proto.MeetingNote{n2, n1}, got)
 
-	changed, err = s.ReplaceMeetingNotes(p.ID, []proto.MeetingNote{n2})
+	changed, err = s.ReplaceMeetingNotes(p.ID, []proto.MeetingNote{n2}, 1)
 	require.NoError(t, err)
 	require.True(t, changed, "a note that left the source is dropped")
 	got, _ = s.MeetingNotes(p.ID, "")
 	require.Equal(t, []proto.MeetingNote{n2}, got)
 
-	_, err = s.ReplaceMeetingNotes(p.ID, []proto.MeetingNote{{Title: "x"}})
+	_, err = s.ReplaceMeetingNotes(p.ID, []proto.MeetingNote{{Title: "x"}}, 1)
 	require.Error(t, err)
 	got, _ = s.MeetingNotes(p.ID, "")
 	require.Len(t, got, 1, "a failed replace leaves the notes alone")
@@ -247,7 +252,7 @@ func TestDeleteProjectDropsBriefingRows(t *testing.T) {
 		require.NoError(t, err)
 		_, err = s.AddPinned(pid, "x", 1)
 		require.NoError(t, err)
-		_, err = s.ReplaceMeetingNotes(pid, []proto.MeetingNote{{ExternalID: "n", Date: "2026-01-01"}})
+		_, err = s.ReplaceMeetingNotes(pid, []proto.MeetingNote{{ExternalID: "n", Date: "2026-01-01"}}, 1)
 		require.NoError(t, err)
 	}
 	require.NoError(t, s.DeleteProject(p.ID))
@@ -260,7 +265,7 @@ func TestDeleteProjectDropsBriefingRows(t *testing.T) {
 	}
 }
 
-func TestProjectSessionEnds(t *testing.T) {
+func TestSessionEnds(t *testing.T) {
 	s, p := briefingStore(t)
 	_, err := s.UpsertCheckout(proto.Checkout{ProjectID: p.ID, Machine: "m1", Root: "/r"})
 	require.NoError(t, err)
@@ -279,9 +284,9 @@ func TestProjectSessionEnds(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.CloseSession("m1", "b")
 	require.NoError(t, err)
-	ends, err := s.ProjectSessionEnds(p.ID)
+	ends, err := s.SessionEnds([]string{"a", "b", "gone"})
 	require.NoError(t, err)
-	require.Len(t, ends, 2, "only the project's sessions")
+	require.Len(t, ends, 2, "only the asked sessions that exist")
 	require.Equal(t, int64(700), ends["a"].EndAt)
 	require.Equal(t, "Fixed the login.", ends["a"].Answer)
 	require.Zero(t, ends["a"].ClosedAt)

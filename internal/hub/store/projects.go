@@ -275,8 +275,9 @@ type ConnectorReset struct {
 }
 
 // UpdateProjectResetConnector updates the project like UpdateProject and, in the same
-// transaction, deletes its tickets, its links (and dismissals), marks its open
-// proposals as failed and resets synced_at and sync_error: the connector points to another source.
+// transaction, deletes its tickets, its links (and dismissals), its ticket change log and meeting
+// notes, marks its open proposals as failed and resets synced_at and sync_error: the connector
+// points to another source.
 func (s *Store) UpdateProjectResetConnector(p proto.Project) (out ConnectorReset, err error) {
 	if err = s.workspaceExists(p.WorkspaceID); err != nil {
 		return out, err
@@ -339,6 +340,8 @@ func (s *Store) UpdateProjectResetConnector(p proto.Project) (out ConnectorReset
 		`DELETE FROM session_tickets WHERE ticket_id IN ` + tk,
 		`DELETE FROM session_ticket_dismissed WHERE ticket_id IN ` + tk,
 		`DELETE FROM tickets WHERE project_id=?`,
+		`DELETE FROM ticket_changes WHERE project_id=?`,
+		`DELETE FROM meeting_notes WHERE project_id=?`,
 	} {
 		if _, err = tx.Exec(q, p.ID); err != nil {
 			return out, err
@@ -487,47 +490,60 @@ func (s *Store) CheckoutForRoot(machine, root string) (proto.Checkout, error) {
 
 const ticketCols = `id,project_id,external_id,title,status,raw_status,assignee,url,body,comments,updated_at,planned_start,planned_end,note_title`
 
+type prevTicket struct{ status, assignee string }
+
 // ReplaceTickets upserts by (project_id, external_id) in one transaction.
 // Does not delete the missing ones; with Comments == nil keeps the stored comments ([] deletes them). Recomputes the project's progress.
 // It diffs against the stored rows into the change log (new, status, assigned) stamped now and returns the new rows.
 // A project with no stored tickets is being seeded: it records no "new" rows (nor any other) so the first sync does not
 // flood "new since". Log rows older than 60 days are pruned.
 func (s *Store) ReplaceTickets(projectID string, ts []proto.Ticket, now int64) (changes []proto.TicketChange, err error) {
+	changes, _, err = s.replaceTickets(projectID, ts, now, false)
+	return changes, err
+}
+
+// ReplaceAllTickets is ReplaceTickets for a source that returns its full list every time: the stored tickets
+// missing from ts are deleted too, with their links, dismissals and proposals (no change-log row: a removal is
+// not shown as news). It returns the change rows and the deleted links (to publish them as Removed).
+func (s *Store) ReplaceAllTickets(projectID string, ts []proto.Ticket, now int64) ([]proto.TicketChange, []proto.SessionTicket, error) {
+	return s.replaceTickets(projectID, ts, now, true)
+}
+
+func (s *Store) replaceTickets(projectID string, ts []proto.Ticket, now int64, prune bool) (changes []proto.TicketChange, removed []proto.SessionTicket, err error) {
 	tx, err := s.db.Begin()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer func() {
 		if err != nil {
 			tx.Rollback()
-			changes = nil
+			changes, removed = nil, nil
 		}
 	}()
 	var n int
 	if err = tx.QueryRow(`SELECT count(*) FROM projects WHERE id=?`, projectID).Scan(&n); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if n == 0 {
-		return nil, ErrNotFound
+		return nil, nil, ErrNotFound
 	}
-	type prev struct{ status, assignee string }
-	stored := map[string]prev{}
+	stored := map[string]prevTicket{}
 	rows, err := tx.Query(`SELECT external_id,status,assignee FROM tickets WHERE project_id=?`, projectID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for rows.Next() {
 		var id string
-		var p prev
+		var p prevTicket
 		if err = rows.Scan(&id, &p.status, &p.assignee); err != nil {
 			rows.Close()
-			return nil, err
+			return nil, nil, err
 		}
 		stored[id] = p
 	}
 	if err = rows.Err(); err != nil {
 		rows.Close()
-		return nil, err
+		return nil, nil, err
 	}
 	rows.Close()
 	seeding := len(stored) == 0
@@ -535,16 +551,16 @@ func (s *Store) ReplaceTickets(projectID string, ts []proto.Ticket, now int64) (
 	for _, t := range ts {
 		if t.ExternalID == "" {
 			err = fmt.Errorf("ticket without ExternalID (%q)", t.Title)
-			return nil, err
+			return nil, nil, err
 		}
 		if !ValidStatus(t.Status) {
 			err = fmt.Errorf("invalid ticket status %q (ticket %s)", t.Status, t.ExternalID)
-			return nil, err
+			return nil, nil, err
 		}
 		cj := []byte("[]")
 		if t.Comments != nil {
 			if cj, err = json.Marshal(t.Comments); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 		}
 		if _, err = tx.Exec(`INSERT INTO tickets(id,project_id,external_id,title,status,raw_status,assignee,url,body,comments,updated_at,planned_start,planned_end,note_title) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
@@ -553,7 +569,7 @@ func (s *Store) ReplaceTickets(projectID string, ts []proto.Ticket, now int64) (
 			planned_start=excluded.planned_start,planned_end=excluded.planned_end,note_title=excluded.note_title`,
 			newID(), projectID, t.ExternalID, t.Title, t.Status, t.RawStatus, t.Assignee, t.URL, t.Body, string(cj), t.UpdatedAt,
 			t.PlannedStart, t.PlannedEnd, t.NoteTitle, t.Comments != nil); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if seeding {
 			continue
@@ -571,25 +587,80 @@ func (s *Store) ReplaceTickets(projectID string, ts []proto.Ticket, now int64) (
 				add = append(add, proto.TicketChange{ExternalID: t.ExternalID, Kind: "assigned", From: old.assignee, To: t.Assignee, At: now})
 			}
 		}
-		stored[t.ExternalID] = prev{t.Status, t.Assignee} // a duplicate id in one batch logs once
+		stored[t.ExternalID] = prevTicket{t.Status, t.Assignee} // a duplicate id in one batch logs once
 		for _, c := range add {
 			if _, err = tx.Exec(`INSERT INTO ticket_changes(project_id,external_id,kind,from_val,to_val,at) VALUES(?,?,?,?,?,?)`,
 				projectID, c.ExternalID, c.Kind, c.From, c.To, c.At); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			changes = append(changes, c)
 		}
 	}
+	if prune {
+		if removed, err = pruneTickets(tx, projectID, stored, ts); err != nil {
+			return nil, nil, err
+		}
+	}
 	if _, err = tx.Exec(`DELETE FROM ticket_changes WHERE project_id=? AND at<?`, projectID, now-changeRetentionMs); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err = recomputeProgress(tx, projectID, time.Now().UnixMilli()); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err = tx.Commit(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return changes, nil
+	return changes, removed, nil
+}
+
+// pruneTickets deletes the project's stored tickets whose external id is not in ts, with their links,
+// dismissals and proposals, and returns the deleted links.
+func pruneTickets(tx *sql.Tx, projectID string, stored map[string]prevTicket, ts []proto.Ticket) ([]proto.SessionTicket, error) {
+	keep := make(map[string]bool, len(ts))
+	for _, t := range ts {
+		keep[t.ExternalID] = true
+	}
+	var removed []proto.SessionTicket
+	for ext := range stored {
+		if keep[ext] {
+			continue
+		}
+		var id string
+		if err := tx.QueryRow(`SELECT id FROM tickets WHERE project_id=? AND external_id=?`, projectID, ext).Scan(&id); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
+			return nil, err
+		}
+		rows, err := tx.Query(`SELECT session_id FROM session_tickets WHERE ticket_id=?`, id)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			l := proto.SessionTicket{TicketID: id, Removed: true}
+			if err := rows.Scan(&l.SessionID); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			removed = append(removed, l)
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return nil, err
+		}
+		for _, q := range []string{
+			`DELETE FROM session_tickets WHERE ticket_id=?`,
+			`DELETE FROM session_ticket_dismissed WHERE ticket_id=?`,
+			`DELETE FROM proposals WHERE ticket_id=?`,
+			`DELETE FROM tickets WHERE id=?`,
+		} {
+			if _, err := tx.Exec(q, id); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return removed, nil
 }
 
 func (s *Store) ListTickets(projectID string) ([]proto.Ticket, error) {
@@ -991,4 +1062,22 @@ func (s *Store) TicketSessions(ticketID string) ([]proto.SessionTicket, error) {
 		out = append(out, l)
 	}
 	return out, rows.Err()
+}
+
+// DeletePendingProposalsOfKinds deletes the pending proposals of the tickets of every project whose connector
+// kind is in kinds (read-only sources never take a proposal) and returns how many it deleted.
+func (s *Store) DeletePendingProposalsOfKinds(kinds []string) (int64, error) {
+	if len(kinds) == 0 {
+		return 0, nil
+	}
+	args := make([]any, len(kinds))
+	for i, k := range kinds {
+		args[i] = k
+	}
+	res, err := s.db.Exec(`DELETE FROM proposals WHERE status='pending' AND ticket_id IN
+		(SELECT t.id FROM tickets t JOIN projects p ON p.id=t.project_id WHERE p.kind IN (?`+strings.Repeat(",?", len(kinds)-1)+`))`, args...)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }

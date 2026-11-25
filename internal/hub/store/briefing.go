@@ -67,6 +67,8 @@ func migrateBriefing(s *Store) error {
 		{"projects", "where_left_off", "TEXT NOT NULL DEFAULT ''"},
 		{"projects", "where_left_off_at", "INTEGER NOT NULL DEFAULT 0"},
 		{"projects", "where_left_off_sessions", "INTEGER NOT NULL DEFAULT 0"},
+		{"project_visits", "last_at", "INTEGER NOT NULL DEFAULT 0"},
+		{"meeting_notes", "first_seen_at", "INTEGER NOT NULL DEFAULT 0"},
 	} {
 		var n int
 		if err := s.db.QueryRow(`SELECT count(*) FROM pragma_table_info('`+c[0]+`') WHERE name=?`, c[1]).Scan(&n); err != nil {
@@ -100,8 +102,9 @@ func (s *Store) TicketChanges(projectID string, since int64) ([]proto.TicketChan
 }
 
 // ReplaceMeetingNotes makes the stored notes of the project equal to ns (upsert by external id, delete the
-// rest) and reports whether anything really changed.
-func (s *Store) ReplaceMeetingNotes(projectID string, ns []proto.MeetingNote) (changed bool, err error) {
+// rest) and reports whether anything really changed. A note stored for the first time gets first_seen_at = now,
+// except while the project has no stored notes (the seeding sync: 0, so it is never "new since").
+func (s *Store) ReplaceMeetingNotes(projectID string, ns []proto.MeetingNote, now int64) (changed bool, err error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return false, err
@@ -137,6 +140,10 @@ func (s *Store) ReplaceMeetingNotes(projectID string, ns []proto.MeetingNote) (c
 		return false, err
 	}
 	rows.Close()
+	firstSeen := now
+	if len(stored) == 0 {
+		firstSeen = 0
+	}
 	seen := map[string]bool{}
 	for _, m := range ns {
 		if m.ExternalID == "" {
@@ -151,10 +158,10 @@ func (s *Store) ReplaceMeetingNotes(projectID string, ns []proto.MeetingNote) (c
 		o := old
 		o.UpdatedAt = m.UpdatedAt
 		same := ok && o == m // only updatedAt moved: stored, but not a change
-		if _, err = tx.Exec(`INSERT INTO meeting_notes(project_id,`+noteCols+`) VALUES(?,?,?,?,?,?,?,?,?,?)
+		if _, err = tx.Exec(`INSERT INTO meeting_notes(project_id,`+noteCols+`,first_seen_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)
 			ON CONFLICT(project_id,external_id) DO UPDATE SET title=excluded.title,date=excluded.date,summary=excluded.summary,
 			decisions=excluded.decisions,open_points=excluded.open_points,actions=excluded.actions,url=excluded.url,updated_at=excluded.updated_at`,
-			projectID, m.ExternalID, m.Title, m.Date, m.Summary, m.Decisions, m.OpenPoints, m.Actions, m.URL, m.UpdatedAt); err != nil {
+			projectID, m.ExternalID, m.Title, m.Date, m.Summary, m.Decisions, m.OpenPoints, m.Actions, m.URL, m.UpdatedAt, firstSeen); err != nil {
 			return false, err
 		}
 		if !same {
@@ -196,9 +203,36 @@ func (s *Store) MeetingNotes(projectID string, sinceDate string) ([]proto.Meetin
 	return out, rows.Err()
 }
 
+// NewNote is a meeting note with when the hub first stored it.
+type NewNote struct {
+	proto.MeetingNote
+	FirstSeenAt int64
+}
+
+// NotesSeenSince returns the project's notes first stored after since (seeded notes, first_seen_at 0, never),
+// most recently seen first.
+func (s *Store) NotesSeenSince(projectID string, since int64) ([]NewNote, error) {
+	rows, err := s.db.Query(`SELECT `+noteCols+`,first_seen_at FROM meeting_notes WHERE project_id=? AND first_seen_at>? AND first_seen_at>0
+		ORDER BY first_seen_at DESC, external_id`, projectID, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []NewNote
+	for rows.Next() {
+		var n NewNote
+		m := &n.MeetingNote
+		if err := rows.Scan(&m.ExternalID, &m.Title, &m.Date, &m.Summary, &m.Decisions, &m.OpenPoints, &m.Actions, &m.URL, &m.UpdatedAt, &n.FirstSeenAt); err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
 // Visit records a visit at now. The first visit sets seen_at. A later one moves seen_at to prev_seen_at only when
-// the stored seen_at is more than 30 minutes old (rolled = true); otherwise nothing changes, so "new since" stays
-// stable while the owner works. It returns the values after the call.
+// the LAST visit (on any device) is more than 30 minutes old (rolled = true), so "new since" stays stable while
+// the owner keeps coming back; every visit moves last_at. It returns the values after the call.
 func (s *Store) Visit(projectID string, now int64) (seenAt, prevSeenAt int64, rolled bool, err error) {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -212,16 +246,22 @@ func (s *Store) Visit(projectID string, now int64) (seenAt, prevSeenAt int64, ro
 	if n == 0 {
 		return 0, 0, false, ErrNotFound
 	}
-	err = tx.QueryRow(`SELECT seen_at,prev_seen_at FROM project_visits WHERE project_id=?`, projectID).Scan(&seenAt, &prevSeenAt)
+	var lastAt int64
+	err = tx.QueryRow(`SELECT seen_at,prev_seen_at,last_at FROM project_visits WHERE project_id=?`, projectID).Scan(&seenAt, &prevSeenAt, &lastAt)
+	if lastAt == 0 {
+		lastAt = seenAt // a row from before last_at existed
+	}
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		seenAt, prevSeenAt, rolled = now, 0, true
-		_, err = tx.Exec(`INSERT INTO project_visits(project_id,seen_at,prev_seen_at) VALUES(?,?,0)`, projectID, now)
+		_, err = tx.Exec(`INSERT INTO project_visits(project_id,seen_at,prev_seen_at,last_at) VALUES(?,?,0,?)`, projectID, now, now)
 	case err != nil:
 		return 0, 0, false, err
-	case now-seenAt > visitRolloverMs:
+	case now-lastAt > visitRolloverMs:
 		prevSeenAt, seenAt, rolled = seenAt, now, true
-		_, err = tx.Exec(`UPDATE project_visits SET seen_at=?,prev_seen_at=? WHERE project_id=?`, seenAt, prevSeenAt, projectID)
+		_, err = tx.Exec(`UPDATE project_visits SET seen_at=?,prev_seen_at=?,last_at=? WHERE project_id=?`, seenAt, prevSeenAt, now, projectID)
+	case now > lastAt:
+		_, err = tx.Exec(`UPDATE project_visits SET last_at=? WHERE project_id=?`, now, projectID)
 	}
 	if err != nil {
 		return 0, 0, false, err
@@ -310,30 +350,43 @@ type SessionEnd struct {
 	ClosedAt int64  // 0 when the session is not closed
 }
 
-// ProjectSessionEnds returns the last turn_end and close time of every session of the project, by session id.
-func (s *Store) ProjectSessionEnds(projectID string) (map[string]SessionEnd, error) {
-	rows, err := s.db.Query(`SELECT s.id,s.closed_at,COALESCE(e.ts,0),COALESCE(e.data,'')
-		FROM sessions s JOIN checkouts c ON c.machine=s.machine AND c.root=s.root
-		LEFT JOIN events e ON s.end_seq>0 AND e.session=s.id AND e.seq=s.end_seq
-		WHERE c.project_id=?`, projectID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
+// SessionEnds returns the last turn_end and close time of the given sessions, by session id (the caller picks
+// the project's sessions with the same rule everywhere: SessionInfo.ProjectID).
+func (s *Store) SessionEnds(ids []string) (map[string]SessionEnd, error) {
 	out := map[string]SessionEnd{}
-	for rows.Next() {
-		var e SessionEnd
-		var data string
-		if err := rows.Scan(&e.ID, &e.ClosedAt, &e.EndAt, &data); err != nil {
+	for len(ids) > 0 {
+		batch := ids[:min(len(ids), 500)]
+		ids = ids[len(batch):]
+		args := make([]any, len(batch))
+		for i, id := range batch {
+			args[i] = id
+		}
+		rows, err := s.db.Query(`SELECT s.id,s.closed_at,COALESCE(e.ts,0),COALESCE(e.data,'')
+			FROM sessions s LEFT JOIN events e ON s.end_seq>0 AND e.session=s.id AND e.seq=s.end_seq
+			WHERE s.id IN (?`+strings.Repeat(",?", len(batch)-1)+`)`, args...)
+		if err != nil {
 			return nil, err
 		}
-		var te proto.TurnEnd
-		if data != "" && json.Unmarshal([]byte(data), &te) == nil {
-			e.Answer = te.Answer
+		for rows.Next() {
+			var e SessionEnd
+			var data string
+			if err := rows.Scan(&e.ID, &e.ClosedAt, &e.EndAt, &data); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			var te proto.TurnEnd
+			if data != "" && json.Unmarshal([]byte(data), &te) == nil {
+				e.Answer = te.Answer
+			}
+			out[e.ID] = e
 		}
-		out[e.ID] = e
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return nil, err
+		}
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // ProjectPerson is the person the project's ticket source calls "you" (connector setting "person", trimmed).
