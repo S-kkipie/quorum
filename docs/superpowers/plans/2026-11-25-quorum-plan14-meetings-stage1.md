@@ -179,6 +179,7 @@ after the builder check", which override the body.
   - write the summary and actions, computing "mine" with the person plus the aliases;
   - project into `meeting_notes` with source `quorum`, keyed by meeting id;
   - fire the project briefing event.
+- Speaker names: `PUT /api/meetings/{id}/speakers {label: name}` → stored in `meeting_speakers`, applied when serving segments and passed to summaries.
 - `POST /api/meetings/{id}/reprocess {provider?}` re-summarises, keeping actions that have an `issue_url`.
 - `POST /api/meetings/{id}/actions/{actionId}/issue` creates the issue (or returns the existing URL) through `gh` in
   the connector repo, with a body containing the action, the meeting title and date, and the Quorum meeting link.
@@ -214,6 +215,7 @@ after the builder check", which override the body.
   - **Meeting page:** status and progress while processing; "failed" shows the error and Retry; a ready meeting
     shows sections in order; mine first in actions; "Create issue" only for GitHub projects and opens the URL once it
     exists.
+  - **Speakers:** each speaker label can be renamed inline; all its segments update; "Re-summarise with names" offered after a rename.
   - **Transcript:** search highlights matches, and a click seeks the audio (`currentTime`).
   - **Settings:** the key is never echoed.
   - **Layout:** 320 px with no overflow, and the initial JS budget test.

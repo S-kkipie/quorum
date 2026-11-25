@@ -39,8 +39,8 @@ can turn the owner's actions into tickets.
 
 - Live transcription and live note-taking (Stage 3).
 - Calendar integration and bots that join calls.
-- Identifying speakers by name. "Me" vs "Others" comes from separate tracks where available; in-person audio gets
-  "Speaker 1/2/…" only if diarization is enabled later.
+- Recognising recurring voices across meetings automatically (a later plan). Stage 1 separates speakers and lets the
+  owner name them per meeting.
 - Sharing notes with other people.
 
 ## Anti-goals
@@ -256,3 +256,17 @@ can turn the owner's actions into tickets.
    change them the owner re-summarises.
 10. **Audio playback** uses a short-lived signed URL (`GET /api/meetings/{id}/audio-url` → `{url}`, valid 1 h), so
     the `<audio>` element needs no auth header.
+
+## Owner update (2026-11-25): telling people apart is a Stage 1 feature
+
+- **Diarization.**
+  - The transcript separates speakers ("Speaker 1", "Speaker 2", …) for in-person audio.
+  - For two-channel recordings, the `Me` channel stays "Me" and the `Others` channel is diarized.
+  - The engine is chosen by the spike between pyannote (community-1 or 3.1; needs a free Hugging Face token accepted
+    once by the owner, then offline) and sherpa-onnx (no token), on public multi-speaker Spanish audio.
+  - `MeetingSegment.speaker` holds a stable label per meeting.
+- **Naming speakers.** On the meeting page the owner renames a speaker label, for example "Speaker 2" to "Luis".
+  - The rename applies to every segment of that meeting.
+  - The rename is passed to a re-summary (owners in actions use the names).
+  - Stored as `meeting_speakers(meeting_id, label, name)`.
+- **Later plan:** voice embeddings per named person, to suggest or auto-apply names in future meetings.
