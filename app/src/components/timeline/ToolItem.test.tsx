@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import ToolItem from './ToolItem'
 import ArtifactCard from './ArtifactCard'
 import StatePill from '../StatePill'
-import type { AgentItem, ArtifactItem, ToolItem as Tool } from '../../lib/timeline'
+import type { ArtifactItem, ToolItem as Tool } from '../../lib/timeline'
 
 afterEach(cleanup)
 
@@ -70,13 +70,6 @@ describe('ToolItem', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Open' }))
     expect(onOpenFile).toHaveBeenCalledWith('/p/docs/r.md')
   })
-  it('subagent row shows its answer, or the live text while running', () => {
-    const a: AgentItem = { t: 'agent', seq: 1, id: 'a', type: 'Explore', description: 'searches', status: 'running' }
-    render(<ToolItem item={a} live="LIVE" />)
-    expect(screen.getByLabelText('running')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: /searches/ }))
-    expect(screen.getByText('LIVE')).toBeTruthy()
-  })
 })
 
 describe('ArtifactCard', () => {
@@ -135,15 +128,6 @@ describe('ToolItem: background rows without a task_end', () => {
   it('closed session: settled even when listed', () => {
     render(<ToolItem item={tool({ bg: { taskId: 'b1' } })} bgEnded={rule(listed, 'closed')} />)
     expect(screen.getByText('Ended')).toBeTruthy()
-  })
-  it('background subagent row: running in background, then Ended', () => {
-    const a: AgentItem = { t: 'agent', seq: 1, id: 'ag', type: 'general-purpose', description: 'Audit', status: 'running', bg: { taskId: 'ag' } }
-    const { rerender } = render(<ToolItem item={a} bgEnded={() => false} />)
-    expect(screen.getByText('Running in background')).toBeTruthy()
-    rerender(<ToolItem item={a} bgEnded={() => true} />)
-    expect(screen.getByText('Ended')).toBeTruthy()
-    rerender(<ToolItem item={{ ...a, bg: { taskId: 'ag', status: 'completed' }, status: 'running' }} bgEnded={() => false} />)
-    expect(screen.queryByText('Running in background')).toBeNull()
   })
 })
 

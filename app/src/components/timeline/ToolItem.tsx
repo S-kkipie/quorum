@@ -4,9 +4,8 @@ import {
   ListTodo, Loader2, Plug, Search, Sparkles, Square, Terminal, Wrench, X, type LucideIcon,
 } from 'lucide-react'
 import { Tool as ToolBox, ToolContent, ToolHeader } from '@/components/ai-elements/tool'
-import { cn } from '@/lib/utils'
 import { toolPartState, toolView, type ToolView } from '../../lib/elements'
-import { absPath, basename, inBases, type AgentItem, type OpenOpts, type ReadsItem, type ToolItem as Tool, type ToolKind } from '../../lib/timeline'
+import { absPath, basename, inBases, type OpenOpts, type ReadsItem, type ToolItem as Tool, type ToolKind } from '../../lib/timeline'
 import ViewThumb from './ViewThumb'
 
 // Colour only where it carries meaning: changes to files in the accent, subagents and skills in the
@@ -40,8 +39,8 @@ const MAX_LINES = 200
 const MAX_CHARS = 4000
 
 /** What a call that started background work shows: running (until its task_end), then done / failed / stopped. */
-type Bg = 'running' | 'done' | 'failed' | 'stopped' | 'ended'
-function bgState(t: { bg?: { taskId: string; status?: string } }, ended?: (id: string) => boolean): Bg | undefined {
+export type Bg = 'running' | 'done' | 'failed' | 'stopped' | 'ended'
+export function bgState(t: { bg?: { taskId: string; status?: string } }, ended?: (id: string) => boolean): Bg | undefined {
   if (!t.bg) return undefined
   const st = t.bg.status
   if (st === undefined) return ended?.(t.bg.taskId) ? 'ended' : 'running'
@@ -194,16 +193,16 @@ function ReadThumbs({ files, machine, sessionId, onOpenFile, onMore }: {
 }
 
 /** A collapsed row on the vendored Tool (Radix Collapsible); the header toggles the detail. */
-function Row({ name, view, tint, Icon, right, nested, below, bg, children }: {
+function Row({ name, view, tint, Icon, right, below, bg, children }: {
   bg?: Bg
-  name: string; view: ToolView; tint: string; Icon: LucideIcon; right?: ReactNode; nested?: boolean
+  name: string; view: ToolView; tint: string; Icon: LucideIcon; right?: ReactNode
   /** shown under the header whether or not the row is open; `expand` opens the row */
   below?: (expand: () => void) => ReactNode
   children: ReactNode
 }) {
   const [open, setOpen] = useState(false)
   return (
-    <ToolBox open={open} onOpenChange={setOpen} className={cn('my-1 rounded-xl border border-line bg-surface', nested && 'ml-5')}>
+    <ToolBox open={open} onOpenChange={setOpen} className="my-1 rounded-xl border border-line bg-surface">
       <ToolHeader
         type="dynamic-tool" toolName={name} title={view.title} state={toolPartState(view.state)}
         className="group/row min-h-11 gap-2.5 rounded-xl px-2 py-0 text-left text-muted-foreground transition-colors duration-100 hover:bg-chip active:bg-chip"
@@ -219,14 +218,12 @@ function Row({ name, view, tint, Icon, right, nested, below, bg, children }: {
 
 /**
  * One timeline action as a short, collapsed row; tapping it shows the detail for its kind.
- * Handles single tools, merged reads and subagents.
+ * Handles single tools and merged reads (a subagent is an AgentCard).
  */
-export default function ToolItem({ item, live, base = '', worktrees = [], machine = '', sessionId = '', onOpenFile, bgEnded }: {
-  item: Tool | ReadsItem | AgentItem
+export default function ToolItem({ item, base = '', worktrees = [], machine = '', sessionId = '', onOpenFile, bgEnded }: {
+  item: Tool | ReadsItem
   /** the task left the session's live items without a task_end */
   bgEnded?: (taskId: string) => boolean
-  /** streamed text of a running subagent */
-  live?: string
   /** session base: decides whether an edited file can be opened */
   base?: string
   /** the git worktrees of the session's repo: edited files in them open too */
@@ -236,17 +233,6 @@ export default function ToolItem({ item, live, base = '', worktrees = [], machin
   sessionId?: string
   onOpenFile?: (path: string, o?: OpenOpts) => void
 }) {
-  if (item.t === 'agent') {
-    const bg = bgState(item, bgEnded)
-    const running = item.status === 'running' && (!bg || bg === 'running')
-    const view: ToolView = { title: item.description || 'Subagent', icon: 'agent', state: running ? 'running' : /error|fail/i.test(item.status) ? 'error' : 'done' }
-    return (
-      <Row name="Agent" view={view} Icon={Bot} tint={KIND.agent.tint} bg={running ? undefined : bg}
-        right={bgNote(running && !!item.bg ? 'running' : bg) ?? (item.type ? <span className="min-w-0 max-w-[35%] shrink truncate text-[13px] text-muted-foreground">{item.type}</span> : undefined)}>
-        <Pre>{clip(item.answer || live || (running ? 'Working…' : '(no answer)'))}</Pre>
-      </Row>
-    )
-  }
   const view = toolView(item)
   const bg = item.t === 'tool' ? bgState(item, bgEnded) : undefined
   if (bg === 'failed') view.state = 'error'
@@ -254,7 +240,7 @@ export default function ToolItem({ item, live, base = '', worktrees = [], machin
   const thumbs = (tools: Tool[]) => (expand: () => void) => <ReadThumbs files={readImages(tools)} machine={machine} sessionId={sessionId} onOpenFile={onOpenFile} onMore={expand} />
   if (item.t === 'reads') {
     return (
-      <Row name="Read" view={view} Icon={k.icon} tint={k.tint} nested={!!item.agent} below={thumbs(item.tools)}>
+      <Row name="Read" view={view} Icon={k.icon} tint={k.tint} below={thumbs(item.tools)}>
         <Pre>{clip(item.files.join('\n'))}</Pre>
       </Row>
     )
@@ -267,7 +253,7 @@ export default function ToolItem({ item, live, base = '', worktrees = [], machin
     </span>
   )
   return (
-    <Row name={item.name} view={view} Icon={k.icon} tint={k.tint} right={bgNote(bg) ?? diff} bg={bg} nested={!!item.agent} below={item.kind === 'read' ? thumbs([item]) : undefined}>
+    <Row name={item.name} view={view} Icon={k.icon} tint={k.tint} right={bgNote(bg) ?? diff} bg={bg} below={item.kind === 'read' ? thumbs([item]) : undefined}>
       <ToolDetail t={item} />
       {canOpen && (
         <button type="button" onClick={() => onOpenFile?.(absPath(item.file!, base))}

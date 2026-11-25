@@ -12,9 +12,29 @@ export type ToolItem = {
   bg?: { taskId: string; status?: string }
 }
 export type ReadsItem = { t: 'reads'; seq: number; files: string[]; title: string; state: ToolState; agent?: string; tools: ToolItem[] }
+/**
+ * A subagent: its Agent call and its agent_start/agent_end as one card. `id` is the agent's id once
+ * known (agent_start, or a background launch's task id), else its Agent call's id.
+ */
 export type AgentItem = { t: 'agent'; seq: number; id: string; type: string; description: string; status: string; answer?: string
   /** a background subagent: its Agent call's task id (= this id) and, once ended, the task_end status */
-  bg?: { taskId: string; status?: string } }
+  bg?: { taskId: string; status?: string }
+  /** the Agent call that started it */
+  toolId?: string
+  /** the task it was given (the Agent call's prompt) */
+  prompt?: string
+  /** the subagent that spawned it (absent for one of the main conversation) */
+  agent?: string
+  /** its own tool calls so far, and the newest one's title (set by partitionTimeline) */
+  steps?: number
+  lastTool?: string
+  /** event times (Unix ms) of its start and end, when known */
+  startedAt?: number
+  endedAt?: number
+  /** tokens it used, when its Agent call's result says */
+  tokens?: number }
+/** Subagents launched together (consecutive Agent calls a few seconds apart): one card. */
+export type AgentGroupItem = { t: 'agents'; seq: number; agents: AgentItem[] }
 export type ArtifactItem = { t: 'artifact'; seq: number; path: string; name: string; inBase: boolean }
 /** A slash command a device ran: one item per command id, with its latest status. */
 export type CommandItem = { t: 'command'; seq: number; id: string; name: string; args: string; origin: string; status: 'queued' | 'done' | 'failed'; text?: string; error?: string }
@@ -290,9 +310,12 @@ export function buildTimeline(events: Event[], base: string, worktrees: readonly
   const flat: Item[] = []
   const tools = new Map<string, ToolItem>()
   // background tasks: tool rows by task id, and the status of tasks that already ended (a task_end can come first)
-  const bgTools = new Map<string, ToolItem[]>()
+  const bgTools = new Map<string, { bg?: { taskId: string; status?: string } }[]>()
   const taskEnds = new Map<string, { status: string; synthetic: boolean; item: TaskEndItem }>()
   const agents = new Map<string, AgentItem>()
+  // Agent calls by tool id, and those not yet tied to an agent_start (oldest first)
+  const agentCalls = new Map<string, AgentItem>()
+  let unlinked: AgentItem[] = []
   const commands = new Map<string, CommandItem>()
   // user events of commands a device ran: the command card shows them (see hideDeviceCommands)
   const deviceCommands = new Set<Item>()
@@ -320,6 +343,18 @@ export function buildTimeline(events: Event[], base: string, worktrees: readonly
         const name: string = d.name ?? ''
         const kind = toolKind(name)
         // backfilled history (negative seq) has no tool_end: it is shown as finished
+        if (kind === 'agent') {
+          // the call is the subagent's card: agent_start / agent_end / its own tool_end fill it in
+          const i = d.input && typeof d.input === 'object' ? d.input : {}
+          const a: AgentItem = {
+            t: 'agent', seq, id: d.id, toolId: d.id, type: str(i.subagent_type) ?? '', description: str(i.description) ?? str(d.summary) ?? '',
+            status: seq < 0 ? 'completed' : 'running', ...(str(i.prompt) ? { prompt: i.prompt } : {}), ...(d.agent ? { agent: d.agent } : {}), ...(e.ts ? { startedAt: e.ts } : {}),
+          }
+          agentCalls.set(d.id, a)
+          if (seq >= 0) unlinked.push(a)
+          flat.push(a)
+          break
+        }
         const t: ToolItem = { t: 'tool', seq, id: d.id, name, kind, ...describe(name, kind, d.input, d.summary ?? ''), input: d.input, state: seq < 0 ? 'ok' : 'running', agent: d.agent || undefined }
         tools.set(d.id, t)
         flat.push(t)
@@ -330,6 +365,32 @@ export function buildTimeline(events: Event[], base: string, worktrees: readonly
         const ok = d.ok !== false
         const output: string = d.output ?? ''
         const state: ToolState = ok ? 'ok' : DENIED.test(output) ? 'denied' : 'error'
+        const call = agentCalls.get(d.id)
+        if (call) {
+          const taskId = ok ? str(d.background?.taskId) : undefined
+          unlinked = unlinked.filter((x) => x !== call)
+          if (taskId) {
+            // a background launch: its task id is the agent's id (an agent_start not tied to the call yet joins it)
+            const other = agents.get(taskId)
+            if (other && other !== call) {
+              const i = flat.indexOf(other)
+              if (i >= 0) flat.splice(i, 1)
+              Object.assign(call, { type: call.type || other.type, description: call.description || other.description, status: other.status, answer: other.answer, endedAt: other.endedAt })
+            }
+            call.id = taskId
+            agents.set(taskId, call)
+            call.bg = { taskId, ...(taskEnds.has(taskId) ? { status: taskEnds.get(taskId)!.status } : {}) }
+            bgTools.set(taskId, [...(bgTools.get(taskId) ?? []), call])
+          } else if (call.status === 'running') {
+            // a foreground subagent ends with its call (its agent_end may be missing)
+            call.status = ok ? 'completed' : 'error'
+            if (!call.answer && output) call.answer = output
+            if (e.ts && !call.endedAt) call.endedAt = e.ts
+          }
+          const tok = output.match(/"?total_?tokens"?\s*[:=]\s*(\d+)/i)
+          if (tok) call.tokens = Number(tok[1])
+          break
+        }
         const t = tools.get(d.id)
         if (t) {
           const was = t.state
@@ -346,7 +407,25 @@ export function buildTimeline(events: Event[], base: string, worktrees: readonly
         break
       }
       case 'agent_start': {
-        const a: AgentItem = { t: 'agent', seq, id: d.id, type: d.type ?? '', description: d.description ?? '', status: 'running' }
+        if (typeof d.id !== 'string' || !d.id) break
+        const parent: string | undefined = d.agent || undefined
+        // a background launch already named it (its task id is the agent's id)
+        const known = agents.get(d.id)
+        if (known) {
+          Object.assign(known, { type: str(d.type) ?? known.type, description: str(d.description) ?? known.description }, parent ? { agent: parent } : {})
+          break
+        }
+        // its Agent call: named by the mod, else the oldest running one of the same description, else of the same parent
+        const call = (str(d.tool) && unlinked.find((x) => x.toolId === d.tool))
+          || unlinked.find((x) => x.description === (d.description ?? '') && (!parent || x.agent === parent))
+          || unlinked.find((x) => x.agent === parent)
+        if (call) {
+          unlinked = unlinked.filter((x) => x !== call)
+          Object.assign(call, { id: d.id, type: str(d.type) ?? call.type, description: str(d.description) ?? call.description }, parent ? { agent: parent } : {})
+          agents.set(d.id, call)
+          break
+        }
+        const a: AgentItem = { t: 'agent', seq, id: d.id, type: d.type ?? '', description: d.description ?? '', status: 'running', ...(parent ? { agent: parent } : {}), ...(e.ts ? { startedAt: e.ts } : {}) }
         agents.set(d.id, a)
         flat.push(a)
         break
@@ -389,14 +468,14 @@ export function buildTimeline(events: Event[], base: string, worktrees: readonly
       }
       case 'agent_end': {
         const a = agents.get(d.id)
-        if (a) Object.assign(a, { status: d.status ?? 'done', answer: d.answer })
+        if (a) Object.assign(a, { status: d.status ?? 'done', answer: d.answer || a.answer }, e.ts ? { endedAt: e.ts } : {})
         break
       }
     }
   }
 
   // a background subagent's own row follows its launching Agent call (task id = agent id)
-  for (const [id, a] of agents) { const t = bgTools.get(id)?.[0]; if (t?.bg) a.bg = { ...t.bg } }
+  for (const [id, a] of agents) { const t = bgTools.get(id)?.[0]; if (t?.bg && !a.bg) a.bg = { ...t.bg } }
 
   hideDeviceCommands(flat, deviceCommands)
 
@@ -424,3 +503,4 @@ export function buildTimeline(events: Event[], base: string, worktrees: readonly
   flush()
   return out
 }
+

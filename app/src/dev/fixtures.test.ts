@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { buildTimeline } from '../lib/timeline'
+import { partitionTimeline } from '../lib/subagents'
 import { fixtureBriefing, fixtureConversations, fixtureEvents, fixtureHistory, fixtureState, LONG_SESSION, TOOL_OUTPUT_MAX } from './fixtures'
 import type { Event } from '../proto.gen'
 
@@ -32,6 +33,16 @@ describe('worst', () => {
     const items = buildTimeline(s.events[sid], s.sessions[sid].root)
     const kinds = new Set(items.map((i) => (i.t === 'tool' ? i.kind : i.t)))
     for (const k of ['user', 'assistant', 'reads', 'edit', 'bash', 'web_search', 'skill', 'agent', 'artifact']) expect(kinds.has(k as any)).toBe(true)
+  })
+  it('has three subagents launched together and one nested inside the second', () => {
+    const sid = Object.keys(s.events)[0]
+    const tl = partitionTimeline(buildTimeline(s.events[sid], s.sessions[sid].root))
+    const group = tl.main.find((r) => r.t === 'agents')
+    expect(group && group.t === 'agents' && group.agents.map((a) => a.id)).toEqual(['ag1', 'ag2', 'ag3'])
+    expect(tl.main.some((r) => 'agent' in r && !!r.agent)).toBe(false)
+    expect(tl.byAgent.get('ag2')!.some((r) => r.t === 'agent' && r.id === 'ag4')).toBe(true)
+    expect(tl.agents.get('ag3')).toMatchObject({ status: 'running', bg: { taskId: 'ag3' } })
+    expect(tl.agents.get('ag1')).toMatchObject({ status: 'completed', steps: 3, tokens: 41_200 })
   })
   it('lists 40 conversations per checkout', async () => {
     const co = Object.values(s.checkouts).flat()

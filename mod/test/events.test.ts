@@ -91,6 +91,20 @@ test('service role: status only', async () => {
   expect(f.updates).toEqual([{ state: 'working' }, { state: 'idle', background: { tasks: 0, wakeAt: 0 } }])
 })
 
+test('agent_start names its Agent call and the agent that spawned it', async () => {
+  const f = fakeLink()
+  const h = makeHandlers(() => f.link)
+  h.agentSpawn({ subagentType: 'Explore', description: 'look', tool_use_id: 'tu1' }, { agentId: 'ag1' })
+  h.agentSpawn({ subagentType: 'Plan', description: 'deeper', tool_use_id: 'tu2', parentAgentId: 'ag1' }, { agentId: 'ag2' })
+  h.agentSpawn({ subagentType: 'fork', description: 'f', tool_use_id: '' }, { agentId: 'ag3' })
+  await flush()
+  expect(f.evs.map(e => e.data)).toEqual([
+    { id: 'ag1', type: 'Explore', description: 'look', tool: 'tu1' },
+    { agent: 'ag1', id: 'ag2', type: 'Plan', description: 'deeper', tool: 'tu2' },
+    { id: 'ag3', type: 'fork', description: 'f' },
+  ])
+})
+
 test('without a link: does nothing and does not throw', () => {
   const h = makeHandlers(() => undefined)
   h.turnStart({ text: 'x' })

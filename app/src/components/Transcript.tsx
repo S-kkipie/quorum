@@ -10,13 +10,16 @@ import { PathLinksProvider } from '@/components/ai-elements/pathLinks'
 import { Shimmer } from '@/components/ai-elements/shimmer'
 import type { Event } from '../proto.gen'
 import { formatTokens } from '../lib/meters'
-import { buildTimeline, itemKey, type Item, type OpenOpts } from '../lib/timeline'
+import { buildTimeline, type OpenOpts } from '../lib/timeline'
+import { partitionTimeline, shownKey, type Shown } from '../lib/subagents'
 import ArtifactCard from './timeline/ArtifactCard'
 import CommandCard from './timeline/CommandCard'
 import PastedImages from './timeline/PastedImages'
 import UploadedFiles from './timeline/UploadedFiles'
 import { splitUploads } from '../lib/attachments'
 import ToolItem from './timeline/ToolItem'
+import AgentCard from './timeline/AgentCard'
+import AgentScreen from './timeline/AgentScreen'
 import TaskCard from './TaskCard'
 
 /**
@@ -69,7 +72,7 @@ function TranscriptScroll({ className, children }: { className?: string; childre
 }
 
 /** A row of the virtual list: a timeline item, the collapsed earlier conversation, or the top row. */
-type Row = { key: string } & ({ kind: 'item'; item: Item } | { kind: 'earlier'; count: number } | { kind: 'head' })
+type Row = { key: string } & ({ kind: 'item'; item: Shown } | { kind: 'earlier'; count: number } | { kind: 'head' })
 
 /** A request to scroll to a row by its key; a new `n` asks again for the same key. */
 export type Focus = { key: string; n: number }
@@ -165,9 +168,14 @@ export default function Transcript({ events, base = '', worktrees, machine = '',
   // a stable list while its contents stay the same (every session update brings a new array)
   const wtKey = (worktrees ?? []).join('\u0000')
   const wts = useMemo(() => (wtKey ? wtKey.split('\u0000') : []), [wtKey])
-  const items = useMemo(() => buildTimeline(events, base, wts), [events, base, wts])
+  // the main conversation only: each subagent's work lives on its own screen (its card opens it)
+  const tl = useMemo(() => partitionTimeline(buildTimeline(events, base, wts)), [events, base, wts])
+  const items = tl.main
+  const [agentStack, setAgentStack] = useState<string[]>([])
+  const openAgent = useCallback((id: string) => setAgentStack((s) => (s[s.length - 1] === id ? s : [...s, id])), [])
   const last = events[events.length - 1]
-  const thinking = last?.kind === 'thinking'
+  // a subagent thinking shows on its own screen, not as the session's indicator
+  const thinking = last?.kind === 'thinking' && !last.data?.agent
   const indicator = live ? '' : thinking ? 'Thinking…' : working ? 'Working…' : ''
 
   // Everything before the newest compact folds into one row until the reader asks for it (a tap,
@@ -189,17 +197,20 @@ export default function Transcript({ events, base = '', worktrees, machine = '',
       if (notice || loading) out.push({ key: 'head', kind: 'head' })
       const count = items.slice(0, newestCompact).filter((r) => r.t === 'user' || (r.t === 'assistant' && !r.agent)).length
       out.push({ key: 'earlier', kind: 'earlier', count })
-      for (const it of items.slice(newestCompact)) out.push({ key: itemKey(it), kind: 'item', item: it })
+      for (const it of items.slice(newestCompact)) out.push({ key: shownKey(it), kind: 'item', item: it })
       return out
     }
     if (notice || loading || hasMore) out.push({ key: 'head', kind: 'head' })
-    for (const it of items) out.push({ key: itemKey(it), kind: 'item', item: it })
+    for (const it of items) out.push({ key: shownKey(it), kind: 'item', item: it })
     return out
   }, [items, collapsed, newestCompact, notice, loading, hasMore])
+  // a subagent's row is reached through its card in the main transcript
+  const ownerKey = focus ? tl.owner.get(focus.key) : undefined
+  const target = useMemo(() => (focus && ownerKey ? { key: ownerKey, n: focus.n } : focus), [focus, ownerKey])
   // a row folded away by a compact is unfolded when the inspector asks for it
-  const wantFolded = !!focus && collapsed && !rows.some((r) => r.key === focus.key) && items.some((it) => itemKey(it) === focus.key)
+  const wantFolded = !!target && collapsed && !rows.some((r) => r.key === target.key) && items.some((it) => shownKey(it) === target.key)
   const [unfoldedFor, setUnfoldedFor] = useState(0)
-  if (wantFolded && focus && unfoldedFor !== focus.n) { setUnfoldedFor(focus.n); setExpanded(true) }
+  if (wantFolded && target && unfoldedFor !== target.n) { setUnfoldedFor(target.n); setExpanded(true) }
   const firstKey = rows.find((r) => r.kind !== 'head')?.key
 
   const more = useRef(onLoadMore)
@@ -216,8 +227,9 @@ export default function Transcript({ events, base = '', worktrees, machine = '',
   const openUpload = useCallback((p: string, o: { upload: true }) => open.current?.(p, o), [])
   const linkBase = onOpenFile ? base : ''
 
-  const renderItem = (r: Item): ReactNode => {
+  const renderItem = (r: Shown): ReactNode => {
     switch (r.t) {
+      case 'agents': return <AgentCard agents={r.agents} bgEnded={bgEnded} onOpen={openAgent} />
       case 'user': {
         // files attached from a device are mentioned as @<path> of the machine's uploads folder: shown as chips
         const cmdText = r.command ? (r.command.args ? `/${r.command.name} ${r.command.args}` : `/${r.command.name}`) : ''
@@ -241,7 +253,7 @@ export default function Transcript({ events, base = '', worktrees, machine = '',
         )
       }
       case 'assistant': return (
-        <Message from="assistant" role="article" aria-label={r.agent ? 'Subagent' : 'Claude'} className={`my-2 max-w-full ${r.agent ? 'ml-5 w-auto opacity-70' : ''}`}>
+        <Message from="assistant" role="article" aria-label={r.agent ? 'Subagent' : 'Claude'} className="my-2 max-w-full">
           <MessageContent className={answer}><MessageResponse>{r.text}</MessageResponse></MessageContent>
         </Message>
       )
@@ -253,7 +265,7 @@ export default function Transcript({ events, base = '', worktrees, machine = '',
       )
       case 'info': return <Message from="system" role="note" className="my-2 max-w-full text-center text-xs text-muted-foreground">{r.text}</Message>
       case 'tool': case 'reads': return <ToolItem item={r} base={base} worktrees={wts} machine={machine} sessionId={sessionId} onOpenFile={onOpenFile} bgEnded={bgEnded} />
-      case 'agent': return <ToolItem item={r} live={liveAgent?.[r.id]} bgEnded={bgEnded} />
+      case 'agent': return <AgentCard agents={[r]} bgEnded={bgEnded} onOpen={openAgent} />
       case 'artifact': return <ArtifactCard item={r} machine={machine} base={base} onOpen={onOpenFile} />
       case 'command': return <CommandCard item={r} />
       case 'compact': {
@@ -293,7 +305,7 @@ export default function Transcript({ events, base = '', worktrees, machine = '',
     <PathLinksProvider base={linkBase} worktrees={wts} onOpen={openPath}>
     <Conversation className="min-h-0" initial="instant">
       <TranscriptScroll className="px-3 py-2 sm:px-4">
-        <VirtualRows rows={rows} render={renderRow} focus={focus} />
+        <VirtualRows rows={rows} render={renderRow} focus={target} />
         {live && (
           <Message from="assistant" role="article" aria-label="Claude" className="my-2 max-w-full">
             <MessageContent className={answer}>
@@ -307,6 +319,8 @@ export default function Transcript({ events, base = '', worktrees, machine = '',
       <ConversationScrollButton aria-label="Scroll to bottom" className="size-11" />
       <HistoryLoader firstKey={firstKey} hasMore={hasMore} autoLoad={autoLoad && !collapsed && !notice && !loading} onLoadMore={loadOlder} onAtBottom={onAtBottom} />
     </Conversation>
+    <AgentScreen stack={agentStack} tl={tl} liveAgent={liveAgent} bgEnded={bgEnded} render={renderItem}
+      onBack={() => setAgentStack((s) => s.slice(0, -1))} onClose={() => setAgentStack([])} />
     </PathLinksProvider>
   )
 }

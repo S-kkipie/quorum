@@ -135,7 +135,8 @@ describe('buildTimeline', () => {
       start('g', 'TodoWrite', undefined, { summary: '' }), end('g'),
     ], BASE)
     const titles = items.filter((i) => i.t === 'tool').map((i: any) => i.title)
-    expect(titles).toEqual(['Read main.go', 'go test ./...', 'Searched TODO', 'Edited y.go', 'Read example.com', 'Subagent: description=look around', 'Updated the plan'])
+    expect(titles).toEqual(['Read main.go', 'go test ./...', 'Searched TODO', 'Edited y.go', 'Read example.com', 'Updated the plan'])
+    expect(items.find((i) => i.t === 'agent')).toMatchObject({ description: 'description=look around', status: 'completed' })
     expect(tool(items, 3)).toMatchObject({ file: '/x/y.go' })
     expect(tool(items, 3).diff).toBeUndefined()
   })
@@ -151,12 +152,12 @@ describe('buildTimeline', () => {
       start('7', 'NotebookRead', {}),
       start('8', 'Write', { file_path: 'C:\\Users\\u\\p\\a.txt' }),
     ], BASE)
-    expect(items.map((i: any) => [i.kind, i.title])).toEqual([
+    expect(items[4]).toMatchObject({ t: 'agent', description: 'find callers', type: 'Explore', status: 'running' })
+    expect(items.filter((i) => i.t !== 'agent').map((i: any) => [i.kind, i.title])).toEqual([
       ['bash', 'Run tests'],
       ['search', 'Searched **/*.ts'],
       ['web_search', 'Searched "vite 7"'],
       ['skill', 'Used skill brainstorming'],
-      ['agent', 'Subagent: find callers'],
       ['mcp', 'Used search_threads (claude_ai_Gmail)'],
       ['other', 'NotebookRead'],
       ['write', 'Created a.txt'],

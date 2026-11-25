@@ -66,6 +66,48 @@ const wide = (n: number): string => {
   return padTo(out.join('\n'), n)
 }
 
+/**
+ * Three subagents launched together (one card): a finished audit, a mapper that spawns a nested
+ * subagent of its own, and one still running in the background; their work is tagged with `agent`.
+ */
+function subagentEvents(id: string, root: string): Event[] {
+  const call = (tid: string, description: string, type: string, prompt: string, agent = '') =>
+    ev(id, 'tool_start', { id: tid, name: 'Agent', summary: '', agent, input: { description, subagent_type: type, prompt } })
+  const spawn = (agentId: string, tid: string, description: string, type: string, agent?: string) =>
+    ev(id, 'agent_start', { id: agentId, type, description, tool: tid, ...(agent ? { agent } : {}) })
+  const step = (tid: string, name: string, input: any, output: string, agent: string): Event[] => [
+    ev(id, 'tool_start', { id: tid, name, summary: '', agent, input }),
+    ev(id, 'tool_end', { id: tid, ok: true, ms: 120, output, agent }),
+  ]
+  const finish = (agentId: string, tid: string, answer: string, tokens: number, agent = ''): Event[] => [
+    ev(id, 'agent_end', { id: agentId, status: 'completed', answer }),
+    ev(id, 'tool_end', { id: tid, ok: true, ms: 9000, output: `${answer}\n{"totalTokens": ${tokens}}`, agent }),
+  ]
+  return [
+    call('sa1', 'Audit every caller of the event reducer for ordering assumptions', 'Explore', 'Find every caller of reduceEvents() and say whether any assumes events arrive in seq order. ' + 'Be thorough. '.repeat(20)),
+    call('sa2', 'Map the reconnect path of the hub', 'general-purpose', 'Trace what happens from a dropped socket to the first replayed event.'),
+    call('sa3', 'Watch the flaky sync test', 'general-purpose', 'Run the sync test in a loop and report the first failure.'),
+    spawn('ag1', 'sa1', 'Audit every caller of the event reducer for ordering assumptions', 'Explore'),
+    spawn('ag2', 'sa2', 'Map the reconnect path of the hub', 'general-purpose'),
+    spawn('ag3', 'sa3', 'Watch the flaky sync test', 'general-purpose'),
+    ev(id, 'tool_end', { id: 'sa3', ok: true, ms: 40, output: 'Async agent launched', background: { taskId: 'ag3' } }),
+    ...step('g1', 'Grep', { pattern: 'reduceEvents\\(', path: root + '/src' }, 'src/lib/store.ts\nsrc/lib/live.ts\nsrc/lib/history.ts', 'ag1'),
+    ...step('g2', 'Read', { file_path: root + '/src/lib/store.ts' }, 'ok', 'ag1'),
+    ...step('h1', 'Bash', { command: 'rg -n "reconnect" internal/hub', description: 'Find the reconnect code' }, 'internal/hub/ws.go:88: func reconnect', 'ag2'),
+    call('sa4', 'Check the backfill ordering', 'Plan', 'Read the backfill code and say whether pages can arrive out of order.', 'ag2'),
+    spawn('ag4', 'sa4', 'Check the backfill ordering', 'Plan', 'ag2'),
+    ...step('n1', 'Read', { file_path: root + '/internal/hub/backfill.go' }, 'ok', 'ag4'),
+    ev(id, 'assistant', { text: 'Pages are requested one at a time, so they cannot arrive out of order.', agent: 'ag4' }),
+    ...finish('ag4', 'sa4', 'Pages cannot arrive out of order.', 9_800, 'ag2'),
+    ...step('g3', 'Read', { file_path: root + '/src/lib/live.ts' }, 'ok', 'ag1'),
+    ev(id, 'assistant', { text: 'Found 3 callers; none assume ordering. ' + 'Details. '.repeat(40), agent: 'ag1' }),
+    ...finish('ag1', 'sa1', 'Found 3 callers; none assume ordering.', 41_200),
+    ...step('w1', 'Bash', { command: 'for i in $(seq 50); do go test ./internal/sync -run TestSync || break; done', run_in_background: false }, 'ok 1/50', 'ag3'),
+    ev(id, 'assistant', { text: 'The reconnect path re-subscribes, then backfills from the last seen seq.', agent: 'ag2' }),
+    ...finish('ag2', 'sa2', 'The reconnect path re-subscribes, then backfills from the last seen seq.', 27_500),
+  ]
+}
+
 // The non-English Unicode left in these fixtures (CJK, Greek, Arabic, accented Latin) is deliberate i18n stress data.
 /** A full session transcript: every row type the session view renders. */
 function worstEvents(id: string, root: string): Event[] {
@@ -81,8 +123,7 @@ function worstEvents(id: string, root: string): Event[] {
     ...tool(id, 'b2', 'Bash', { command: 'false' }, 'exit status 1', false),
     ...tool(id, 'w1', 'WebSearch', { query: 'websocket reconnect backfill duplicate events ordering' }, 'ok'),
     ...tool(id, 's1', 'Skill', { skill: 'superpowers:systematic-debugging' }, 'ok'),
-    ev(id, 'agent_start', { id: 'ag1', type: 'general-purpose', description: 'Audit every caller of the event reducer for ordering assumptions' }),
-    ev(id, 'agent_end', { id: 'ag1', status: 'done', answer: 'Found 3 callers; none assume ordering. ' + 'Details. '.repeat(40) }),
+    ...subagentEvents(id, root),
     ...tool(id, 'a1', 'Write', { file_path: doc, content: '<h1>Summary</h1>' }, 'ok'),
     ev(id, 'assistant', { text: 'Done. The report is above.' }),
     ev(id, 'turn_end', { reason: 'end', outputTokens: 340, tokens: { in: 1200, out: 340, cache: 4100 }, model: 'claude-haiku-5-5' }),
