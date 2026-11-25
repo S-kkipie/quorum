@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import Composer from './Composer'
 import type { SessionCommands, SessionInfo } from '../proto.gen'
 
-const DIR = '/home/u/.config/quorum/uploads/2026-11-25'
+const DIR = '/home/u/.cache/quorum/uploads/2026-11-25'
 let uploads = 0
 let failName = ''
 const fetchMock = vi.fn(async (u: string, i?: RequestInit) => {

@@ -2,7 +2,8 @@
  * Files attached to a chat message. Each one is uploaded once to the session's machine (the hub
  * relays it), then the message mentions it as `@<absolute path>`: one mention per line before the
  * text, or appended after a slash command with spaces. The machine saves every file as
- * `<data dir>/uploads/<yyyy-mm-dd>/<6 hex>-<sanitized name>`, so the paths never hold a space.
+ * `<user cache dir>/quorum/uploads/<yyyy-mm-dd>/<6 hex>-<sanitized name>` and refuses a cache
+ * folder whose path has a space, so the paths never hold one.
  */
 
 export const MAX_FILES = 10
@@ -56,11 +57,18 @@ export function buildMessage(text: string, paths: readonly string[]): string {
   return text ? [...mentions, text].join('\n') : mentions.join('\n')
 }
 
-// an upload's absolute path: Unix or Windows, ending in uploads/<yyyy-mm-dd>/<6 hex>-<name>
-const UPLOAD_SRC = String.raw`(?:[A-Za-z]:)?[\\/](?:[^\s\\/]+[\\/])*uploads[\\/]\d{4}-\d{2}-\d{2}[\\/][0-9a-f]{6}-[A-Za-z0-9_.-]+`
+// an upload's absolute path, Unix or Windows, in the machine's user cache folder (Linux
+// ~/.cache, Windows %LocalAppData%, macOS ~/Library/Caches): …/quorum/uploads/<yyyy-mm-dd>/<6 hex>-<name>
+const UPLOAD_SRC = String.raw`(?:[A-Za-z]:)?[\\/](?:[^\s\\/]+[\\/])*quorum[\\/]uploads[\\/]\d{4}-\d{2}-\d{2}[\\/][0-9a-f]{6}-[A-Za-z0-9_.-]+`
 const MENTION = new RegExp(String.raw`(^|\s)@(` + UPLOAD_SRC + String.raw`)(?=\s|$)`, 'g')
 
 export interface UploadRef { path: string; name: string; image: boolean }
+
+/**
+ * Key and certificate files the hub never serves (what viewguard.Sensitive refuses of an upload's
+ * name: a sanitized name never starts with a dot, and the 6-hex prefix hides an id_rsa start).
+ */
+export const keyFile = (name: string): boolean => /\.(pem|key|p12|pfx)$/i.test(name)
 
 const IMAGE = /\.(png|jpe?g|gif|webp|bmp|avif)$/i
 

@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { addFiles, buildMessage, formatSize, MAX_FILE_BYTES, splitUploads, uploadName } from './attachments'
+import { addFiles, buildMessage, formatSize, keyFile, MAX_FILE_BYTES, splitUploads, uploadName } from './attachments'
 
 const file = (name: string, size = 3, type = 'image/png') => {
   const f = new File(['x'], name, { type })
   Object.defineProperty(f, 'size', { value: size })
   return f
 }
-const P1 = '/home/u/.config/quorum/uploads/2026-11-25/a1b2c3-photo.jpg'
-const P2 = '/home/u/.config/quorum/uploads/2026-11-25/d4e5f6-report.pdf'
-const W1 = 'C:\\Users\\u\\.config\\quorum\\uploads\\2026-11-25\\0a0b0c-clip.mp4'
+const P1 = '/home/u/.cache/quorum/uploads/2026-11-25/a1b2c3-photo.jpg'
+const P2 = '/home/u/.cache/quorum/uploads/2026-11-25/d4e5f6-report.pdf'
+const W1 = 'C:\\Users\\u\\AppData\\Local\\quorum\\uploads\\2026-11-25\\0a0b0c-clip.mp4'
 
 describe('attachments', () => {
   it('adds up to 10 files and rejects the rest', () => {
@@ -41,9 +41,14 @@ describe('attachments', () => {
     expect(splitUploads(`@${P1}`).text).toBe('')
   })
   it('leaves other mentions and look-alikes alone', () => {
-    for (const t of ['@src/app.ts please', 'see /x/uploads/2026-11-25/a1b2c3-x.png', `email@${P1}`, '@/x/uploads/26-11-25/a1b2c3-x.png']) {
+    for (const t of ['@src/app.ts please', 'see /x/uploads/2026-11-25/a1b2c3-x.png', `email@${P1}`, '@/x/quorum/uploads/26-11-25/a1b2c3-x.png',
+      '@/x/uploads/2026-11-25/a1b2c3-x.png']) {
       expect(splitUploads(t)).toEqual({ text: t, files: [] })
     }
+  })
+  it('knows the key files the hub never serves', () => {
+    expect(['server.pem', 'a.KEY', 'c.p12', 'd.pfx'].every(keyFile)).toBe(true)
+    expect(['photo.jpg', 'keys.txt', 'id_rsa.pub.png'].some(keyFile)).toBe(false)
   })
   it('names and sizes', () => {
     expect(uploadName(P1)).toBe('photo.jpg')

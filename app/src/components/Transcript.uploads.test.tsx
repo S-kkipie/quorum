@@ -8,7 +8,7 @@ import Transcript from './Transcript'
 import { resetPastedImageLinks } from './timeline/PastedImages'
 import type { Event } from '../proto.gen'
 
-const DIR = '/home/u/.config/quorum/uploads/2026-11-25'
+const DIR = '/home/u/.cache/quorum/uploads/2026-11-25'
 const ev = (seq: number, kind: string, data: any): Event => ({ seq, session: 's1', ts: 0, kind, data })
 afterEach(() => { cleanup(); createView.mockReset(); resetPastedImageLinks() })
 
@@ -34,6 +34,12 @@ describe('Transcript attachments', () => {
     expect(screen.getByTestId('command-prompt').textContent).toContain('/review the diff')
     expect(screen.getByTestId('command-prompt').textContent).not.toContain('@/')
     expect(screen.getByRole('button', { name: 'Open report.pdf' })).toBeTruthy()
+  })
+  it('a key file chip says why it does not open', () => {
+    render(<Transcript machine="vps-1" sessionId="s1" onOpenFile={vi.fn()} events={[ev(1, 'user', { text: `@${DIR}/a1b2c3-server.pem` })]} />)
+    expect(screen.queryByRole('button', { name: 'Open server.pem' })).toBeNull()
+    expect(screen.getByText('Key files are not shown')).toBeTruthy()
+    expect(createView).not.toHaveBeenCalled()
   })
   it('a plain mention that is not an upload stays text', () => {
     render(<Transcript machine="vps-1" sessionId="s1" events={[ev(1, 'user', { text: 'see @src/app.ts' })]} />)
