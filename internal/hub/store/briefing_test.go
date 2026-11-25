@@ -127,6 +127,8 @@ func TestVisitRollover(t *testing.T) {
 	require.Equal(t, t0+31*minMs, seen)
 	require.Equal(t, t0, prev)
 
+	_, _, err = s.Visits("nope")
+	require.ErrorIs(t, err, ErrNotFound)
 	_, _, _, err = s.Visit("nope", t0)
 	require.ErrorIs(t, err, ErrNotFound)
 }
@@ -166,12 +168,19 @@ func TestMeetingNotes(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, changed)
 
+	n1.UpdatedAt = 99
+	changed, err = s.ReplaceMeetingNotes(p.ID, []proto.MeetingNote{n1, n2})
+	require.NoError(t, err)
+	require.False(t, changed, "only updatedAt moved")
+	got, _ := s.MeetingNotes(p.ID, "")
+	require.Equal(t, int64(99), got[1].UpdatedAt, "the new updatedAt is stored anyway")
+
 	n2.Summary = "edited"
 	changed, err = s.ReplaceMeetingNotes(p.ID, []proto.MeetingNote{n1, n2})
 	require.NoError(t, err)
 	require.True(t, changed)
 
-	got, err := s.MeetingNotes(p.ID, "2026-11-15")
+	got, err = s.MeetingNotes(p.ID, "2026-11-15")
 	require.NoError(t, err)
 	require.Equal(t, []proto.MeetingNote{n2}, got)
 	got, _ = s.MeetingNotes(p.ID, "")
@@ -221,4 +230,29 @@ func TestBriefingMigrationOnOldDB(t *testing.T) {
 	require.NoError(t, s.SetWhereLeftOff(p.ID, "x", 1))
 	_, err = s.AddPinned(p.ID, "x", 1)
 	require.NoError(t, err)
+}
+
+func TestDeleteProjectDropsBriefingRows(t *testing.T) {
+	s, p := briefingStore(t)
+	other := mkProject(t, s)
+	for _, pid := range []string{p.ID, other.ID} {
+		_, err := s.ReplaceTickets(pid, []proto.Ticket{{ExternalID: "1", Status: "todo"}}, 1)
+		require.NoError(t, err)
+		_, err = s.ReplaceTickets(pid, []proto.Ticket{{ExternalID: "1", Status: "done"}}, 2)
+		require.NoError(t, err)
+		_, _, _, err = s.Visit(pid, 1)
+		require.NoError(t, err)
+		_, err = s.AddPinned(pid, "x", 1)
+		require.NoError(t, err)
+		_, err = s.ReplaceMeetingNotes(pid, []proto.MeetingNote{{ExternalID: "n", Date: "2026-01-01"}})
+		require.NoError(t, err)
+	}
+	require.NoError(t, s.DeleteProject(p.ID))
+	for _, tb := range []string{"ticket_changes", "project_visits", "pinned_notes", "meeting_notes"} {
+		var n, m int
+		require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM `+tb+` WHERE project_id=?`, p.ID).Scan(&n))
+		require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM `+tb+` WHERE project_id=?`, other.ID).Scan(&m))
+		require.Zero(t, n, tb)
+		require.Equal(t, 1, m, tb+" of another project stays")
+	}
 }

@@ -368,6 +368,10 @@ func (s *Store) DeleteProject(id string) (err error) {
 		`DELETE FROM tickets WHERE project_id=?`,
 		`UPDATE checkouts SET project_id=NULL WHERE project_id=?`,
 		`DELETE FROM project_tokens WHERE project_id=?`,
+		`DELETE FROM ticket_changes WHERE project_id=?`,
+		`DELETE FROM project_visits WHERE project_id=?`,
+		`DELETE FROM pinned_notes WHERE project_id=?`,
+		`DELETE FROM meeting_notes WHERE project_id=?`,
 	} {
 		if _, err = tx.Exec(q, id); err != nil {
 			return err
@@ -576,7 +580,7 @@ func (s *Store) ReplaceTickets(projectID string, ts []proto.Ticket, now int64) (
 			changes = append(changes, c)
 		}
 	}
-	if _, err = tx.Exec(`DELETE FROM ticket_changes WHERE at<?`, now-changeRetentionMs); err != nil {
+	if _, err = tx.Exec(`DELETE FROM ticket_changes WHERE project_id=? AND at<?`, projectID, now-changeRetentionMs); err != nil {
 		return nil, err
 	}
 	if err = recomputeProgress(tx, projectID, time.Now().UnixMilli()); err != nil {

@@ -142,16 +142,22 @@ func (s *Store) ReplaceMeetingNotes(projectID string, ns []proto.MeetingNote) (c
 			return false, err
 		}
 		seen[m.ExternalID] = true
-		if old, ok := stored[m.ExternalID]; ok && old == m {
+		old, ok := stored[m.ExternalID]
+		if ok && old == m {
 			continue
 		}
+		o := old
+		o.UpdatedAt = m.UpdatedAt
+		same := ok && o == m // only updatedAt moved: stored, but not a change
 		if _, err = tx.Exec(`INSERT INTO meeting_notes(project_id,`+noteCols+`) VALUES(?,?,?,?,?,?,?,?,?,?)
 			ON CONFLICT(project_id,external_id) DO UPDATE SET title=excluded.title,date=excluded.date,summary=excluded.summary,
 			decisions=excluded.decisions,open_points=excluded.open_points,actions=excluded.actions,url=excluded.url,updated_at=excluded.updated_at`,
 			projectID, m.ExternalID, m.Title, m.Date, m.Summary, m.Decisions, m.OpenPoints, m.Actions, m.URL, m.UpdatedAt); err != nil {
 			return false, err
 		}
-		changed = true
+		if !same {
+			changed = true
+		}
 	}
 	for id := range stored {
 		if seen[id] {
@@ -224,11 +230,11 @@ func (s *Store) Visit(projectID string, now int64) (seenAt, prevSeenAt int64, ro
 	return seenAt, prevSeenAt, rolled, nil
 }
 
-// Visits returns the stored visit marks (0, 0 when the project was never visited).
+// Visits returns the stored visit marks (0, 0 when the project was never visited; ErrNotFound for an unknown project).
 func (s *Store) Visits(projectID string) (seenAt, prevSeenAt int64, err error) {
-	err = s.db.QueryRow(`SELECT seen_at,prev_seen_at FROM project_visits WHERE project_id=?`, projectID).Scan(&seenAt, &prevSeenAt)
+	err = s.db.QueryRow(`SELECT COALESCE(v.seen_at,0),COALESCE(v.prev_seen_at,0) FROM projects p LEFT JOIN project_visits v ON v.project_id=p.id WHERE p.id=?`, projectID).Scan(&seenAt, &prevSeenAt)
 	if errors.Is(err, sql.ErrNoRows) {
-		return 0, 0, nil
+		return 0, 0, ErrNotFound
 	}
 	return
 }
