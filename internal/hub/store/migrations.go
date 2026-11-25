@@ -196,6 +196,9 @@ func migrate(s *Store) error {
 	if err := migrateMeetings(s); err != nil {
 		return err
 	}
+	if err := migratePendings(s); err != nil {
+		return err
+	}
 	return migrateEnglishStatuses(s)
 }
 

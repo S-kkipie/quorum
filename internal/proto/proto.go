@@ -602,6 +602,24 @@ type Briefing struct {
 	Sessions   []SessionInfo    `json:"sessions"`
 	SeenAt     int64            `json:"seenAt"`
 	PrevSeenAt int64            `json:"prevSeenAt"`
+	// Pendings are the project's open pending items, oldest first (never null).
+	Pendings []Pending `json:"pendings"`
+}
+
+// Pending is a to-do of a project outside the ticket tracker. Source is manual, agent or meeting; Status is
+// open, done or dropped. Times are Unix ms (DoneAt is 0 while open).
+type Pending struct {
+	ID        string `json:"id"`
+	ProjectID string `json:"projectId"`
+	Text      string `json:"text"`
+	Detail    string `json:"detail"`
+	Note      string `json:"note"`
+	Source    string `json:"source"`
+	SourceRef string `json:"sourceRef"`
+	Status    string `json:"status"`
+	CreatedAt int64  `json:"createdAt"`
+	UpdatedAt int64  `json:"updatedAt"`
+	DoneAt    int64  `json:"doneAt"`
 }
 
 // WhereLeftOff is the "where you left off" text, written by Haiku from Sessions sessions at At (Unix ms).

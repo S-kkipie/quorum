@@ -693,6 +693,27 @@ export interface Briefing {
   sessions: SessionInfo[];
   seenAt: number /* int64 */;
   prevSeenAt: number /* int64 */;
+  /**
+   * Pendings are the project's open pending items, oldest first (never null).
+   */
+  pendings: Pending[];
+}
+/**
+ * Pending is a to-do of a project outside the ticket tracker. Source is manual, agent or meeting; Status is
+ * open, done or dropped. Times are Unix ms (DoneAt is 0 while open).
+ */
+export interface Pending {
+  id: string;
+  projectId: string;
+  text: string;
+  detail: string;
+  note: string;
+  source: string;
+  sourceRef: string;
+  status: string;
+  createdAt: number /* int64 */;
+  updatedAt: number /* int64 */;
+  doneAt: number /* int64 */;
 }
 /**
  * WhereLeftOff is the "where you left off" text, written by Haiku from Sessions sessions at At (Unix ms).
