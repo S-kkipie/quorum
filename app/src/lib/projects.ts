@@ -21,6 +21,9 @@ export const SESSION_STATE: Record<string, { label: string; dot: string; text: s
 /** Style of a session's display state (unknown states look idle). */
 export const stateStyle = (display: string) => SESSION_STATE[display] ?? SESSION_STATE.idle
 
+/** Ticket sources Quorum only reads from: the app hides proposals, comments and status changes for them. */
+export const readOnlyKind = (kind?: string) => kind === 'moontech'
+
 export const toMs = (ts: number) => (ts > 1e12 ? ts : ts * 1000)
 
 /** "12 min ago", "2h ago", "3d ago". */

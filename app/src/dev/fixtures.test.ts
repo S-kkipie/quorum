@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { buildTimeline } from '../lib/timeline'
-import { fixtureConversations, fixtureEvents, fixtureHistory, fixtureState, LONG_SESSION, TOOL_OUTPUT_MAX } from './fixtures'
+import { fixtureBriefing, fixtureConversations, fixtureEvents, fixtureHistory, fixtureState, LONG_SESSION, TOOL_OUTPUT_MAX } from './fixtures'
 import type { Event } from '../proto.gen'
 
 const convKey = (m: string, r: string) => m + '\u0000' + r
@@ -158,4 +158,19 @@ describe('background fixtures (Plan 10)', () => {
       expect(ends.some((e) => (e.outputTail ?? '').split('\n').length > 6)).toBe(true)
     })
   }
+})
+
+describe('briefing fixtures', () => {
+  it('every mode answers a briefing with every list; empty has nothing, worst has an overdue ticket', async () => {
+    for (const m of ['worst', 'empty', 'one', 'huge'] as const) {
+      const b = await fixtureBriefing(m)('p1')
+      for (const k of ['newSince', 'myTickets', 'pinned', 'sessions'] as const) expect(Array.isArray(b[k])).toBe(true)
+    }
+    const e = await fixtureBriefing('empty')('p1')
+    expect(e.whereLeftOff).toBeNull()
+    expect(e.myTickets).toHaveLength(0)
+    const w = await fixtureBriefing('worst')('p1')
+    expect(w.myTickets.some((t) => t.plannedEnd! < Date.now() - 86_400_000)).toBe(true)
+    expect(w.pinned.some((n) => n.text.length === 500)).toBe(true)
+  })
 })

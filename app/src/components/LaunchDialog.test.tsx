@@ -51,4 +51,25 @@ describe('LaunchDialog', () => {
     expect(screen.getByRole('heading', { name: 'New session · Web' })).toBeTruthy()
     expect([...container.ownerDocument.querySelectorAll('#launch-dirs option')].map((o) => o.getAttribute('value'))).toEqual(['/srv/web'])
   })
+  it('initialPrompt: an editable first prompt, prefilled machine and folder, sent with the launch', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ reqId: 'r1' })))
+    vi.stubGlobal('fetch', fetchMock)
+    const s = { ...state(), machines: { ...state().machines, 'vps-2': { ...state().machines['vps-1'], name: 'vps-2' } } }
+    const onLaunched = vi.fn()
+    render(<LaunchDialog state={s} projectId="p1" initialPrompt={'## My open tickets\n- Acme'} initialMachine="vps-2" initialDir="/srv/acme" onClose={vi.fn()} onLaunched={onLaunched} />)
+    expect(screen.getByRole('heading', { name: 'Continue where I left off' })).toBeTruthy()
+    expect((screen.getByDisplayValue('vps-2') as HTMLSelectElement).tagName).toBe('SELECT')
+    expect((screen.getByPlaceholderText('/path/to/project') as HTMLInputElement).value).toBe('/srv/acme')
+    const box = screen.getByLabelText('First prompt') as HTMLTextAreaElement
+    expect(box.value).toBe('## My open tickets\n- Acme')
+    fireEvent.change(box, { target: { value: 'Edited prompt' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Start' }))
+    await vi.waitFor(() => expect(onLaunched).toHaveBeenCalled())
+    const body = JSON.parse(String((fetchMock.mock.calls[0] as any)[1].body))
+    expect(body).toMatchObject({ machine: 'vps-2', dir: '/srv/acme', prompt: 'Edited prompt', projectId: 'p1' })
+  })
+  it('without initialPrompt there is no prompt box and no prompt is sent', () => {
+    render(<LaunchDialog state={state()} onClose={vi.fn()} onLaunched={vi.fn()} />)
+    expect(screen.queryByLabelText('First prompt')).toBeNull()
+  })
 })

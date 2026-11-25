@@ -38,6 +38,8 @@ export interface AppState {
   commandsRev: Record<string, number>
   /** Last attention the hub announced per session (needs_you or done), kept for native notifications. */
   lastAttention: Record<string, LastAttention>
+  /** Bumped by project_briefing_changed: an open project page refetches its briefing. */
+  briefingRev: Record<string, number>
 }
 
 export interface LastAttention { kind: 'needs_you' | 'done'; at: number }
@@ -47,7 +49,7 @@ export type AskEntry = Ask & { session: string }
 
 export const initialState = (): AppState => ({
   machines: {}, sessions: {}, order: [], events: {}, live: {}, liveAgent: {}, asks: {}, replaced: {}, replacedBy: {},
-  workspaces: {}, projects: {}, tickets: {}, links: {}, proposals: {}, checkouts: {}, worked: {}, conversations: {}, usage: {}, commands: {}, commandsRev: {}, lastAttention: {},
+  workspaces: {}, projects: {}, tickets: {}, links: {}, proposals: {}, checkouts: {}, worked: {}, conversations: {}, usage: {}, commands: {}, commandsRev: {}, lastAttention: {}, briefingRev: {},
 })
 
 /** An event read from the machine's transcript (history page): no hub seq, identified by its key. */
@@ -426,6 +428,10 @@ export function reduce(s: AppState, env: Envelope): AppState {
     }
     case 'session_ticket':
       return env.payload?.sessionId && env.payload?.ticketId ? setLink(s, env.payload as SessionTicket) : s
+    case 'project_briefing_changed': {
+      const id = env.payload?.projectId
+      return typeof id === 'string' && id ? { ...s, briefingRev: { ...s.briefingRev, [id]: (s.briefingRev?.[id] ?? 0) + 1 } } : s
+    }
     case 'proposal_upsert': {
       const p = env.payload as Proposal
       return p?.id ? { ...s, proposals: { ...s.proposals, [p.id]: p } } : s

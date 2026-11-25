@@ -367,7 +367,11 @@ func promptToFile(req proto.LaunchRequest, rel bool) (proto.LaunchRequest, error
 	if rel {
 		shown = ".claude/quorum/" + promptFilePre + id + ".md"
 	}
-	req.Prompt = "Read the file " + shown + " and work on that ticket."
+	if req.TicketID != "" {
+		req.Prompt = "Read the file " + shown + " and work on that ticket."
+	} else {
+		req.Prompt = "Read the file " + shown + " and follow it."
+	}
 	return req, nil
 }
 

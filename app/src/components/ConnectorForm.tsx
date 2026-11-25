@@ -18,9 +18,10 @@ export const KINDS: [string, string][] = [
   ['github', 'GitHub Issues'],
   ['paperclip', 'Paperclip'],
   ['exec', 'Executable (your own script)'],
+  ['moontech', 'Moontech'],
 ]
 
-const usesToken = (kind: string) => kind === 'paperclip' || kind === 'exec'
+const usesToken = (kind: string) => kind === 'paperclip' || kind === 'exec' || kind === 'moontech'
 
 export function draftFrom(c?: ConnectorConfig): ConnectorDraft {
   return { kind: c?.kind || 'none', settings: { ...(c?.settings ?? {}) }, intervalMin: c?.intervalMin || 5, token: '', clearToken: false }
@@ -47,6 +48,11 @@ export function validateConnector(d: ConnectorDraft): string {
     if (!/^https?:\/\/\S+$/.test(s('baseURL'))) return 'the Paperclip URL must start with http:// or https://'
     if (!s('companyId')) return 'missing company id'
   }
+  if (d.kind === 'moontech') {
+    if (s('baseUrl') && !/^https?:\/\/\S+$/.test(s('baseUrl'))) return 'the base URL must start with http:// or https://'
+    if (!s('product')) return 'missing product'
+    if (!s('username')) return 'missing username'
+  }
   if (d.kind !== 'none' && !(d.intervalMin >= 1 && d.intervalMin <= 60)) return 'the interval must be between 1 and 60 minutes'
   return ''
 }
@@ -55,6 +61,8 @@ const field = 'mt-1 min-h-11 w-full rounded-lg border border-line bg-surface p-2
 
 export default function ConnectorForm({ value, onChange, hasToken }: { value: ConnectorDraft; onChange: (d: ConnectorDraft) => void; hasToken?: boolean }) {
   const d = value
+  const pw = d.kind === 'moontech' // its secret is the account password
+  const secret = pw ? 'Password' : 'Token'
   const set = (k: string, v: string) => onChange({ ...d, settings: { ...d.settings, [k]: v } })
   const text = (k: string, label: string, placeholder = '', hint = '') => (
     <label className="mt-3 block text-xs text-muted-foreground">{label}
@@ -94,15 +102,25 @@ export default function ConnectorForm({ value, onChange, hasToken }: { value: Co
           </label>
         </>
       )}
+      {d.kind === 'moontech' && (
+        <>
+          {text('baseUrl', 'Base URL', '', 'Empty uses the default admin site.')}
+          {text('product', 'Product', 'Acme')}
+          {text('titlePrefix', 'Title prefix (optional)', '', 'Only tickets whose title starts with it (any case).')}
+          {text('person', 'You are', '', 'Your name in the ticket system: "your tickets" and "your actions".')}
+          {text('username', 'Username')}
+          <p className="mt-3 text-xs text-muted-foreground">Read-only: Quorum never writes to this ticket system.</p>
+        </>
+      )}
       {usesToken(d.kind) && (
-        <label className="mt-3 block text-xs text-muted-foreground">Token
-          <Input aria-label="Token" type="password" autoComplete="new-password" value={d.token} onChange={(e) => onChange({ ...d, token: e.target.value, clearToken: false })}
-            placeholder={hasToken && !d.clearToken ? 'saved · type to replace it' : 'no token'} className={field} />
+        <label className="mt-3 block text-xs text-muted-foreground">{secret}
+          <Input aria-label={secret} type="password" autoComplete="new-password" value={d.token} onChange={(e) => onChange({ ...d, token: e.target.value, clearToken: false })}
+            placeholder={hasToken && !d.clearToken ? 'saved · type to replace it' : pw ? 'no password' : 'no token'} className={field} />
           {hasToken && (
             <span className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
-              {d.clearToken ? 'Will be deleted on save.' : 'Write-only: not shown.'}
+              {d.clearToken ? 'Will be deleted on save.' : pw ? 'Saved · write-only, not shown.' : 'Write-only: not shown.'}
               <Button type="button" variant="link" size="sm" onClick={() => onChange({ ...d, token: '', clearToken: !d.clearToken })} className="min-h-11 text-danger">
-                {d.clearToken ? 'Keep' : 'Delete token'}
+                {d.clearToken ? 'Keep' : pw ? 'Delete password' : 'Delete token'}
               </Button>
             </span>
           )}

@@ -279,7 +279,7 @@ func TestRunHerdrPromptAlwaysViaFile(t *testing.T) {
 	root := t.TempDir()
 	f := fakeHerdr(t, nil, nil)
 	res := RunHerdr(context.Background(), &herdr.Client{Socket: f.Socket}, &Workspaces{},
-		proto.LaunchRequest{ReqID: "r1", Dir: root, Prompt: "hello $(id) 'x'"})
+		proto.LaunchRequest{ReqID: "r1", Dir: root, Prompt: "hello $(id) 'x'", TicketID: "t1"})
 	require.True(t, res.OK, res.Error)
 	args := callsOf(f, "agent.start")[0]["args"].([]any)
 	last := args[len(args)-1].(string)
@@ -307,7 +307,8 @@ func TestRunHerdrPromptNeverCarriesDir(t *testing.T) {
 		require.NotContains(t, a.(string), root)
 		require.NotContains(t, a.(string), "$(x)")
 	}
-	require.Equal(t, "Read the file .claude/quorum/ticket-r2x.md and work on that ticket.", args[len(args)-1])
+	// no ticket: a neutral instruction (the app's "Continue where I left off" prompt)
+	require.Equal(t, "Read the file .claude/quorum/ticket-r2x.md and follow it.", args[len(args)-1])
 	b, err := os.ReadFile(filepath.Join(PromptDir(root), "ticket-r2x.md"))
 	require.NoError(t, err)
 	require.Equal(t, "hello", string(b))

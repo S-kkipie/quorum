@@ -1,6 +1,10 @@
 import { useEffect, useState } from 'react'
 import ProjectSessions from '../components/ProjectSessions'
 import NewSessionCard from '../components/NewSessionCard'
+import LaunchDialog from '../components/LaunchDialog'
+import Briefing, { useBriefing, useVisit } from '../components/briefing/Briefing'
+import { briefingPrompt, hasContent, latestSession } from '../lib/briefing'
+import { Button } from '@/components/ui/button'
 import { MoreHorizontal } from 'lucide-react'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
@@ -34,6 +38,11 @@ export default function Project({ state, id, onBack, onOpenTickets, onOpenSessio
   const p = state.projects[id]
   const [error, setError] = useState('')
   const [syncing, setSyncing] = useState(false)
+  const { b, error: briefingError, setB } = useBriefing(id, state.briefingRev?.[id] ?? 0)
+  useVisit(id)
+  const [pinOpen, setPinOpen] = useState(false)
+  /** "Continue where I left off": the launch dialog with the briefing as its first prompt. */
+  const [resumeAt, setResumeAt] = useState<{ prompt: string; machine: string; dir: string } | null>(null)
 
   useEffect(() => {
     let off = false
@@ -57,6 +66,13 @@ export default function Project({ state, id, onBack, onOpenTickets, onOpenSessio
     await onGuard?.(() => launchIn({ machine: row.machine, dir: row.root, bypass: prefs.bypass, root: !!state.machines[row.machine]?.caps?.root, resume: row.id, projectId: id }))
   }
 
+  function continueLeftOff() {
+    if (!b || pending) return
+    const last = latestSession(b) ?? Object.values(state.sessions).filter((x) => x.projectId === id && x.role !== 'service').sort((x, y) => y.updatedAt - x.updatedAt)[0]
+    setResumeAt({ prompt: briefingPrompt(b), machine: last?.machine ?? '', dir: last?.root || last?.cwd || '' })
+  }
+  const hasSource = !!p.connector && p.connector.kind !== 'none'
+
   async function sync() {
     setSyncing(true)
     setError('')
@@ -78,22 +94,39 @@ export default function Project({ state, id, onBack, onOpenTickets, onOpenSessio
             <DropdownMenuItem className="min-h-11" onSelect={() => onOpenTickets?.(id)}>Tickets ({tickets.length})</DropdownMenuItem>
             {p.connector && p.connector.kind !== 'none' && <DropdownMenuItem className="min-h-11" disabled={syncing} onSelect={sync}>{syncing ? 'Syncing…' : 'Sync'}</DropdownMenuItem>}
             {onEdit && <DropdownMenuItem className="min-h-11" onSelect={() => onEdit(id)}>Edit</DropdownMenuItem>}
+            <DropdownMenuItem className="min-h-11" onSelect={() => setPinOpen(true)}>Pin a note</DropdownMenuItem>
             <DropdownMenuItem className="min-h-11" onSelect={() => onCheckoutsOpenChange?.(true)}>Checkouts</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </header>
-      <div className="px-3 pt-3">
-        {p.summary && <p className="mt-2 text-sm text-ink">{p.summary}</p>}
-        <p className="mt-1 text-xs text-muted-foreground">
+      <div className="px-3 pt-2">
+        <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
           {ws?.name}{p.repoUrl && ` · ${p.repoUrl}`}{p.syncedAt ? ` · ${p.syncError ? 'last attempt' : 'synced'} ${since(p.syncedAt)}` : ''}
         </p>
         {p.syncError && <p role="alert" className="mt-2 rounded-lg bg-del-soft px-2 py-1 text-xs [overflow-wrap:anywhere] text-danger">Sync error: {p.syncError}</p>}
         {error && <p role="alert" className="mt-2 text-xs text-danger">{error}</p>}
       </div>
 
-      <NewSessionCard state={state} projectId={id} pending={pending} onLaunched={(p) => onLaunched?.(p)} onGuard={(f) => onGuard?.(f) ?? Promise.resolve()} onTerminal={(m, r) => onTerminal?.(m, r)} />
+      {b ? (
+        <Briefing b={b} projectId={id} hasSource={hasSource} pinOpen={pinOpen} onBriefing={(f) => setB((x) => (x ? f(x) : x))}
+          onOpenSession={onOpenSession} onEditSource={onEdit ? () => onEdit(id) : undefined} />
+      ) : (
+        briefingError && <p className="px-3 pt-2 text-xs text-muted-foreground [overflow-wrap:anywhere]">Briefing unavailable: {briefingError}</p>
+      )}
 
-      <ProjectSessions state={state} projectId={id} busy={pending} onOpen={(sid) => onOpenSession?.(sid)} onResume={resume} onConversations={(m, r, l) => onConversations?.(m, r, l)} />
+      <section role="region" aria-label="Sessions">
+        <NewSessionCard state={state} projectId={id} pending={pending} onLaunched={(p) => onLaunched?.(p)} onGuard={(f) => onGuard?.(f) ?? Promise.resolve()} onTerminal={(m, r) => onTerminal?.(m, r)} />
+        {b && hasContent(b) && (
+          <div className="px-3 pt-2">
+            <Button variant="secondary" disabled={pending} onClick={continueLeftOff} className="min-h-11 w-full">Continue where I left off</Button>
+          </div>
+        )}
+        <ProjectSessions state={state} projectId={id} busy={pending} onOpen={(sid) => onOpenSession?.(sid)} onResume={resume} onConversations={(m, r, l) => onConversations?.(m, r, l)} />
+      </section>
+      {resumeAt && (
+        <LaunchDialog state={state} projectId={id} initialPrompt={resumeAt.prompt} initialMachine={resumeAt.machine} initialDir={resumeAt.dir}
+          onClose={() => setResumeAt(null)} onLaunched={(x) => { setResumeAt(null); onLaunched?.(x) }} />
+      )}
 
       <Sheet open={!!checkoutsOpen} onOpenChange={(o) => onCheckoutsOpenChange?.(o)}>
         <SheetContent side="bottom" className="max-h-[80dvh] overflow-hidden">

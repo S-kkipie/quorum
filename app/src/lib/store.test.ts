@@ -343,3 +343,14 @@ describe('addEvents asks', () => {
     expect(s.asks['k1']).toBeUndefined()
   })
 })
+
+describe('project_briefing_changed', () => {
+  it('bumps the project briefing revision; other envelopes leave it alone', () => {
+    let s = initialState()
+    s = reduce(s, { type: 'project_briefing_changed', payload: { projectId: 'p1' } } as unknown as Envelope)
+    s = reduce(s, { type: 'project_briefing_changed', payload: { projectId: 'p1' } } as unknown as Envelope)
+    expect(s.briefingRev).toEqual({ p1: 2 })
+    const same = reduce(s, { type: 'project_briefing_changed', payload: {} } as unknown as Envelope)
+    expect(same).toBe(s)
+  })
+})

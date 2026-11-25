@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { ApiError, confirmTicketLink, getTicket, listCheckouts, launchTicket, proposeStatus, unlinkTicket, type TicketView } from '../lib/api'
 import { displayState } from '../lib/sessions'
-import { STATUSES, STATUS_LABEL, TONE_TEXT, projectCheckouts, stateStyle, ticketLine, ticketSessions } from '../lib/projects'
+import { STATUSES, STATUS_LABEL, TONE_TEXT, projectCheckouts, readOnlyKind, stateStyle, ticketLine, ticketSessions } from '../lib/projects'
 import type { AppState } from '../lib/store'
 import type { Checkout } from '../proto.gen'
 import { sessionTitle } from '../lib/title'
@@ -60,6 +60,8 @@ export default function TicketDetail({ state, ticketId, onBack, onOpenSession, o
   const pending = proposals.filter((p) => p.status === 'pending')
   const past = proposals.filter((p) => p.status !== 'pending')
   const working = links.find((l) => l.confirmed && l.session && l.session.state !== 'closed')
+  // a read-only source (Moontech): nothing is ever written back, so no proposals and no status change
+  const readOnly = readOnlyKind(state.projects[t.projectId]?.connector?.kind)
 
   return (
     <div className="pb-10">
@@ -75,8 +77,9 @@ export default function TicketDetail({ state, ticketId, onBack, onOpenSession, o
           {STATUS_LABEL[t.status] ?? t.status}{t.rawStatus && ` (${t.rawStatus})`}{t.assignee && ` · ${t.assignee}`}
         </p>
         {error && <p role="alert" className="mt-2 text-xs text-danger">{error}</p>}
+        {readOnly && <p className="mt-2 text-xs text-muted-foreground">Read-only source: Quorum never writes to it.</p>}
 
-        {pending.length > 0 && (
+        {!readOnly && pending.length > 0 && (
           <section>
             <h3 className={h3}>Pending proposals</h3>
             <div className="space-y-2">{pending.map((p) => <ProposalCard key={p.id} proposal={p} />)}</div>
@@ -104,7 +107,7 @@ export default function TicketDetail({ state, ticketId, onBack, onOpenSession, o
           </section>
         )}
 
-        <ProposeStatus ticketId={t.id} current={t.status} />
+        {!readOnly && <ProposeStatus ticketId={t.id} current={t.status} />}
 
         {t.body && (
           <section>
@@ -125,7 +128,7 @@ export default function TicketDetail({ state, ticketId, onBack, onOpenSession, o
             </ul>
           </section>
         )}
-        {past.length > 0 && (
+        {!readOnly && past.length > 0 && (
           <details className="mt-5">
             <summary className="cursor-pointer text-[13px] font-medium text-muted-foreground">Past proposals ({past.length})</summary>
             <div className="mt-2 space-y-2">{past.map((p) => <ProposalCard key={p.id} proposal={p} />)}</div>

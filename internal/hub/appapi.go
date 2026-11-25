@@ -5,11 +5,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/S-kkipie/quorum/internal/hub/store"
 	"github.com/S-kkipie/quorum/internal/hub/web"
@@ -457,6 +460,9 @@ func (s *Server) handleDecide(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
+// launchPromptMax caps the optional first prompt of /api/launch (the app builds about 1,500 characters).
+const launchPromptMax = 8000
+
 // handleLaunch asks a machine to open a new session; the result arrives through /api/live.
 func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 	var b struct {
@@ -467,12 +473,19 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 		Resume         string `json:"resume"`
 		Label          string `json:"label"`
 		ProjectID      string `json:"projectId"`
+		// Prompt is an optional first message (the app's "Continue where I left off").
+		Prompt string `json:"prompt"`
 	}
 	if !decode(w, r, &b) {
 		return
 	}
 	if b.Dir == "" {
 		apiErr(w, 400, "missing folder")
+		return
+	}
+	b.Prompt = strings.TrimSpace(b.Prompt)
+	if utf8.RuneCountInString(b.Prompt) > launchPromptMax {
+		apiErr(w, 400, fmt.Sprintf("the first prompt can be at most %d characters", launchPromptMax))
 		return
 	}
 	if b.Machine == "" || !s.hub.Connected(b.Machine) {
@@ -491,7 +504,7 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	req := proto.LaunchRequest{ReqID: hex.EncodeToString(id), Dir: b.Dir, Continue: b.Continue, PermissionMode: b.PermissionMode,
-		Resume: b.Resume, Label: b.Label, Trust: true}
+		Resume: b.Resume, Label: b.Label, Prompt: b.Prompt, Trust: true}
 	p, _ := json.Marshal(req)
 	// the pending entry binds the session that registers with this reqId (launch_session). Without
 	// a ticket addPending does not deduplicate and always registers it: its result does not matter.

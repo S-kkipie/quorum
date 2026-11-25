@@ -122,6 +122,7 @@ export interface DevApi {
   listCommands?: (id: string) => Promise<SessionCommands>
   eventsAfter?: (id: string, afterSeq: number, limit: number) => Promise<Event[]>
   history?: (id: string, cursor: string) => Promise<TranscriptPage>
+  briefing?: (projectId: string) => Promise<Briefing>
 }
 let devApi: DevApi | null = null
 export const setDevApi = (d: DevApi | null) => { devApi = d }
@@ -147,7 +148,8 @@ export const decide = (id: string, body: { askId: string; decision: 'allow' | 'd
   apiFetch(`/api/sessions/${encodeURIComponent(id)}/decide`, { method: 'POST', body: JSON.stringify(body) })
 export const abortSession = (id: string) => apiFetch(`/api/sessions/${encodeURIComponent(id)}/abort`, { method: 'POST' })
 export const closeSession = (id: string) => apiFetch(`/api/sessions/${encodeURIComponent(id)}/close`, { method: 'POST' })
-export const launch = (b: { machine: string; dir: string; permissionMode?: string; resume?: string; label?: string; projectId?: string }) =>
+/** prompt: an optional first message (at most 8,000 characters). */
+export const launch = (b: { machine: string; dir: string; permissionMode?: string; resume?: string; label?: string; projectId?: string; prompt?: string }) =>
   apiFetch<{ reqId: string }>('/api/launch', { method: 'POST', body: JSON.stringify(b) })
 
 /** The session's slash commands as its mod reported them (empty with an empty hash: an older mod). */
@@ -205,10 +207,11 @@ export const getTicket = (id: string) => apiFetch<TicketView>(`/api/tickets/${en
 
 /** GET /api/projects/{id}/briefing: every list is present (possibly empty); whereLeftOff is null when there is none. */
 export type Briefing = Omit<BriefingGen, 'whereLeftOff'> & { whereLeftOff: WhereLeftOff | null }
-export const getBriefing = (projectId: string) => apiFetch<Briefing>(`/api/projects/${enc(projectId)}/briefing`)
-/** Records a visit; the hub moves prevSeenAt only when the last visit is over 30 minutes old. */
-export const visitProject = (projectId: string) =>
-  apiFetch<{ seenAt: number; prevSeenAt: number }>(`/api/projects/${enc(projectId)}/visit`, json('POST'))
+export const getBriefing = (projectId: string): Promise<Briefing> =>
+  devApi?.briefing ? devApi.briefing(projectId) : apiFetch<Briefing>(`/api/projects/${enc(projectId)}/briefing`)
+/** Records a visit; the hub moves prevSeenAt only when the last visit is over 30 minutes old (a no-op with fixtures). */
+export const visitProject = (projectId: string): Promise<unknown> =>
+  devApi ? Promise.resolve() : apiFetch<{ seenAt: number; prevSeenAt: number }>(`/api/projects/${enc(projectId)}/visit`, json('POST'))
 /** Pins a note (1 to 500 characters after trimming; the hub answers 400 otherwise). */
 export const addPinned = (projectId: string, text: string) => apiFetch<PinnedNote>(`/api/projects/${enc(projectId)}/pinned`, json('POST', { text }))
 export const deletePinned = (projectId: string, id: string) => apiFetch(`/api/projects/${enc(projectId)}/pinned/${enc(id)}`, json('DELETE'))

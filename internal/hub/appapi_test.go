@@ -392,6 +392,22 @@ func TestMachineJSONKeys(t *testing.T) {
 	require.JSONEq(t, `{"name":"m","os":"","env":"","version":"","online":false,"lastSeen":0,"caps":{"herdr":false,"terminal":false,"root":false}}`, string(b))
 }
 
+func TestLaunchCarriesFirstPrompt(t *testing.T) {
+	f := newAppFx(t)
+	code, msg := f.postBody("/api/launch", `{"machine":"m1","dir":"/work","prompt":"`+strings.Repeat("x", launchPromptMax+1)+`"}`)
+	require.Equal(t, 400, code)
+	require.Contains(t, msg, "at most")
+	code, _ = f.postBody("/api/launch", `{"machine":"m1","dir":"/work","prompt":"  Catch me up.\n## Tickets  "}`)
+	require.Equal(t, 202, code)
+	select {
+	case lr := <-f.launches:
+		require.Equal(t, "Catch me up.\n## Tickets", lr.Prompt)
+		require.Empty(t, lr.TicketID)
+	case <-time.After(3 * time.Second):
+		t.Fatal("launch did not arrive")
+	}
+}
+
 func TestLaunchRoutedAndResultPublished(t *testing.T) {
 	f := newAppFx(t)
 	_, ch := f.live(t)

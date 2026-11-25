@@ -1,6 +1,6 @@
-import type { AccountUsage, BackgroundItem, Checkout, Conversation, Event, ModelOption, Project, Proposal, SessionCommand, SessionCommands, SessionInfo, SessionState, TranscriptPage, Workspace } from '../proto.gen'
+import type { AccountUsage, BackgroundItem, MeetingItem, Ticket, Checkout, Conversation, Event, ModelOption, Project, Proposal, SessionCommand, SessionCommands, SessionInfo, SessionState, TranscriptPage, Workspace } from '../proto.gen'
 import { addEvents, initialState, setConversations, setProjectsData, setUsage, type AppState } from '../lib/store'
-import type { Machine } from '../lib/api'
+import type { Briefing, Machine } from '../lib/api'
 
 /** Dev-only fixtures for the Break UI pass: extreme but plausible data, no hub needed. */
 export type DataMode = 'demo' | 'worst' | 'empty' | 'one' | 'huge'
@@ -212,7 +212,7 @@ function worst(): AppState {
     workspace('w4', 'Q', '#9333ea'),
   ]
   const projects = [
-    project('p1', 'w1', padTo('Next-generation synchronisation and offline-first reconciliation layer ', 120), { summary: longTitle(600, 'Summary'), progress: { done: 1, total: 1 }, syncError: padTo('connector: 502 from upstream while listing tickets ', 300) }),
+    project('p1', 'w1', padTo('Next-generation synchronisation and offline-first reconciliation layer ', 120), { summary: longTitle(600, 'Summary'), progress: { done: 1, total: 1 }, syncError: padTo('connector: 502 from upstream while listing tickets ', 300), connector: { kind: 'moontech', settings: { product: 'Acme', person: 'Ana', username: 'ana' }, hasToken: true, intervalMin: 5 } }),
     project('p2', 'w2', 'Ünïcödé 日本語 résumé', { progress: { done: 0, total: 0 } }),
     project('p3', 'w3', 'Z', { progress: { done: 999, total: 1200 } }),
   ]
@@ -349,4 +349,66 @@ export function fixtureHistory(mode: FixtureMode): (id: string, cursor: string) 
 export function fixtureCommands(mode: FixtureMode): (id: string) => Promise<SessionCommands> {
   const s = fixtureState(mode)
   return async (id) => s.commands[id] ?? { session: id, commands: [], hash: '' }
+}
+
+// --- Project briefing (Plan 13): made-up product Acme, people Ana and Ben ---
+
+const DAY = 24 * 60 * MIN
+const bTicket = (id: string, title: string, o: Partial<Ticket> = {}): Ticket => ({
+  id, projectId: 'p1', externalId: id, title, status: 'todo', rawStatus: 'por_hacer', assignee: 'Ana', url: '', body: '', comments: [], updatedAt: NOW, ...o,
+})
+const item = (text: string, noteTitle = 'Weekly with Ben', date = '2027-01-14'): MeetingItem => ({ text, noteTitle, date })
+const noBriefing = (): Briefing => ({ whereLeftOff: null, newSince: [], myTickets: [], meetings: { decisions: [], openPoints: [], actions: [] }, pinned: [], sessions: [], seenAt: 0, prevSeenAt: 0 })
+
+/** Briefings per mode, relative to the real clock (the overdue check compares with today). */
+export function fixtureBriefing(mode: FixtureMode): (projectId: string) => Promise<Briefing> {
+  const s = fixtureState(mode)
+  return async (projectId) => {
+    const t = Date.now()
+    const sessions = Object.values(s.sessions).filter((x) => x.projectId === projectId)
+    if (mode === 'empty') return noBriefing()
+    if (mode === 'one') {
+      return {
+        ...noBriefing(), sessions, prevSeenAt: t - 2 * DAY, seenAt: t,
+        whereLeftOff: { text: 'You were wiring the Acme export.', at: t - DAY, sessions: 1 },
+        newSince: [{ kind: 'session', title: 'Session finished: Only session', detail: 'vps-1', at: t - DAY, ref: sessions[0]?.id ?? '' }],
+        myTickets: [bTicket('a1', 'Acme · export', { plannedEnd: t + 3 * DAY })],
+        meetings: { decisions: [item('Ship the export first')], openPoints: [], actions: [] },
+        pinned: [{ id: 'n1', text: 'Staging is vps-1.', at: t }],
+      }
+    }
+    if (mode === 'huge') {
+      return {
+        ...noBriefing(), sessions: sessions.slice(0, 50), prevSeenAt: t - 3 * DAY, seenAt: t,
+        whereLeftOff: { text: 'You were load-testing the Acme solver on five machines; two runs still fail on vps-3.', at: t - DAY, sessions: 3 },
+        newSince: Array.from({ length: 20 }, (_, i) => ({ kind: (['session', 'ticket', 'note'] as const)[i % 3], title: `Change ${i + 1}`, detail: i % 3 === 1 ? 'To do → In progress' : '', at: t - i * 60 * MIN, ref: sessions[i]?.id ?? 'x' + i })),
+        myTickets: Array.from({ length: 60 }, (_, i) => bTicket('h' + i, `Acme · task ${i + 1}`, { plannedEnd: i % 4 ? t + (i - 10) * DAY : undefined, status: i % 5 === 0 ? 'in_progress' : 'todo' })),
+        meetings: { decisions: Array.from({ length: 15 }, (_, i) => item('Decision ' + (i + 1))), openPoints: Array.from({ length: 15 }, (_, i) => item('Open point ' + (i + 1))), actions: Array.from({ length: 10 }, (_, i) => item('Ana: action ' + (i + 1))) },
+        pinned: Array.from({ length: 30 }, (_, i) => ({ id: 'n' + i, text: 'Pinned note ' + (i + 1), at: t })),
+      }
+    }
+    // worst: long and unbroken text, unicode, overdue and parked tickets, every kind of item
+    return {
+      ...noBriefing(), sessions, prevSeenAt: t - 3 * DAY, seenAt: t,
+      whereLeftOff: { text: longTitle(480, 'You were finishing the importer at ' + LONG_PATH + ' and'), at: t - DAY, sessions: 3 },
+      newSince: [
+        { kind: 'session', title: 'Session finished: ' + longTitle(200, 'Recap'), detail: 'vps-1', at: t - DAY, ref: sessions[0]?.id ?? '' },
+        { kind: 'ticket', title: 'Ticket moved: Überprüfung der Synchronisierung 日本語', detail: 'To do → In progress', at: t - 2 * DAY, ref: 'w1' },
+        { kind: 'note', title: 'Meeting ' + 'x'.repeat(160), detail: '2 decisions · 3 open points', at: t - 3 * DAY, ref: 'note-1' },
+        { kind: 'ticket', title: 'x', detail: '', at: t - 4 * DAY, ref: 'w2' },
+      ],
+      myTickets: [
+        bTicket('w1', padTo('Acme · Überprüfung der Synchronisierung und Offline-Abgleich ', 180), { status: 'in_progress', rawStatus: 'en_curso', plannedEnd: t - 2 * DAY }),
+        bTicket('w2', 'Acme · ' + LONG_PATH, { plannedStart: t + DAY, plannedEnd: t + 5 * DAY }),
+        bTicket('w3', 'Acme · parked', { status: 'blocked', rawStatus: 'aparcado', plannedEnd: t - 9 * DAY }),
+        bTicket('w4', 'Q'),
+      ],
+      meetings: {
+        decisions: [item(longTitle(300, 'Decision')), item('Use 日本語 labels')],
+        openPoints: [item('Who owns the backups? ' + LONG_PATH)],
+        actions: [item('Ana: send the report to Ben', padTo('A meeting title that goes on and on ', 140))],
+      },
+      pinned: [{ id: 'n1', text: 'x'.repeat(500), at: t }, { id: 'n2', text: 'Staging is on vps-1, never test on prod.', at: t }],
+    }
+  }
 }

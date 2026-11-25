@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import TicketDetail from './TicketDetail'
 import { initialState, setCheckouts, setTickets } from '../lib/store'
-import { sess, tk } from '../lib/fixtures.test-util'
+import { proj, sess, tk } from '../lib/fixtures.test-util'
 
 const fetchMock = vi.fn(async (u: string, _i?: RequestInit) => {
   if (String(u).endsWith('/checkouts')) return new Response(JSON.stringify([{ id: 'c1', projectId: 'p1', machine: 'mac', root: '/Users/yo/repo', repoUrl: '', branch: 'main', updatedAt: 1 }]))
@@ -39,5 +39,20 @@ describe('TicketDetail', () => {
     s = setCheckouts(s, 'p1', onCheckouts.mock.calls[0][1])
     rerender(<TicketDetail state={s} ticketId="t1" onCheckouts={onCheckouts} />)
     expect((screen.getByPlaceholderText('/path/to/repo') as HTMLInputElement).value).toBe('/Users/yo/repo')
+  })
+  it('a read-only source (Moontech) hides proposals and the status change', async () => {
+    let s = setTickets(initialState(), 'p1', [{ ...tk('t1'), sessions: [] }])
+    s = { ...s, projects: { p1: proj('p1', { connector: { kind: 'moontech', settings: {}, hasToken: true, intervalMin: 5 } }) }, proposals: { pr1: { id: 'pr1', ticketId: 't1', kind: 'comment', body: 'Done', status: 'pending', createdAt: 1 } as any } }
+    render(<TicketDetail state={s} ticketId="t1" />)
+    expect(screen.getByText(/Read-only source/)).toBeTruthy()
+    expect(screen.queryByText('Change status')).toBeNull()
+    expect(screen.queryByText('Pending proposals')).toBeNull()
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled())
+  })
+  it('a writable source keeps the status change', async () => {
+    const s = setTickets(initialState(), 'p1', [{ ...tk('t1'), sessions: [] }])
+    render(<TicketDetail state={s} ticketId="t1" />)
+    expect(screen.getByText('Change status')).toBeTruthy()
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled())
   })
 })
