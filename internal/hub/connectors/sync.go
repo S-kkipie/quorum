@@ -2,6 +2,8 @@ package connectors
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,8 +23,9 @@ type Store interface {
 	ConnectorToken(projectID string) (string, error)
 	ListWorkspaces() ([]proto.Workspace, error)
 	ReplaceTickets(projectID string, ts []proto.Ticket, now int64) ([]proto.TicketChange, error)
+	ReplaceAllTickets(projectID string, ts []proto.Ticket, now int64) ([]proto.TicketChange, []proto.SessionTicket, error)
 	ListTickets(projectID string) ([]proto.Ticket, error)
-	ReplaceMeetingNotes(projectID string, ns []proto.MeetingNote) (bool, error)
+	ReplaceMeetingNotes(projectID string, ns []proto.MeetingNote, now int64) (bool, error)
 	SetSyncResult(projectID, syncErr string, at int64) error
 }
 
@@ -42,7 +45,9 @@ type Syncer struct {
 	// OnSynced is called after each successful sync of a project with the change-log rows it wrote
 	// and whether the meeting notes changed. A failed sync does not call it.
 	OnSynced func(projectID string, changes []proto.TicketChange, notesChanged bool)
-	tick     time.Duration
+	// OnLinksRemoved is called with the session links a full-list sync deleted with their tickets.
+	OnLinksRemoved func(projectID string, links []proto.SessionTicket)
+	tick           time.Duration
 
 	mu      sync.Mutex
 	wmu     sync.Mutex // serializes ticket writes with Invalidate
@@ -50,11 +55,19 @@ type Syncer struct {
 	running map[string]bool
 	gen     map[string]int  // rises with Invalidate: the project's connector changed
 	again   map[string]bool // a SyncNow arrived while another sync was running
+	conns   map[string]cachedConn
+}
+
+// cachedConn is a Reusable connector of a project and the configuration it was built from.
+type cachedConn struct {
+	key  string
+	conn Connector
 }
 
 func NewSyncer(st Store, pub func(proto.Envelope)) *Syncer {
 	return &Syncer{st: st, pub: pub, newConn: New, now: time.Now, tick: 30 * time.Second,
-		base: context.Background(), running: map[string]bool{}, gen: map[string]int{}, again: map[string]bool{}}
+		base: context.Background(), running: map[string]bool{}, gen: map[string]int{}, again: map[string]bool{},
+		conns: map[string]cachedConn{}}
 }
 
 func clampInterval(m int) time.Duration {
@@ -127,8 +140,45 @@ func (s *Syncer) Invalidate(projectID string, fn func() error) error {
 	defer s.wmu.Unlock()
 	s.mu.Lock()
 	s.gen[projectID]++
+	delete(s.conns, projectID)
 	s.mu.Unlock()
 	return fn()
+}
+
+// connKey identifies what a connector was built from: kind, settings, token and environment.
+func connKey(cfg proto.ConnectorConfig, token string, env []string) string {
+	b, _ := json.Marshal(struct {
+		Kind     string
+		Settings map[string]string
+		Token    string
+		Env      []string
+	}{cfg.Kind, cfg.Settings, token, env})
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
+}
+
+// conn returns the project's connector: the cached one when it is Reusable and built from the same
+// configuration and token, a new one otherwise.
+func (s *Syncer) conn(p proto.Project, token string, env []string) (Connector, error) {
+	key := connKey(p.Connector, token, env)
+	s.mu.Lock()
+	c, ok := s.conns[p.ID]
+	s.mu.Unlock()
+	if ok && c.key == key {
+		return c.conn, nil
+	}
+	conn, err := s.newConn(p.Connector, token, env)
+	if err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	if r, ok := conn.(Reusable); ok && r.Reusable() {
+		s.conns[p.ID] = cachedConn{key: key, conn: conn}
+	} else {
+		delete(s.conns, p.ID)
+	}
+	s.mu.Unlock()
+	return conn, nil
 }
 
 func (s *Syncer) current(id string, g int) bool {
@@ -171,6 +221,11 @@ func (s *Syncer) syncOnce(ctx context.Context, id string) error {
 	s.mu.Unlock()
 
 	p, err := s.st.GetProject(id)
+	if err != nil || p.Connector.Kind == "" || p.Connector.Kind == "none" {
+		s.mu.Lock()
+		delete(s.conns, id)
+		s.mu.Unlock()
+	}
 	if err != nil {
 		return err
 	}
@@ -208,6 +263,9 @@ func (s *Syncer) syncOnce(ctx context.Context, id string) error {
 	}
 	s.publishProject(id)
 	s.publishTickets(id)
+	if len(res.removed) > 0 && s.OnLinksRemoved != nil {
+		s.OnLinksRemoved(id, res.removed)
+	}
 	if s.OnSynced != nil {
 		s.OnSynced(id, res.changes, res.notesChanged)
 	}
@@ -217,6 +275,7 @@ func (s *Syncer) syncOnce(ctx context.Context, id string) error {
 // fetchResult is what a successful fetch stored.
 type fetchResult struct {
 	changes      []proto.TicketChange
+	removed      []proto.SessionTicket // links deleted with their tickets (full-list sources)
 	notesChanged bool
 }
 
@@ -238,7 +297,7 @@ func (s *Syncer) fetch(ctx context.Context, p proto.Project, g int) (res fetchRe
 		return res, err
 	}
 	env := BuildEnv(s.st, p.WorkspaceID)
-	conn, err := s.newConn(p.Connector, token, env)
+	conn, err := s.conn(p, token, env)
 	if err != nil {
 		return res, err
 	}
@@ -286,9 +345,14 @@ func (s *Syncer) fetch(ctx context.Context, p proto.Project, g int) (res fetchRe
 		return res, errStale
 	}
 	before, _ := s.st.ListTickets(p.ID)
-	res.changes, err = s.st.ReplaceTickets(p.ID, out, s.now().UnixMilli())
+	now := s.now().UnixMilli()
+	if fl, ok := conn.(FullLister); ok && fl.FullList() {
+		res.changes, res.removed, err = s.st.ReplaceAllTickets(p.ID, out, now)
+	} else {
+		res.changes, err = s.st.ReplaceTickets(p.ID, out, now)
+	}
 	if err == nil && haveNotes {
-		if changed, nerr := s.st.ReplaceMeetingNotes(p.ID, notes); nerr != nil {
+		if changed, nerr := s.st.ReplaceMeetingNotes(p.ID, notes, now); nerr != nil {
 			log.Printf("sync: project %s: save meeting notes: %s", p.ID, redact(nerr.Error(), token))
 		} else {
 			res.notesChanged = changed

@@ -42,22 +42,22 @@ type fakeMoontech struct {
 func newFakeMoontech(t *testing.T) *fakeMoontech {
 	f := &fakeMoontech{}
 	f.tickets = []map[string]any{
-		{"id": 11, "title": "Ornamel · fix login", "detail": "the form loses focus", "status": "por_hacer", "person_name": "Ana", "product": "Acme",
+		{"id": 11, "title": "Atlas · fix login", "detail": "the form loses focus", "status": "por_hacer", "person_name": "Ana", "product": "Acme",
 			"planned_start": "2026-11-20", "planned_end": "2026-11-27T15:30:00Z", "note_title": "Weekly sync", "updated_at": "2026-11-21T10:00:00Z"},
-		{"id": "12", "title": "  ornamel: export report", "detail": "", "status": "en_curso", "person_name": "Ben", "product": "acme",
+		{"id": "12", "title": "  atlas: export report", "detail": "", "status": "en_curso", "person_name": "Ben", "product": "acme",
 			"planned_start": nil, "planned_end": nil, "updated_at": "2026-11-22 08:00:00"},
-		{"id": 13, "title": "ORNAMEL parked item", "status": "aparcado", "person_name": "Ana", "product": "Acme"},
-		{"id": 14, "title": "Ornamel done item", "status": "hecho", "person_name": "Ana", "product": "Acme"},
+		{"id": 13, "title": "ATLAS parked item", "status": "aparcado", "person_name": "Ana", "product": "Acme"},
+		{"id": 14, "title": "Atlas done item", "status": "hecho", "person_name": "Ana", "product": "Acme"},
 		{"id": 15, "title": "Other project task", "status": "por_hacer", "person_name": "Ana", "product": "Acme"},
-		{"id": 16, "title": "Ornamel wrong product", "status": "por_hacer", "person_name": "Ana", "product": "Globex"},
+		{"id": 16, "title": "Atlas wrong product", "status": "por_hacer", "person_name": "Ana", "product": "Globex"},
 	}
 	f.notes = []map[string]any{
-		{"id": 1, "title": "Ornamel weekly", "meeting_date": "2026-11-20", "summary": "s", "decisions": "- ship it", "open_points": "", "actions": "- Ana: review",
+		{"id": 1, "title": "Atlas weekly", "meeting_date": "2026-11-20", "summary": "s", "decisions": "- ship it", "open_points": "", "actions": "- Ana: review",
 			"products": []string{"Acme", "Globex"}, "notion_url": "https://notes.example/1", "updated_at": "2026-11-20T12:00:00Z"},
-		{"id": 2, "title": "General standup", "meeting_date": "2026-11-21", "summary": "", "decisions": "", "open_points": "", "actions": "- Ben: update ORNAMEL docs",
+		{"id": 2, "title": "General standup", "meeting_date": "2026-11-21", "summary": "", "decisions": "", "open_points": "", "actions": "- Ben: update ATLAS docs",
 			"products": []string{"Acme"}},
 		{"id": 3, "title": "Unrelated", "meeting_date": "2026-11-21", "summary": "nothing here", "products": []string{"Acme"}},
-		{"id": 4, "title": "Ornamel in another product", "meeting_date": "2026-11-21", "products": []string{"Globex"}},
+		{"id": 4, "title": "Atlas in another product", "meeting_date": "2026-11-21", "products": []string{"Globex"}},
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/auth/login", func(w http.ResponseWriter, r *http.Request) {
@@ -145,7 +145,7 @@ func (f *fakeMoontech) set(fn func(f *fakeMoontech)) { f.mu.Lock(); fn(f); f.mu.
 func (f *fakeMoontech) loginCount() int { f.mu.Lock(); defer f.mu.Unlock(); return f.logins }
 
 func mtCfg(base string, extra ...string) proto.ConnectorConfig {
-	s := map[string]string{"baseUrl": base, "product": "Acme", "titlePrefix": " ornamel ", "person": "Ana", "username": "ana"}
+	s := map[string]string{"baseUrl": base, "product": "Acme", "titlePrefix": " atlas ", "person": "Ana", "username": "ana"}
 	for i := 0; i+1 < len(extra); i += 2 {
 		s[extra[i]] = extra[i+1]
 	}
@@ -176,7 +176,7 @@ func TestMoontechListMapsAndFilters(t *testing.T) {
 		}
 		require.Len(t, by, 4, "product and prefix filters (case and spacing ignored)")
 		a := by["11"]
-		require.Equal(t, "Ornamel · fix login", a.Title)
+		require.Equal(t, "Atlas · fix login", a.Title)
 		require.Equal(t, "the form loses focus", a.Body)
 		require.Equal(t, "todo", a.Status)
 		require.Equal(t, "por_hacer", a.RawStatus)
@@ -209,7 +209,7 @@ func TestMoontechNoPrefixKeepsWholeProduct(t *testing.T) {
 
 func TestMoontechPrefixWithPunctuation(t *testing.T) {
 	f := newFakeMoontech(t)
-	ts, err := newMT(t, f, "titlePrefix", "Ornamel:").List(context.Background(), 0)
+	ts, err := newMT(t, f, "titlePrefix", "Atlas:").List(context.Background(), 0)
 	require.NoError(t, err)
 	require.Len(t, ts, 4)
 }
@@ -224,7 +224,7 @@ func TestMoontechListNotesFilters(t *testing.T) {
 	}
 	require.Len(t, by, 2, "product filter, and the prefix may be mentioned in the actions")
 	n := by["1"]
-	require.Equal(t, "Ornamel weekly", n.Title)
+	require.Equal(t, "Atlas weekly", n.Title)
 	require.Equal(t, "2026-11-20", n.Date)
 	require.Equal(t, "- ship it", n.Decisions)
 	require.Equal(t, "- Ana: review", n.Actions)
@@ -366,7 +366,7 @@ func TestSyncMoontechOnSyncedAndNotes(t *testing.T) {
 	// A status change and a new ticket.
 	f.set(func(f *fakeMoontech) {
 		f.tickets[0]["status"] = "en_curso"
-		f.tickets = append(f.tickets, map[string]any{"id": 17, "title": "Ornamel new one", "status": "por_hacer", "person_name": "Ana", "product": "Acme"})
+		f.tickets = append(f.tickets, map[string]any{"id": 17, "title": "Atlas new one", "status": "por_hacer", "person_name": "Ana", "product": "Acme"})
 	})
 	require.NoError(t, sy.SyncNow(p.ID))
 	c = calls()

@@ -29,6 +29,37 @@ type NoteLister interface {
 	ListNotes(ctx context.Context) ([]proto.MeetingNote, error)
 }
 
+// FullLister is optional: a connector whose List always returns the source's full list (it ignores since)
+// says so, and the syncer then deletes the stored tickets missing from it (deleted or moved at the source).
+type FullLister interface {
+	FullList() bool
+}
+
+// Reusable is optional: a connector that keeps state worth keeping between syncs (a login session) says so,
+// and the syncer keeps one per project until the project's configuration or token changes.
+type Reusable interface {
+	Reusable() bool
+}
+
+// readOnlyKinds are the kinds that never write to their source (no comment or status proposals).
+var readOnlyKinds = map[string]bool{}
+
+// RegisterReadOnly marks a kind as a read-only source; called from init().
+func RegisterReadOnly(kind string) { readOnlyKinds[kind] = true }
+
+// ReadOnly says whether the kind is a read-only source.
+func ReadOnly(kind string) bool { return readOnlyKinds[kind] }
+
+// ReadOnlyKinds returns the read-only kinds, sorted.
+func ReadOnlyKinds() []string {
+	out := make([]string, 0, len(readOnlyKinds))
+	for k := range readOnlyKinds {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // Factory builds a connector of a kind from its configuration.
 type Factory func(cfg proto.ConnectorConfig, token string, env []string) (Connector, error)
 

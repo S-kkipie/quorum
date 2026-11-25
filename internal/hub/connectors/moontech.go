@@ -51,7 +51,14 @@ func init() {
 	Register("moontech", func(cfg proto.ConnectorConfig, token string, env []string) (Connector, error) {
 		return newMoontech(cfg, token, mtTimeout)
 	})
+	RegisterReadOnly("moontech")
 }
+
+// FullList: /api/tickets returns every ticket each time, so the ones it no longer lists are gone.
+func (m *moontechConnector) FullList() bool { return true }
+
+// Reusable: the login session (cookie jar) is kept between syncs.
+func (m *moontechConnector) Reusable() bool { return true }
 
 func newMoontech(cfg proto.ConnectorConfig, password string, timeout time.Duration) (*moontechConnector, error) {
 	base := strings.TrimRight(strings.TrimSpace(cfg.Settings["baseUrl"]), "/")
@@ -91,7 +98,7 @@ func newMoontech(cfg proto.ConnectorConfig, password string, timeout time.Durati
 }
 
 // normPrefix lowercases and trims the title prefix, including trailing separators such as ":" or "·",
-// so "Ornamel:" and "ornamel" match the same titles.
+// so "Atlas:" and "atlas" match the same titles.
 func normPrefix(s string) string {
 	return strings.ToLower(strings.TrimRight(strings.TrimSpace(s), " \t:·-–—|/"))
 }
