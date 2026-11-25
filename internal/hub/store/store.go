@@ -325,6 +325,14 @@ func renameSession(tx *sql.Tx, old, nw string) error {
 		if _, err := tx.Exec(`UPDATE session_commands SET session_id=? WHERE session_id=?`, nw, old); err != nil {
 			return err
 		}
+		// the files attached to its messages follow the session too
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO session_uploads(session_id,path,name,mime,size,at)
+			SELECT ?,path,name,mime,size,at FROM session_uploads WHERE session_id=?`, nw, old); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`DELETE FROM session_uploads WHERE session_id=?`, old); err != nil {
+			return err
+		}
 	}
 	var oldMax, oldN int64
 	if err := tx.QueryRow(`SELECT COALESCE(MAX(MAX(seq),0),0), COUNT(*) FROM events WHERE session=?`, old).Scan(&oldMax, &oldN); err != nil {
@@ -884,6 +892,7 @@ func closeOrRemove(tx *sql.Tx, id string) (bool, error) {
 		`DELETE FROM events WHERE session=?`,
 		`DELETE FROM away WHERE session=?`,
 		`DELETE FROM session_commands WHERE session_id=?`,
+		`DELETE FROM session_uploads WHERE session_id=?`,
 		`DELETE FROM session_tickets WHERE session_id=?`,
 		`DELETE FROM session_ticket_dismissed WHERE session_id=?`,
 		`DELETE FROM sessions WHERE id=?`,

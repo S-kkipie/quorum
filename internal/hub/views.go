@@ -23,10 +23,11 @@ import (
 const (
 	viewTTL       = 6 * time.Hour
 	viewChunk     = 1 << 20
-	viewMaxSize   = 50 << 20
+	viewMaxSize   = 100 << 20
 	viewGoneText  = "Open it again from Quorum"
 	viewOutside   = "outside the project folder"
 	viewNoImage   = "This image is not available."
+	viewNoFile    = "This file is not available."
 	viewDenied    = "this file is not served"
 	viewNotFound  = "File not found in this project's folders"
 	viewCSPHeader = "sandbox allow-scripts allow-popups allow-forms allow-modals; frame-ancestors 'self'; " +
@@ -40,6 +41,8 @@ type viewLink struct {
 	machine string
 	base    string
 	only    string
+	// upload: a file a device attached to a message; any type, so the daemon does not check it is an image
+	upload  bool
 	expires time.Time
 }
 
@@ -62,6 +65,11 @@ func (v *viewLinks) setNow(f func() time.Time) {
 
 // create stores a new link and drops the expired ones.
 func (v *viewLinks) create(machine, base, only string) (string, error) {
+	return v.createLink(viewLink{machine: machine, base: base, only: only})
+}
+
+// createLink stores l (its expiry is set here) under a new token.
+func (v *viewLinks) createLink(l viewLink) (string, error) {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		return "", err
@@ -75,7 +83,8 @@ func (v *viewLinks) create(machine, base, only string) (string, error) {
 			delete(v.links, k)
 		}
 	}
-	v.links[tok] = viewLink{machine: machine, base: base, only: only, expires: now.Add(viewTTL)}
+	l.expires = now.Add(viewTTL)
+	v.links[tok] = l
 	return tok, nil
 }
 
@@ -183,6 +192,9 @@ func (s *Server) handleCreateView(w http.ResponseWriter, r *http.Request) {
 		// Read: the path is an image Claude read with the Read tool in this session; the base
 		// is its folder and the link serves that one file.
 		Read bool `json:"read"`
+		// Upload: the path is a file a device attached to a message of this session (recorded by
+		// the hub when it was uploaded); the base is its folder and the link serves that one file.
+		Upload bool `json:"upload"`
 	}
 	if !decode(w, r, &b) {
 		return
@@ -201,9 +213,18 @@ func (s *Server) handleCreateView(w http.ResponseWriter, r *http.Request) {
 	var base, only string
 	var rel []string
 	ok := false
+	single := b.Images || b.Read || b.Upload
 	switch {
-	case b.Images && b.Read:
+	case (b.Images && b.Read) || (b.Upload && (b.Images || b.Read)):
 		base = ""
+	case b.Upload:
+		var file string
+		base, file, ok, err = s.uploadBase(si.ID, b.Path)
+		if err != nil {
+			apiErr(w, 500, "internal error")
+			return
+		}
+		rel = []string{file}
 	case b.Images:
 		base = imagesDirOf(si, fold)
 	case b.Read:
@@ -218,6 +239,9 @@ func (s *Server) handleCreateView(w http.ResponseWriter, r *http.Request) {
 	if b.Images || b.Read {
 		rel, ok = relInside(base, b.Path, fold)
 	}
+	if b.Upload && ok && viewSensitive(rel[0]) {
+		ok = false
+	}
 	if b.Images && ok {
 		// exactly one pasted image right in the folder
 		ok = len(rel) == 1 && pastedImage.MatchString(rel[0])
@@ -225,18 +249,20 @@ func (s *Server) handleCreateView(w http.ResponseWriter, r *http.Request) {
 	if b.Read && ok {
 		ok = len(rel) == 1
 	}
-	if (b.Images || b.Read) && ok {
+	if single && ok {
 		only = rel[0]
 	}
 	if base == "" || !ok {
-		if b.Images || b.Read {
+		if b.Upload {
+			apiErr(w, 403, viewDenied)
+		} else if b.Images || b.Read {
 			apiErr(w, 403, viewNoImage)
 		} else {
 			apiErr(w, 403, viewOutside)
 		}
 		return
 	}
-	tok, err := s.views.create(m, base, only)
+	tok, err := s.views.createLink(viewLink{machine: m, base: base, only: only, upload: b.Upload})
 	if err != nil {
 		apiErr(w, 500, "internal error")
 		return
@@ -350,6 +376,9 @@ var viewContentTypes = map[string]string{
 	".gif": "image/gif", ".webp": "image/webp", ".pdf": "application/pdf",
 	".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8",
 	".json": "application/json", ".woff": "font/woff", ".woff2": "font/woff2", ".ttf": "font/ttf", ".otf": "font/otf",
+	".mp4": "video/mp4", ".m4v": "video/mp4", ".mov": "video/quicktime", ".webm": "video/webm", ".ogv": "video/ogg",
+	".mp3": "audio/mpeg", ".m4a": "audio/mp4", ".ogg": "audio/ogg", ".wav": "audio/wav",
+	".avif": "image/avif", ".bmp": "image/bmp", ".ico": "image/x-icon",
 }
 
 func viewContentType(p string) string {
@@ -429,7 +458,9 @@ func (s *Server) handleView(w http.ResponseWriter, r *http.Request) {
 	}
 	// a pasted-image link does not mention the project folder: the image is simply not available
 	outside := viewOutside
-	if link.only != "" {
+	if link.upload {
+		outside = viewNoFile
+	} else if link.only != "" {
 		outside = viewNoImage
 	}
 	if strings.ContainsAny(rest, "\x00\\") {
@@ -450,7 +481,14 @@ func (s *Server) handleView(w http.ResponseWriter, r *http.Request) {
 		full = strings.TrimRight(strings.ReplaceAll(link.base, `\`, "/"), "/") + "/" + rel
 	}
 	rc := http.NewResponseController(w)
-	var off int64
+	h.Set("Accept-Ranges", "bytes")
+	// a single "bytes=a-b" or "bytes=a-" range (what a <video> asks for); anything else gets the whole file
+	start, last, ranged := int64(0), int64(-1), false
+	if r.Method == http.MethodGet {
+		start, last, ranged = parseRange(r.Header.Get("Range"))
+	}
+	off := start
+	var end int64 // last byte served, inclusive
 	for first := true; ; first = false {
 		var out struct {
 			Data string `json:"data"`
@@ -458,7 +496,7 @@ func (s *Server) handleView(w http.ResponseWriter, r *http.Request) {
 			EOF  bool   `json:"eof"`
 		}
 		p := map[string]any{"path": full, "base": link.base, "offset": off, "length": viewChunk}
-		if link.only != "" {
+		if link.only != "" && !link.upload {
 			// a single-file image link: the daemon checks the file it resolves to is still an image and not sensitive
 			p["imageOnly"] = true
 		}
@@ -468,6 +506,12 @@ func (s *Server) handleView(w http.ResponseWriter, r *http.Request) {
 			data, err = base64.StdEncoding.DecodeString(out.Data)
 		}
 		if first {
+			var de daemonError
+			if ranged && errors.As(err, &de) && string(de) == "invalid offset" {
+				h.Set("Content-Range", "bytes */*")
+				viewFail(w, http.StatusRequestedRangeNotSatisfiable, "range not satisfiable")
+				return
+			}
 			if err == nil && out.Size > viewMaxSize {
 				viewFail(w, 413, "file too large")
 				return
@@ -476,15 +520,32 @@ func (s *Server) handleView(w http.ResponseWriter, r *http.Request) {
 				viewRPCFail(w, err, outside)
 				return
 			}
+			end = out.Size - 1
+			if ranged && last >= 0 && last < end {
+				end = last
+			}
+			if ranged && start >= out.Size {
+				h.Set("Content-Range", "bytes */"+strconv.FormatInt(out.Size, 10))
+				viewFail(w, http.StatusRequestedRangeNotSatisfiable, "range not satisfiable")
+				return
+			}
 			h.Set("Content-Type", viewContentType(rel))
-			h.Set("Content-Length", strconv.FormatInt(out.Size, 10))
+			h.Set("Content-Length", strconv.FormatInt(end-start+1, 10))
+			code := 200
+			if ranged {
+				code = http.StatusPartialContent
+				h.Set("Content-Range", "bytes "+strconv.FormatInt(start, 10)+"-"+strconv.FormatInt(end, 10)+"/"+strconv.FormatInt(out.Size, 10))
+			}
 			_ = rc.SetWriteDeadline(time.Now().Add(viewWriteWait)) // ErrNotSupported is fine
-			w.WriteHeader(200)
+			w.WriteHeader(code)
 			if r.Method == http.MethodHead {
 				return
 			}
 		} else if err != nil {
 			panic(http.ErrAbortHandler) // headers already sent: cut the response
+		}
+		if rest := end - off + 1; int64(len(data)) > rest {
+			data = data[:max(rest, 0)]
 		}
 		_ = rc.SetWriteDeadline(time.Now().Add(viewWriteWait)) // ErrNotSupported is fine
 		if _, err := w.Write(data); err != nil {
@@ -492,11 +553,35 @@ func (s *Server) handleView(w http.ResponseWriter, r *http.Request) {
 		}
 		_ = rc.Flush()
 		off += int64(len(data))
-		if out.EOF || off >= out.Size {
+		if out.EOF || off > end || off >= out.Size {
 			return
 		}
 		if len(data) == 0 {
 			panic(http.ErrAbortHandler) // no progress and no eof
 		}
 	}
+}
+
+// parseRange reads a single "bytes=a-b" or "bytes=a-" range; ok is false for anything else
+// (no header, suffix ranges, several ranges), which is then served whole.
+func parseRange(v string) (start, last int64, ok bool) {
+	spec, found := strings.CutPrefix(strings.TrimSpace(v), "bytes=")
+	if !found || strings.Contains(spec, ",") {
+		return 0, -1, false
+	}
+	a, b, found := strings.Cut(strings.TrimSpace(spec), "-")
+	if !found || a == "" {
+		return 0, -1, false
+	}
+	start, err := strconv.ParseInt(a, 10, 64)
+	if err != nil || start < 0 {
+		return 0, -1, false
+	}
+	last = -1
+	if b != "" {
+		if last, err = strconv.ParseInt(b, 10, 64); err != nil || last < start {
+			return 0, -1, false
+		}
+	}
+	return start, last, true
 }

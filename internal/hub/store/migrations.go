@@ -67,6 +67,15 @@ CREATE TABLE IF NOT EXISTS terminal_audit (
 CREATE TABLE IF NOT EXISTS away (
 	session TEXT PRIMARY KEY
 );
+CREATE TABLE IF NOT EXISTS session_uploads (
+	session_id TEXT NOT NULL,
+	path TEXT NOT NULL,
+	name TEXT NOT NULL DEFAULT '',
+	mime TEXT NOT NULL DEFAULT '',
+	size INTEGER NOT NULL DEFAULT 0,
+	at INTEGER NOT NULL DEFAULT 0,
+	PRIMARY KEY (session_id, path)
+);
 CREATE TABLE IF NOT EXISTS session_commands (
 	session_id TEXT PRIMARY KEY,
 	hash TEXT NOT NULL DEFAULT '',

@@ -29,6 +29,7 @@ func fakeMachine(t *testing.T, f *appFx, tok, name string, h func(proto.RPC) *pr
 	c, _, err := websocket.Dial(ctx, f.wsURL("/api/machine/ws"), &websocket.DialOptions{HTTPHeader: http.Header{"Authorization": {"Bearer " + tok}}})
 	require.NoError(t, err)
 	t.Cleanup(func() { c.CloseNow() })
+	c.SetReadLimit(8 << 20) // like the daemon: an upload chunk is ~1.4 MB
 	sendHello(t, c, name)
 	eventually(t, func() bool {
 		f.srv.hub.mu.Lock()

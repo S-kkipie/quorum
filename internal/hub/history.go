@@ -179,6 +179,9 @@ func runRetention(ctx context.Context, st *store.Store, now func() time.Time, af
 		} else if n > 0 {
 			log.Printf("hub: retention: removed %d events of sessions closed before %s", n, cutoff.Format("2006-01-02"))
 		}
+		if _, err := st.PruneUploads(now().Add(-uploadKeep).UnixMilli()); err != nil {
+			log.Printf("hub: retention: uploads: %v", err)
+		}
 		wait = 24 * time.Hour
 	}
 }
