@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"math/big"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/S-kkipie/quorum/internal/proto"
@@ -45,6 +46,7 @@ type Store struct {
 	db      *sql.DB
 	now     func() time.Time
 	genCode func() (string, error)
+	pmu     sync.Mutex // serialises AddPending's check-then-insert
 }
 
 func Open(path string) (*Store, error) {

@@ -2,6 +2,7 @@ package store
 
 import (
 	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/S-kkipie/quorum/internal/proto"
@@ -122,4 +123,43 @@ func TestPendingDeleteAndMeetingExists(t *testing.T) {
 	pid, err := s.DeletePending(a.ID)
 	require.NoError(t, err)
 	require.Equal(t, p.ID, pid)
+}
+
+func TestPendingAddConcurrent(t *testing.T) {
+	s, p := briefingStore(t)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	created, capped := 0, 0
+	for i := 0; i < 60; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, c, err := s.AddPending(pend(p.ID, fmt.Sprintf("agent item %d", i), "agent"), fmt.Sprintf("k%d", i), 100)
+			mu.Lock()
+			defer mu.Unlock()
+			if c {
+				created++
+			} else if err == ErrPendingCap {
+				capped++
+			}
+		}()
+	}
+	for i := 0; i < 20; i++ { // same clientKey: exactly one row
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, c, _ := s.AddPending(pend(p.ID, "same", "manual"), "same-key", 100)
+			if c {
+				mu.Lock()
+				created++
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+	all, err := s.Pendings(p.ID, true)
+	require.NoError(t, err)
+	require.Equal(t, created, len(all))
+	require.Equal(t, 50+1, created)
+	require.Equal(t, 10, capped)
 }

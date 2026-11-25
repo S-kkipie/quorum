@@ -60,6 +60,8 @@ func normPending(text string) string {
 // open items returns that item; agent items beyond the open cap return ErrPendingCap; otherwise a new item.
 // created reports whether a row was inserted.
 func (s *Store) AddPending(p proto.Pending, clientKey string, now int64) (proto.Pending, bool, error) {
+	s.pmu.Lock()
+	defer s.pmu.Unlock()
 	if clientKey != "" {
 		got, err := scanPending(s.db.QueryRow(`SELECT `+pendingCols+` FROM pendings WHERE project_id=? AND client_key=?`, p.ProjectID, clientKey))
 		if err == nil {

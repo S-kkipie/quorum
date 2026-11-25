@@ -242,6 +242,7 @@ func (s *Server) routes() {
 	dev("POST /api/projects", s.handleCreateProject)
 	s.projectRoutes(dev)
 	s.briefingRoutes(dev)
+	s.pendingRoutes(dev)
 	s.meetingRoutes(dev)
 	dev("POST /api/tickets/{id}/proposals", s.handleCreateProposal)
 	dev("POST /api/proposals/{id}/approve", s.handleApproveProposal)
