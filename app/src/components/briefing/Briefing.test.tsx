@@ -38,7 +38,7 @@ const regions = () => screen.queryAllByRole('region').map((r) => r.getAttribute(
 describe('Briefing sections', () => {
   it('in the mockup order', () => {
     render(<Harness b={full()} />)
-    expect(regions()).toEqual(['Where you left off', 'Pending', 'New since you were here', 'Your tickets', 'From meetings', 'Pinned notes'])
+    expect(regions()).toEqual(['Where you left off', 'New since you were here', 'Your tickets', 'From meetings', 'Pinned notes'])
   })
   it('hides empty sections', () => {
     render(<Harness b={{ ...emptyBriefing(), myTickets: [tk('1')] }} />)
