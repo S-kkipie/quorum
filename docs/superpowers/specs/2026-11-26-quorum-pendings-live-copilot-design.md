@@ -174,9 +174,11 @@ The owner explicitly wants suggestions only. Quorum never ticks an item off by i
   from the same meeting twice is refused, and the button shows "Added".
 - **`pending_list`:** open items by default, `detail` cut to 200 characters, at most 50 items.
 - **Order:** oldest first. Done and dropped items are kept, with a "Show done" filter.
-- **MCP plumbing:** `mcpServers` in the plugin manifest launches `quorumd mcp`. It reads the daemon's local address
-  and token from the daemon config, as the mod does. A spike confirms which env (session id, project dir) the host
-  passes to plugin MCP servers; the cwd is the fallback.
+- **Tool plumbing (found while planning):** the Quorum mod registers the tools itself (`$.tool.register`, answered
+  in `tool.run` hooks), so no MCP server or extra process is needed. The tools still appear as
+  `mcp__quorum__pending_*`. The mod calls the local daemon, which forwards to the hub with its machine token.
+- **Events:** open items are part of the briefing payload, so `project_briefing_changed` replaces the separate
+  `pending_changed` event.
 - **Plan 17 fields:** no new fields reserved now.
 
 ## Left to the builder
