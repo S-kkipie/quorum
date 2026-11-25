@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/S-kkipie/quorum/internal/daemon/launch"
@@ -30,8 +31,11 @@ var (
 	launchHerdr = launch.RunHerdrCause
 )
 
-// capsEvery: how often capabilities are recomputed; a variable for tests.
-var capsEvery = 30 * time.Second
+// capsEvery: how often capabilities are recomputed, in nanoseconds; atomic so a test can shorten
+// it while a link from an earlier test is still winding down.
+var capsEvery atomic.Int64
+
+func init() { capsEvery.Store(int64(30 * time.Second)) }
 
 const linkReadLimit = 8 << 20
 
@@ -134,7 +138,7 @@ func linkOnce(ctx context.Context, cfg Config, reg *Registry, host *Host) error 
 
 	ping := time.NewTicker(pingEvery)
 	defer ping.Stop()
-	capsTick := time.NewTicker(capsEvery)
+	capsTick := time.NewTicker(time.Duration(capsEvery.Load()))
 	defer capsTick.Stop()
 	for {
 		select {

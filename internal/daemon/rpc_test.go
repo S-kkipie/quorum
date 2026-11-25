@@ -102,9 +102,9 @@ func TestCapsRoot(t *testing.T) {
 }
 
 func TestCapsReemittedOnChange(t *testing.T) {
-	old := capsEvery
-	capsEvery = 50 * time.Millisecond
-	defer func() { capsEvery = old }()
+	old := capsEvery.Load()
+	capsEvery.Store(int64(50 * time.Millisecond))
+	defer capsEvery.Store(old)
 	f := fakeUp(t)
 	fh, _ := startLink(t, hostFor(t, f.Socket))
 	f.Close()
