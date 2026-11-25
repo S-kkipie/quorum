@@ -128,6 +128,17 @@ func uploadOffsetErr(w http.ResponseWriter, code int, msg string, offset int64) 
 	writeJSON(w, code, map[string]any{"error": msg, "offset": offset})
 }
 
+// uploadBusyRetry is the Retry-After (seconds) of a busy upload.
+const uploadBusyRetry = "5"
+
+// uploadBusyErr answers a request for an upload another request is writing (an earlier PUT the client
+// gave up on that the hub still reads): 503 with Retry-After and the current offset, so the client waits
+// and resumes instead of counting it as a failure.
+func uploadBusyErr(w http.ResponseWriter, offset int64) {
+	w.Header().Set("Retry-After", uploadBusyRetry)
+	uploadOffsetErr(w, http.StatusServiceUnavailable, "another request is writing this upload; try again shortly", offset)
+}
+
 // handleMeetingUploadBegin starts a resumable upload: POST /api/meetings/uploads {name, size, mime,
 // projectId?, title?, startedAt?, language?, channels?} → 201 {uploadId, offset: 0, chunkSize}.
 func (s *Server) handleMeetingUploadBegin(w http.ResponseWriter, r *http.Request) {
@@ -188,8 +199,10 @@ func (s *Server) handleMeetingUploadBegin(w http.ResponseWriter, r *http.Request
 		diskFullErr(w)
 		return
 	}
+	partDir := filepath.Join(s.audioDir, "uploads")
 	u, err := s.st.CreateMeetingUpload(store.MeetingUpload{Size: b.Size, Name: b.Name, Mime: mime, Channels: b.Channels,
-		ProjectID: b.ProjectID, Title: title, Language: b.Language, StartedAt: b.StartedAt})
+		ProjectID: b.ProjectID, Title: title, Language: b.Language, StartedAt: b.StartedAt},
+		func(id string) string { return filepath.Join(partDir, id+".part") })
 	if errors.Is(err, store.ErrNoProject) {
 		apiErr(w, 400, "no such project")
 		return
@@ -198,17 +211,15 @@ func (s *Server) handleMeetingUploadBegin(w http.ResponseWriter, r *http.Request
 		apiErr(w, 500, "internal error")
 		return
 	}
-	part := filepath.Join(s.audioDir, "uploads", u.ID+".part")
-	f, err := os.OpenFile(part, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	// the row names the file before it exists: the retention finds every partial file
+	f, err := os.OpenFile(u.Path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err == nil {
-		err = f.Close()
-	}
-	if err == nil {
-		err = s.st.SetMeetingUploadPath(u.ID, part)
+		if err = f.Close(); err != nil {
+			_ = os.Remove(u.Path) // ours (O_EXCL)
+		}
 	}
 	if err != nil {
 		log.Printf("hub: meetings: start upload: %v", err)
-		_ = os.Remove(part)
 		_ = s.st.DeleteMeetingUpload(u.ID)
 		apiErr(w, 500, "internal error")
 		return
@@ -237,7 +248,7 @@ func (s *Server) handleMeetingUploadChunk(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if !s.meetUploads.take(id) {
-		uploadOffsetErr(w, 409, "another request is writing this upload", u.Offset)
+		uploadBusyErr(w, u.Offset)
 		return
 	}
 	defer s.meetUploads.done(id)
@@ -348,7 +359,7 @@ func (s *Server) handleMeetingUploadComplete(w http.ResponseWriter, r *http.Requ
 	id := r.PathValue("id")
 	if !s.meetUploads.take(id) {
 		u, _ := s.st.MeetingUploadByID(id)
-		uploadOffsetErr(w, 409, "another request is writing this upload", u.Offset)
+		uploadBusyErr(w, u.Offset)
 		return
 	}
 	defer s.meetUploads.done(id)
@@ -366,6 +377,14 @@ func (s *Server) handleMeetingUploadComplete(w http.ResponseWriter, r *http.Requ
 		if err != nil {
 			apiErr(w, 404, "no such meeting")
 			return
+		}
+		if m.Status == "uploaded" {
+			// an earlier complete stored the meeting but failed to queue it
+			if m, err = s.queueMeeting(m.ID); err != nil {
+				log.Printf("hub: meetings: queue %s: %v", u.MeetingID, err)
+				apiErr(w, 500, "internal error")
+				return
+			}
 		}
 		writeJSON(w, 201, m)
 		return

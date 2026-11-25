@@ -363,14 +363,14 @@ func TestMeetingRetention(t *testing.T) {
 	require.NoError(t, f.st.SetMeetingSummary(m.ID, proto.MeetingSummary{Summary: "kept too"}))
 	path, _, _, _, _ := f.st.MeetingAudio(m.ID)
 	// a queued meeting never loses its audio
-	pruneMeetingFiles(f.st, time.Now().Add(365*24*time.Hour))
+	pruneMeetingFiles(f.st, f.dir, time.Now().Add(365*24*time.Hour))
 	_, err := os.Stat(path)
 	require.NoError(t, err)
 	require.NoError(t, f.st.SetMeetingStatus(m.ID, "ready", "", 100))
-	pruneMeetingFiles(f.st, time.Now().Add(29*24*time.Hour))
+	pruneMeetingFiles(f.st, f.dir, time.Now().Add(29*24*time.Hour))
 	_, err = os.Stat(path)
 	require.NoError(t, err, "kept for 30 days")
-	pruneMeetingFiles(f.st, time.Now().Add(31*24*time.Hour))
+	pruneMeetingFiles(f.st, f.dir, time.Now().Add(31*24*time.Hour))
 	_, err = os.Stat(path)
 	require.True(t, errors.Is(err, os.ErrNotExist), "deleted after 30 days")
 	d, err := f.st.MeetingDetail(m.ID)
@@ -383,11 +383,117 @@ func TestMeetingRetention(t *testing.T) {
 	id := f.begin(t, `{"name":"a.ogg","size":10}`)
 	require.Equal(t, 200, f.put(id, 0, "12").Code)
 	part := filepath.Join(f.dir, "uploads", id+".part")
-	pruneMeetingFiles(f.st, time.Now().Add(time.Hour))
+	pruneMeetingFiles(f.st, f.dir, time.Now().Add(time.Hour))
 	_, err = os.Stat(part)
 	require.NoError(t, err)
-	pruneMeetingFiles(f.st, time.Now().Add(25*time.Hour))
+	pruneMeetingFiles(f.st, f.dir, time.Now().Add(25*time.Hour))
 	_, err = os.Stat(part)
 	require.True(t, errors.Is(err, os.ErrNotExist))
 	require.Equal(t, 404, f.put(id, 2, "34").Code)
+}
+
+func TestMeetingUploadCompleteQueuesAStuckUploadedMeeting(t *testing.T) {
+	f := newMeetFx(t)
+	id := f.begin(t, `{"name":"a.ogg","size":3,"mime":"audio/ogg"}`)
+	require.Equal(t, 200, f.put(id, 0, "abc").Code)
+	rr := f.do("POST", "/api/meetings/uploads/"+id+"/complete", "")
+	require.Equal(t, 201, rr.Code, rr.Body.String())
+	var m proto.Meeting
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &m))
+	// an earlier complete stored the meeting but never queued it (the hub failed in between)
+	_, err := f.st.CancelMeetingJobs(m.ID)
+	require.NoError(t, err)
+	require.NoError(t, f.st.SetMeetingStatus(m.ID, "uploaded", "", 0))
+	rr = f.do("POST", "/api/meetings/uploads/"+id+"/complete", "")
+	require.Equal(t, 201, rr.Code, rr.Body.String())
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &m))
+	require.Equal(t, "queued", m.Status)
+	act, err := f.st.ActiveMeetingJobs(m.ID)
+	require.NoError(t, err)
+	require.Len(t, act, 1)
+}
+
+func TestMeetingRecoveryQueuesUploadedMeetings(t *testing.T) {
+	f := newMeetFx(t)
+	m := f.uploadMeeting(t, "", "abc")
+	_, err := f.st.CancelMeetingJobs(m.ID)
+	require.NoError(t, err)
+	require.NoError(t, f.st.SetMeetingStatus(m.ID, "uploaded", "", 0))
+	s2 := NewServer(f.st) // a hub restart
+	s2.audioDir = f.dir
+	got, err := f.st.Meeting(m.ID)
+	require.NoError(t, err)
+	require.Equal(t, "queued", got.Status)
+	act, err := f.st.ActiveMeetingJobs(m.ID)
+	require.NoError(t, err)
+	require.Len(t, act, 1)
+}
+
+func TestMeetingUploadBusyAnswers503(t *testing.T) {
+	f := newMeetFx(t)
+	id := f.begin(t, `{"name":"a.ogg","size":6,"mime":"audio/ogg"}`)
+	require.Equal(t, 200, f.put(id, 0, "ab").Code)
+	// a first PUT the client gave up on is still being read by the hub
+	pr, pw := io.Pipe()
+	req := httptest.NewRequest("PUT", "/api/meetings/uploads/"+id+"?offset=2", pr)
+	req.ContentLength = 4
+	req.Header.Set("Authorization", f.auth["Authorization"])
+	first := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() { f.h.ServeHTTP(first, req); close(done) }()
+	_, err := pw.Write([]byte("c")) // returns once the handler reads: it holds the claim
+	require.NoError(t, err)
+	// the overlapping retry: busy, with Retry-After and the offset the hub has
+	rr := f.put(id, 2, "cdef")
+	require.Equal(t, 503, rr.Code, rr.Body.String())
+	require.Equal(t, "5", rr.Header().Get("Retry-After"))
+	require.Equal(t, int64(2), offsetOf(t, rr))
+	rr = f.do("POST", "/api/meetings/uploads/"+id+"/complete", "")
+	require.Equal(t, 503, rr.Code)
+	require.Equal(t, "5", rr.Header().Get("Retry-After"))
+	require.NoError(t, pw.CloseWithError(errors.New("connection reset")))
+	<-done
+	require.Equal(t, 400, first.Code)
+	require.Equal(t, int64(3), offsetOf(t, first))
+	// the claim is free again: the client resumes from the offset
+	require.Equal(t, 200, f.put(id, 3, "def").Code)
+	require.Equal(t, 201, f.do("POST", "/api/meetings/uploads/"+id+"/complete", "").Code)
+}
+
+func TestMeetingUploadRowNamesThePartBeforeTheFile(t *testing.T) {
+	f := newMeetFx(t)
+	id := f.begin(t, `{"name":"a.ogg","size":6,"mime":"audio/ogg"}`)
+	u, err := f.st.MeetingUploadByID(id)
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(f.dir, "uploads", id+".part"), u.Path)
+	_, err = os.Stat(u.Path)
+	require.NoError(t, err)
+}
+
+func TestMeetingRetentionRemovesOrphanAudio(t *testing.T) {
+	f := newMeetFx(t)
+	m := f.uploadMeeting(t, "", "abc")
+	kept, _, _, _, _ := f.st.MeetingAudio(m.ID)
+	// a pending upload whose complete moved the file but has not committed yet
+	pendingID := f.begin(t, `{"name":"b.ogg","size":3,"mime":"audio/ogg"}`)
+	pu, err := f.st.MeetingUploadByID(pendingID)
+	require.NoError(t, err)
+	pending := filepath.Join(f.dir, pu.MeetingID+".ogg")
+	orphan := filepath.Join(f.dir, "0123456789abcdef01234567.m4a")
+	young := filepath.Join(f.dir, "aaaaaaaaaaaaaaaaaaaaaaaa.ogg")
+	other := filepath.Join(f.dir, "notes.txt")
+	for _, p := range []string{pending, orphan, young, other} {
+		require.NoError(t, os.WriteFile(p, []byte("x"), 0o600))
+	}
+	old := time.Now().Add(-48 * time.Hour)
+	for _, p := range []string{kept, pending, orphan, other} {
+		require.NoError(t, os.Chtimes(p, old, old))
+	}
+	pruneMeetingFiles(f.st, f.dir, time.Now())
+	_, err = os.Stat(orphan)
+	require.True(t, errors.Is(err, os.ErrNotExist), "an old file no meeting names is removed")
+	for _, p := range []string{kept, pending, young, other} {
+		_, err = os.Stat(p)
+		require.NoError(t, err, p)
+	}
 }

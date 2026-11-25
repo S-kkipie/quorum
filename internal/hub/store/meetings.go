@@ -192,22 +192,22 @@ func (s *Store) projectExists(q interface {
 	return nil
 }
 
-// CreateMeetingUpload records a new upload at offset 0, assigning its id and its future meeting id
-// (u.Path may be set later by SetMeetingUploadPath). A ProjectID that does not exist gives ErrNoProject.
-func (s *Store) CreateMeetingUpload(u MeetingUpload) (MeetingUpload, error) {
+// CreateMeetingUpload records a new upload at offset 0, assigning its id and its future meeting id. When
+// partPath is not nil, the upload's path is partPath(id), stored with the row (so a partial file never
+// exists without a row that names it); otherwise u.Path is kept. A ProjectID that does not exist gives
+// ErrNoProject.
+func (s *Store) CreateMeetingUpload(u MeetingUpload, partPath func(id string) string) (MeetingUpload, error) {
 	if err := s.projectExists(s.db, u.ProjectID); err != nil {
 		return u, err
 	}
 	u.ID, u.MeetingID, u.Offset, u.Done = newID(), newID(), 0, false
+	if partPath != nil {
+		u.Path = partPath(u.ID)
+	}
 	u.ExpiresAt = s.now().Add(meetingUploadKeep).UnixMilli()
 	_, err := s.db.Exec(`INSERT INTO meeting_uploads(`+uploadCols+`) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,0,?)`,
 		u.ID, u.MeetingID, u.Path, u.Offset, u.Size, u.Name, u.Mime, u.Channels, u.ProjectID, u.Title, u.Language, u.StartedAt, u.ExpiresAt)
 	return u, err
-}
-
-// SetMeetingUploadPath sets where the upload's bytes are written.
-func (s *Store) SetMeetingUploadPath(id, path string) error {
-	return affected(s.db.Exec(`UPDATE meeting_uploads SET path=? WHERE id=?`, path, id))
 }
 
 // MeetingUploadByID returns the upload, or ErrNotFound.
@@ -297,6 +297,15 @@ func (s *Store) ExpiredMeetingUploads(now int64) ([]MeetingUpload, error) {
 		out = append(out, u)
 	}
 	return out, rows.Err()
+}
+
+// MeetingIDInUse reports whether a meeting with this id exists or an upload will create it (the retention
+// keeps an audio file while either names it).
+func (s *Store) MeetingIDInUse(id string) (bool, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT (SELECT COUNT(*) FROM meetings WHERE id=?)+(SELECT COUNT(*) FROM meeting_uploads WHERE meeting_id=?)`,
+		id, id).Scan(&n)
+	return n > 0, err
 }
 
 // DeleteMeetingUpload forgets the upload.

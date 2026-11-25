@@ -161,11 +161,11 @@ func clipSig(s string) string {
 
 // startRetention deletes the events of long-closed sessions (see PruneClosedEvents) once a minute after startup and then daily.
 func (s *Server) startRetention(ctx context.Context) {
-	go runRetention(ctx, s.st, time.Now, time.After)
+	go runRetention(ctx, s.st, s.audioDir, time.Now, time.After)
 }
 
 // runRetention is the retention loop with an injectable clock and timer (tests).
-func runRetention(ctx context.Context, st *store.Store, now func() time.Time, after func(time.Duration) <-chan time.Time) {
+func runRetention(ctx context.Context, st *store.Store, audioDir string, now func() time.Time, after func(time.Duration) <-chan time.Time) {
 	wait := time.Minute
 	for {
 		select {
@@ -182,7 +182,7 @@ func runRetention(ctx context.Context, st *store.Store, now func() time.Time, af
 		if _, err := st.PruneUploads(now().Add(-uploadKeep).UnixMilli()); err != nil {
 			log.Printf("hub: retention: uploads: %v", err)
 		}
-		pruneMeetingFiles(st, now())
+		pruneMeetingFiles(st, audioDir, now())
 		wait = 24 * time.Hour
 	}
 }

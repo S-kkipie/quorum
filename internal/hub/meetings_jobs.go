@@ -98,8 +98,8 @@ func (s *Server) initMeetingJobs() {
 	s.hub.onMachineChanged = func(string) { s.kickJobs() }
 }
 
-// recoverQueuedMeetings gives a job to every queued meeting that has none (a hub stopped between the
-// status change and the job, or a meeting queued before jobs existed).
+// recoverQueuedMeetings gives a job to every queued (or uploaded but never queued) meeting that has none
+// (a hub stopped between the status change and the job, or a meeting queued before jobs existed).
 func (s *Server) recoverQueuedMeetings() {
 	ms, err := s.st.Meetings(store.MeetingFilter{})
 	if err != nil {
@@ -107,7 +107,7 @@ func (s *Server) recoverQueuedMeetings() {
 		return
 	}
 	for _, m := range ms {
-		if m.Status != "queued" && m.Status != "transcribing" {
+		if m.Status != "uploaded" && m.Status != "queued" && m.Status != "transcribing" {
 			continue
 		}
 		if act, err := s.st.ActiveMeetingJobs(m.ID); err != nil || len(act) > 0 {

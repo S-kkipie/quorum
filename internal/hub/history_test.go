@@ -112,7 +112,7 @@ func TestRetentionLoopWithFakeClock(t *testing.T) {
 	after := func(d time.Duration) <-chan time.Time { waits = append(waits, d); asked <- struct{}{}; return ticks }
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
-	go func() { runRetention(ctx, st, clock, after); close(done) }()
+	go func() { runRetention(ctx, st, "", clock, after); close(done) }()
 	<-asked
 	ticks <- clock()
 	<-asked // the first prune finished: 31 days is within Claude Code's own cleanup, keep

@@ -6,6 +6,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/S-kkipie/quorum/internal/hub/store"
@@ -254,9 +256,13 @@ func (s *Server) serveMeetingAudio(w http.ResponseWriter, r *http.Request, id st
 	http.ServeContent(w, r, "", st.ModTime(), f)
 }
 
+// orphanAudioAge: an audio file no meeting or upload names is removed once it is this old.
+const orphanAudioAge = 24 * time.Hour
+
 // pruneMeetingFiles is the meetings part of the daily retention: the audio of meetings ready for more
-// than 30 days (the transcript and summary stay), abandoned uploads and expired signed tokens.
-func pruneMeetingFiles(st *store.Store, now time.Time) {
+// than 30 days (the transcript and summary stay), abandoned uploads, audio files no meeting names (a
+// complete that moved the file but never committed its meeting) and expired signed tokens.
+func pruneMeetingFiles(st *store.Store, audioDir string, now time.Time) {
 	ms := now.UnixMilli()
 	audio, err := st.ExpiredMeetingAudio(ms)
 	if err != nil {
@@ -287,7 +293,44 @@ func pruneMeetingFiles(st *store.Store, now time.Time) {
 			log.Printf("hub: retention: meeting upload %s: %v", u.ID, err)
 		}
 	}
+	pruneOrphanAudio(st, audioDir, now)
 	if _, err := st.PruneMeetingTokens(ms); err != nil {
 		log.Printf("hub: retention: meeting tokens: %v", err)
+	}
+}
+
+// pruneOrphanAudio removes the audio files (<meeting id><ext> in audioDir) older than orphanAudioAge whose
+// meeting does not exist and that no upload will create.
+func pruneOrphanAudio(st *store.Store, audioDir string, now time.Time) {
+	if audioDir == "" {
+		return
+	}
+	ents, err := os.ReadDir(audioDir)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			log.Printf("hub: retention: meeting audio dir: %v", err)
+		}
+		return
+	}
+	for _, e := range ents {
+		if !e.Type().IsRegular() {
+			continue
+		}
+		name := e.Name()
+		ext := strings.ToLower(filepath.Ext(name))
+		if _, ok := meetingFormats[ext]; !ok {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil || now.Sub(info.ModTime()) < orphanAudioAge {
+			continue
+		}
+		used, err := st.MeetingIDInUse(strings.TrimSuffix(name, filepath.Ext(name)))
+		if err != nil || used {
+			continue
+		}
+		if err := os.Remove(filepath.Join(audioDir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			log.Printf("hub: retention: orphan meeting audio %s: %v", name, err)
+		}
 	}
 }

@@ -11,7 +11,7 @@ import (
 // mkMeeting creates a completed upload (a queued meeting) with its audio at path.
 func mkMeeting(t *testing.T, s *Store, projectID, path string) proto.Meeting {
 	t.Helper()
-	u, err := s.CreateMeetingUpload(MeetingUpload{Size: 10, Name: "a.ogg", Mime: "audio/ogg", ProjectID: projectID, Title: "Weekly", Language: "es"})
+	u, err := s.CreateMeetingUpload(MeetingUpload{Size: 10, Name: "a.ogg", Mime: "audio/ogg", ProjectID: projectID, Title: "Weekly", Language: "es"}, nil)
 	require.NoError(t, err)
 	require.NoError(t, s.SetMeetingUploadOffset(u.ID, 10))
 	m, err := s.CompleteMeetingUpload(u.ID, path)
@@ -21,7 +21,7 @@ func mkMeeting(t *testing.T, s *Store, projectID, path string) proto.Meeting {
 
 func TestMeetingUploadLifecycle(t *testing.T) {
 	s, p := briefingStore(t)
-	u, err := s.CreateMeetingUpload(MeetingUpload{Size: 10, Name: "a.ogg", Mime: "audio/ogg", ProjectID: p.ID, Title: "Weekly", Channels: "me|others"})
+	u, err := s.CreateMeetingUpload(MeetingUpload{Size: 10, Name: "a.ogg", Mime: "audio/ogg", ProjectID: p.ID, Title: "Weekly", Channels: "me|others"}, nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, u.ID)
 	require.NotEmpty(t, u.MeetingID)
@@ -236,7 +236,7 @@ func TestExpiredMeetingUploads(t *testing.T) {
 	s, _ := briefingStore(t)
 	base := time.UnixMilli(1_000_000_000_000)
 	s.now = func() time.Time { return base }
-	u, err := s.CreateMeetingUpload(MeetingUpload{Size: 10, Path: "/x/u.part"})
+	u, err := s.CreateMeetingUpload(MeetingUpload{Size: 10, Path: "/x/u.part"}, nil)
 	require.NoError(t, err)
 	old, err := s.ExpiredMeetingUploads(base.Add(time.Hour).UnixMilli())
 	require.NoError(t, err)
