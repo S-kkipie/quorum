@@ -23,9 +23,26 @@ type fakeCompleter struct {
 	mu      sync.Mutex
 	prompts []string
 	answer  func(n int, prompt string) (string, error)
+	// gate, when set, holds each call until it is closed or the call's context ends
+	gate chan struct{}
+	// entered gets a value as each call starts
+	entered chan struct{}
 }
 
-func (c *fakeCompleter) Complete(_ context.Context, prompt string, maxTokens int, jsonOut bool) (string, error) {
+func (c *fakeCompleter) Complete(ctx context.Context, prompt string, maxTokens int, jsonOut bool) (string, error) {
+	c.mu.Lock()
+	gate, entered := c.gate, c.entered
+	c.mu.Unlock()
+	if entered != nil {
+		entered <- struct{}{}
+	}
+	if gate != nil {
+		select {
+		case <-gate:
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.prompts = append(c.prompts, prompt)
@@ -47,15 +64,23 @@ type sumFx struct {
 	model   *fakeCompleter
 	issues  []string // the titles gh was asked to create
 	issueMu sync.Mutex
+	// onIssue runs inside the fake gh before it answers
+	onIssue func()
+	// realCompleter is the hub's own provider factory
+	realCompleter func(provider string, set meetingSettings, key string) (summary.Completer, error)
 }
 
 func newSumFx(t *testing.T, answer func(n int, prompt string) (string, error)) *sumFx {
 	t.Helper()
 	f := &sumFx{meetFx: newMeetFx(t), model: &fakeCompleter{answer: answer}}
+	f.realCompleter = f.s.meet.completer
 	f.s.meet.completer = func(provider string, set meetingSettings, key string) (summary.Completer, error) {
 		return f.model, nil
 	}
 	f.s.meet.createIssue = func(_ context.Context, cfg proto.ConnectorConfig, _ string, _ []string, title, body string) (string, error) {
+		if f.onIssue != nil {
+			f.onIssue()
+		}
 		f.issueMu.Lock()
 		defer f.issueMu.Unlock()
 		f.issues = append(f.issues, title)
@@ -343,6 +368,7 @@ func TestMeetingSettingsKeyIsWriteOnly(t *testing.T) {
 	raw, err := f.st.Meta(metaMeetingSettings)
 	require.NoError(t, err)
 	require.NotContains(t, raw, "sk-very-secret")
+	require.NotContains(t, raw, "hasKey")
 	require.Equal(t, "sk-very-secret", f.s.meetingKey())
 	// a PUT without key keeps it; "" removes it
 	require.Equal(t, 200, f.do("PUT", "/api/settings/meetings", `{"model":"m-2"}`).Code)
@@ -537,4 +563,113 @@ func TestMeetingHubSummaryRestartsAfterAHubRestart(t *testing.T) {
 	f.s.recoverSummaries()
 	f.s.meet.wg.Wait()
 	require.Equal(t, "ready", f.detail(t, m.ID).Status)
+}
+
+func TestMeetingReprocessWithAnUnconfiguredProviderChangesNothing(t *testing.T) {
+	f := newSumFx(t, func(int, string) (string, error) { return shortAnswer, nil })
+	f.s.meet.completer = func(provider string, set meetingSettings, key string) (summary.Completer, error) {
+		if provider == providerOpenAI {
+			return f.realCompleter(provider, set, key)
+		}
+		return f.model, nil
+	}
+	f.model.gate, f.model.entered = make(chan struct{}), make(chan struct{}, 4)
+	m := f.uploadMeeting(t, "", "audio")
+	f.s.cancelMeetingJobs(m.ID)
+	require.NoError(t, f.st.ReplaceMeetingSegments(m.ID, shortTranscript))
+	f.s.jobs.onTranscribed(m.ID)
+	<-f.model.entered // the ccapi summary is running
+	rr := f.do("POST", "/api/meetings/"+m.ID+"/reprocess", `{"provider":"openai-compatible"}`)
+	require.Equal(t, 400, rr.Code, rr.Body.String())
+	require.Contains(t, rr.Body.String(), "OpenAI-compatible")
+	mm, _ := f.st.Meeting(m.ID)
+	require.Equal(t, "ccapi", mm.Provider)
+	require.Equal(t, "summarising", mm.Status)
+	close(f.model.gate)
+	f.s.meet.wg.Wait()
+	mm = f.detail(t, m.ID)
+	require.Equal(t, "ready", mm.Status, mm.Error)
+	require.Len(t, mm.Actions, 2)
+}
+
+func TestMeetingReprocessCancelsTheRunningSummary(t *testing.T) {
+	f := newSumFx(t, func(int, string) (string, error) { return shortAnswer, nil })
+	f.model.gate, f.model.entered = make(chan struct{}), make(chan struct{}, 4)
+	m := f.uploadMeeting(t, "", "audio")
+	f.s.cancelMeetingJobs(m.ID)
+	require.NoError(t, f.st.ReplaceMeetingSegments(m.ID, shortTranscript))
+	f.s.jobs.onTranscribed(m.ID)
+	<-f.model.entered
+	// the new run cancels the old call (its context ends) and runs to the end once the gate opens
+	require.Equal(t, 202, f.do("POST", "/api/meetings/"+m.ID+"/reprocess", "").Code)
+	<-f.model.entered
+	close(f.model.gate)
+	f.s.meet.wg.Wait()
+	mm := f.detail(t, m.ID)
+	require.Equal(t, "ready", mm.Status, mm.Error)
+	require.Len(t, f.model.calls(), 1, "only the second run reached the model")
+}
+
+func TestMeetingIssueWaitsForNoReprocessAndKeepsItsAction(t *testing.T) {
+	f := newSumFx(t, func(int, string) (string, error) { return shortAnswer, nil })
+	p := f.project(t, "github", map[string]string{"repo": "acme/app"})
+	m := f.transcribed(t, p.ID, shortTranscript)
+	inGh, release := make(chan struct{}), make(chan struct{})
+	f.onIssue = func() { close(inGh); <-release }
+	code := make(chan int, 1)
+	go func() { code <- f.do("POST", "/api/meetings/"+m.ID+"/actions/"+m.Actions[0].ID+"/issue", "").Code }()
+	<-inGh
+	// a re-summary arrives while gh is creating the issue
+	require.Equal(t, 202, f.do("POST", "/api/meetings/"+m.ID+"/reprocess", "").Code)
+	time.Sleep(50 * time.Millisecond)
+	close(release)
+	require.Equal(t, 201, <-code)
+	f.s.meet.wg.Wait()
+	mm := f.detail(t, m.ID)
+	require.Equal(t, "ready", mm.Status)
+	require.Equal(t, m.Actions[0].ID, mm.Actions[0].ID)
+	require.Equal(t, "https://github.com/acme/app/issues/1", mm.Actions[0].IssueURL)
+	require.Len(t, mm.Actions, 2)
+}
+
+func TestMeetingIssueOfAReplacedAction(t *testing.T) {
+	f := newSumFx(t, func(int, string) (string, error) { return shortAnswer, nil })
+	p := f.project(t, "github", map[string]string{"repo": "acme/app"})
+	m := f.transcribed(t, p.ID, shortTranscript)
+	// the action is replaced by one with the same text while gh runs: the issue goes to that one
+	f.onIssue = func() {
+		require.NoError(t, f.st.ReplaceMeetingActions(m.ID, []proto.MeetingAction{{Text: "Send the  report"}, {Text: "Book the room"}}))
+	}
+	rr := f.do("POST", "/api/meetings/"+m.ID+"/actions/"+m.Actions[0].ID+"/issue", "")
+	require.Equal(t, 201, rr.Code, rr.Body.String())
+	mm := f.detail(t, m.ID)
+	require.NotEqual(t, m.Actions[0].ID, mm.Actions[0].ID)
+	require.Equal(t, "https://github.com/acme/app/issues/1", mm.Actions[0].IssueURL)
+	// replaced by other text: 409 with the URL of the issue created
+	f.onIssue = func() {
+		require.NoError(t, f.st.ReplaceMeetingActions(m.ID, []proto.MeetingAction{{Text: "Something else"}}))
+	}
+	rr = f.do("POST", "/api/meetings/"+m.ID+"/actions/"+mm.Actions[1].ID+"/issue", "")
+	require.Equal(t, 409, rr.Code, rr.Body.String())
+	require.Contains(t, rr.Body.String(), `"url":"https://github.com/acme/app/issues/2"`)
+}
+
+func TestMeetingRetryUsesTheMeetingsProvider(t *testing.T) {
+	f := newSumFx(t, func(int, string) (string, error) { return shortAnswer, nil })
+	m := f.uploadMeeting(t, "", "audio")
+	f.s.cancelMeetingJobs(m.ID)
+	require.NoError(t, f.st.ReplaceMeetingSegments(m.ID, shortTranscript))
+	require.NoError(t, f.st.SetMeetingProvider(m.ID, "ccapi"))
+	require.NoError(t, f.st.SetMeetingStatus(m.ID, "failed", "The summary failed: x", 0))
+	require.Equal(t, 200, f.do("PUT", "/api/settings/meetings", `{"provider":"local"}`).Code)
+	require.Equal(t, 200, f.do("POST", "/api/meetings/"+m.ID+"/retry", "").Code)
+	f.s.meet.wg.Wait()
+	mm := f.detail(t, m.ID)
+	require.Equal(t, "ready", mm.Status)
+	require.Equal(t, "ccapi", mm.Provider)
+}
+
+func TestMeetingSpeakersUnknownMeetingIs404(t *testing.T) {
+	f := newMeetFx(t)
+	require.Equal(t, 404, f.do("POST", "/api/meetings/nope/speakers", `{"Speaker 1":"Ana"}`).Code)
 }

@@ -195,6 +195,15 @@ func (o *OpenAI) chat(ctx context.Context, prompt string, maxTokens int, jsonOut
 	if hc == nil {
 		hc = &http.Client{}
 	}
+	// a redirect is followed only to the same scheme and host: the key and the transcript never go elsewhere
+	c := *hc
+	c.CheckRedirect = func(r *http.Request, via []*http.Request) error {
+		if len(via) >= 5 || r.URL.Scheme != via[0].URL.Scheme || r.URL.Host != via[0].URL.Host {
+			return http.ErrUseLastResponse
+		}
+		return nil
+	}
+	hc = &c
 	resp, err := hc.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {

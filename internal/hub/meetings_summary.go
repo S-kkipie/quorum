@@ -59,23 +59,38 @@ type meetingSettings struct {
 	HasKey   bool     `json:"hasKey"`
 }
 
+// stored is what the settings JSON keeps (HasKey is derived from the key, which is stored apart).
+func (m meetingSettings) stored() any {
+	return struct {
+		Provider string   `json:"provider"`
+		Model    string   `json:"model"`
+		BaseURL  string   `json:"baseUrl"`
+		Language string   `json:"language"`
+		Aliases  []string `json:"aliases"`
+	}{m.Provider, m.Model, m.BaseURL, m.Language, m.Aliases}
+}
+
 // meetSummaries is the server's summary state.
 type meetSummaries struct {
-	mu  sync.Mutex
-	gen map[string]int // the current summary run of each meeting; an older run's result is discarded
+	mu     sync.Mutex
+	gen    map[string]int                // the current summary run of each meeting; an older run's result is discarded
+	cancel map[string]context.CancelFunc // ends the current run's calls
 	// one hub-side summary at a time (a long meeting is many calls)
 	sem chan struct{}
 	// completer returns the hub provider's model (tests fake it).
 	completer func(provider string, set meetingSettings, key string) (summary.Completer, error)
 	// createIssue creates a GitHub issue through gh (tests fake it).
 	createIssue func(ctx context.Context, cfg proto.ConnectorConfig, token string, env []string, title, body string) (string, error)
-	issueMu     sync.Mutex
+	locksMu     sync.Mutex
+	locks       map[string]*sync.Mutex // per meeting: storing actions and creating an issue never interleave
 	// wg tracks the hub-side runs (tests wait for them).
 	wg sync.WaitGroup
 }
 
 func (s *Server) initMeetingSummaries(auto *summary.Auto) {
 	s.meet.gen = map[string]int{}
+	s.meet.cancel = map[string]context.CancelFunc{}
+	s.meet.locks = map[string]*sync.Mutex{}
 	s.meet.sem = make(chan struct{}, 1)
 	s.meet.createIssue = connectors.CreateGitHubIssue
 	s.meet.completer = func(provider string, set meetingSettings, key string) (summary.Completer, error) {
@@ -87,8 +102,9 @@ func (s *Server) initMeetingSummaries(auto *summary.Auto) {
 			}
 			return auto.Long(model), nil
 		case providerOpenAI:
-			if set.BaseURL == "" || set.Model == "" {
-				return nil, errors.New("Set the base URL and the model of the OpenAI-compatible provider in Settings → Meetings.")
+			// the model setting belongs to the configured provider
+			if set.BaseURL == "" || set.Model == "" || set.Provider != providerOpenAI {
+				return nil, errors.New("Set the OpenAI-compatible provider with its base URL and model in Settings → Meetings first.")
 			}
 			return &summary.OpenAI{BaseURL: set.BaseURL, Model: set.Model, Key: key}, nil
 		}
@@ -174,12 +190,18 @@ func (s *Server) summaryLanguage(m proto.Meeting) string {
 	return ""
 }
 
-// nextSummaryRun starts a new summary run of the meeting: every older run's result is discarded.
-func (s *Server) nextSummaryRun(id string) int {
+// nextSummaryRun starts a new summary run of the meeting: every older run is cancelled and its result
+// discarded. The context ends with the run.
+func (s *Server) nextSummaryRun(id string) (int, context.Context) {
 	s.meet.mu.Lock()
 	defer s.meet.mu.Unlock()
+	if cancel := s.meet.cancel[id]; cancel != nil {
+		cancel()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	s.meet.cancel[id] = cancel
 	s.meet.gen[id]++
-	return s.meet.gen[id]
+	return s.meet.gen[id], ctx
 }
 
 func (s *Server) currentSummaryRun(id string, gen int) bool {
@@ -188,7 +210,19 @@ func (s *Server) currentSummaryRun(id string, gen int) bool {
 	return s.meet.gen[id] == gen
 }
 
-// summarizeMeeting summarises the meeting's transcript with provider ("" = the configured one).
+// endSummaryRun releases the run's context when it is still the current one.
+func (s *Server) endSummaryRun(id string, gen int) {
+	s.meet.mu.Lock()
+	defer s.meet.mu.Unlock()
+	if s.meet.gen[id] == gen && s.meet.cancel[id] != nil {
+		s.meet.cancel[id]()
+		delete(s.meet.cancel, id)
+	}
+}
+
+// summarizeMeeting summarises the meeting's transcript with provider ("" = the configured one). The
+// provider is checked first: a provider that cannot run returns an error and changes nothing (a summary
+// already running goes on).
 func (s *Server) summarizeMeeting(id, provider string) error {
 	set := s.meetingSettings()
 	if provider == "" {
@@ -201,39 +235,52 @@ func (s *Server) summarizeMeeting(id, provider string) error {
 	if err != nil {
 		return err
 	}
-	gen := s.nextSummaryRun(id)
+	empty := len(renderLines(segs, nil)) == 0
+	var c summary.Completer
+	if provider != providerLocal && !empty {
+		if c, err = s.meet.completer(provider, set, s.meetingKey()); err != nil {
+			return err
+		}
+	}
+	if _, err := s.st.Meeting(id); err != nil {
+		return err
+	}
+	gen, ctx := s.nextSummaryRun(id)
 	// a summary still queued or running on a machine is replaced
 	s.cancelMeetingJobs(id)
 	if err := s.st.SetMeetingProvider(id, provider); err != nil {
 		return err
 	}
-	if len(renderLines(segs, nil)) == 0 {
+	if empty {
 		// nothing was said: an empty summary, no model needed
+		s.endSummaryRun(id, gen)
 		return s.applyMinutes(id, emptyMinutes())
 	}
 	if provider == providerLocal {
+		s.endSummaryRun(id, gen)
 		if _, err := s.enqueueMeetingJob(id, proto.MeetingStepSummarizeLocal, ""); err != nil {
 			return err
 		}
 		s.setMeetingState(id, "summarising", "", 0, "")
 		return nil
 	}
-	c, err := s.meet.completer(provider, set, s.meetingKey())
-	if err != nil {
-		return err
-	}
 	s.setMeetingState(id, "summarising", "", 0, "")
 	s.meet.wg.Add(1)
 	go func() {
 		defer s.meet.wg.Done()
-		s.runHubSummary(id, gen, c)
+		defer s.endSummaryRun(id, gen)
+		s.runHubSummary(ctx, id, gen, c)
 	}()
 	return nil
 }
 
 // runHubSummary runs a ccapi or OpenAI-compatible summary of the meeting (one at a time).
-func (s *Server) runHubSummary(id string, gen int, c summary.Completer) {
-	s.meet.sem <- struct{}{}
+func (s *Server) runHubSummary(ctx context.Context, id string, gen int, c summary.Completer) {
+	select {
+	case s.meet.sem <- struct{}{}:
+	case <-ctx.Done():
+		return
+	}
 	defer func() { <-s.meet.sem }()
 	if !s.currentSummaryRun(id, gen) {
 		return
@@ -258,7 +305,7 @@ func (s *Server) runHubSummary(id string, gen int, c summary.Completer) {
 			s.setMeetingState(id, "summarising", "", pct, stage)
 		}
 	}
-	out, err := summarizeSegments(context.Background(), chat, segs, names, s.summaryLanguage(m), s.glossary(m, names), progress)
+	out, err := summarizeSegments(ctx, chat, segs, names, s.summaryLanguage(m), s.glossary(m, names), progress)
 	if !s.currentSummaryRun(id, gen) {
 		return
 	}
@@ -428,6 +475,19 @@ func tsOf(p *int64) int64 {
 	return *p
 }
 
+// lockMeeting takes the meeting's actions lock; the result releases it.
+func (s *Server) lockMeeting(id string) func() {
+	s.meet.locksMu.Lock()
+	l := s.meet.locks[id]
+	if l == nil {
+		l = &sync.Mutex{}
+		s.meet.locks[id] = l
+	}
+	s.meet.locksMu.Unlock()
+	l.Lock()
+	return l.Unlock
+}
+
 // applyMinutes stores a repaired summary and its actions, projects them into the briefing and makes the
 // meeting ready.
 func (s *Server) applyMinutes(id string, out minutes) error {
@@ -448,10 +508,13 @@ func (s *Server) applyMinutes(id string, out minutes) error {
 	for _, a := range out.Actions {
 		acts = append(acts, proto.MeetingAction{Text: a.Text, Owner: a.Owner, Due: a.Due, TsMs: tsOf(a.TsMs), Mine: isMine(a.Owner, names, m.Channels)})
 	}
-	if err := s.st.SetMeetingSummary(id, sum); err != nil {
-		return err
+	unlock := s.lockMeeting(id) // an issue being created keeps its action
+	err = s.st.SetMeetingSummary(id, sum)
+	if err == nil {
+		err = s.st.ReplaceMeetingActions(id, acts)
 	}
-	if err := s.st.ReplaceMeetingActions(id, acts); err != nil {
+	unlock()
+	if err != nil {
 		return err
 	}
 	if t, ok := meetingTitle(out.Title); ok && t != "" {
@@ -557,6 +620,13 @@ func applySpeakerNames(m *proto.Meeting) {
 // would clash with the upload route in the mux.)
 func (s *Server) handleMeetingSpeakers(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	if _, err := s.st.Meeting(id); errors.Is(err, store.ErrNotFound) {
+		apiErr(w, 404, "no such meeting")
+		return
+	} else if err != nil {
+		apiErr(w, 500, "internal error")
+		return
+	}
 	var b map[string]string
 	if !decode(w, r, &b) {
 		return
@@ -682,9 +752,8 @@ func (s *Server) handleMeetingActionIssue(w http.ResponseWriter, r *http.Request
 		apiErr(w, 400, "the project has no GitHub connector")
 		return
 	}
-	// one creation at a time, so two taps never make two issues
-	s.meet.issueMu.Lock()
-	defer s.meet.issueMu.Unlock()
+	// one creation per meeting at a time, so two taps never make two issues; a re-summary waits for it
+	defer s.lockMeeting(id)()
 	a, err := s.st.MeetingAction(id, aid)
 	if err != nil {
 		apiErr(w, 500, "internal error")
@@ -707,11 +776,23 @@ func (s *Server) handleMeetingActionIssue(w http.ResponseWriter, r *http.Request
 		apiErr(w, 502, trimRunes(err.Error(), maxJobError))
 		return
 	}
-	if _, err := s.st.SetMeetingActionIssue(id, aid, u); err != nil {
-		apiErr(w, 500, "internal error")
+	ok, err := s.st.SetMeetingActionIssue(id, aid, u)
+	if err != nil {
+		log.Printf("hub: meetings: issue %s of %s was created but not recorded: %v", u, id, err)
+		writeJSON(w, 500, map[string]any{"error": "the issue was created but could not be recorded", "url": u})
 		return
 	}
-	a, _ = s.st.MeetingAction(id, aid)
+	if ok {
+		a, err = s.st.MeetingAction(id, aid)
+	} else {
+		// the action was replaced meanwhile: record the issue on the one with the same text
+		a, ok, err = s.st.AttachMeetingIssueByText(id, a.Text, u)
+	}
+	if err != nil || !ok {
+		log.Printf("hub: meetings: issue %s of %s: its action is gone", u, id)
+		writeJSON(w, 409, map[string]any{"error": "the issue was created, but its action changed meanwhile", "url": u})
+		return
+	}
 	s.publishMeeting(m.ID, m.ProjectID, m.Status)
 	writeJSON(w, 201, map[string]any{"url": a.IssueURL, "created": true, "action": a})
 }
@@ -854,7 +935,7 @@ func (s *Server) handlePutMeetingSettings(w http.ResponseWriter, r *http.Request
 			return
 		}
 	}
-	raw, _ := json.Marshal(set)
+	raw, _ := json.Marshal(set.stored())
 	if err := s.st.SetMeta(metaMeetingSettings, string(raw)); err != nil {
 		apiErr(w, 500, "internal error")
 		return

@@ -301,7 +301,7 @@ def test_prompts_come_from_the_shared_file():
     msgs = w.section_prompt(["[00:00] x"], "Spanish", "", 1, 1)
     assert shared["schema"] in msgs[0]["content"]
     assert "Write every text in Spanish." in msgs[0]["content"]
-    assert w.UNKNOWN_OWNERS == set(shared["unknownOwners"])
+    assert w.prompts()["_unknown"] == set(shared["unknownOwners"])
 
 
 def test_invalid_section_answer_is_an_error():
@@ -438,3 +438,16 @@ def test_ffmpeg_only_opens_local_files(tmp_path, monkeypatch):
         assert cmd[i + 1] == "file,pipe"
     for cmd in calls[1:]:
         assert cmd.index("-protocol_whitelist") < cmd.index("-i")
+
+
+def test_prompts_load_lazily_and_fail_readably(tmp_path, monkeypatch):
+    monkeypatch.setattr(w, "_PROMPTS", None)
+    monkeypatch.setattr(w, "HERE", tmp_path)  # no prompts.json there: only the summary needs it
+    with pytest.raises(w.WorkerError, match="prompts.json is missing"):
+        w.section_prompt(["x"], "Spanish", "", 1, 1)
+
+
+def test_owner_stated_by_whole_words():
+    r = w.repair_summary({"actions": [{"text": "a", "owner": "Ana"}, {"text": "b", "owner": "jose nunez"}]},
+                         "[00:00] mañana lo hace José Núñez")
+    assert [a["owner"] for a in r["actions"]] == ["", "jose nunez"]

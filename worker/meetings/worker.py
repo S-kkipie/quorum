@@ -47,6 +47,7 @@ import re
 import subprocess
 import sys
 import time
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -484,22 +485,27 @@ def run_transcribe(job: dict, emit: Emitter, workdir: Path, engine_factory=None,
 # ---------------------------------------------------------------------------------------------------
 # summarize_local step
 
-def _load_prompts() -> dict:
+_PROMPTS: dict | None = None
+
+
+def prompts() -> dict:
     """The canonical prompts and repair rules (prompts.json, shared with the hub; quorumd deploys it next to
-    this file)."""
-    try:
-        return json.loads((HERE / "prompts.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError) as e:
-        raise SystemExit(f"prompts.json is missing or invalid next to worker.py ({e}); run `quorumd meetings setup`.")
+    this file). Loaded on first use, so the transcribe step and the setup modes never need it."""
+    global _PROMPTS
+    if _PROMPTS is None:
+        try:
+            p = json.loads((HERE / "prompts.json").read_text(encoding="utf-8"))
+            p["_unknown"] = set(p["unknownOwners"])
+            p["_generic"] = re.compile(p["genericSpeaker"])
+            _PROMPTS = p
+        except (OSError, ValueError, KeyError, re.error) as e:
+            raise WorkerError(f"prompts.json is missing or invalid next to worker.py ({e}); update quorumd on this "
+                              "machine.") from e
+    return _PROMPTS
 
 
-PROMPTS = _load_prompts()
-LANGUAGES = PROMPTS["languages"]
-UNKNOWN_OWNERS = set(PROMPTS["unknownOwners"])
-GENERIC_SPEAKER = re.compile(PROMPTS["genericSpeaker"])
-SECTION_MS = int(PROMPTS["sectionMinutes"]) * 60 * 1000
-TITLE_MAX = int(PROMPTS["titleMax"])
-SCHEMA = PROMPTS["schema"]
+def _section_ms() -> int:
+    return int(prompts()["sectionMinutes"]) * 60 * 1000
 
 
 def fill(template: str, **values) -> str:
@@ -547,8 +553,9 @@ def render_lines(segments: list[dict], names: dict[str, str]) -> list[str]:
     return lines
 
 
-def split_sections(segments: list[dict], section_ms: int = SECTION_MS) -> list[list[dict]]:
+def split_sections(segments: list[dict], section_ms: int | None = None) -> list[list[dict]]:
     """Groups the segments into 15-minute sections by start time (empty sections are skipped)."""
+    section_ms = section_ms or _section_ms()
     out: dict[int, list[dict]] = {}
     for s in segments:
         out.setdefault(int(s.get("start_ms") or 0) // section_ms, []).append(s)
@@ -556,35 +563,42 @@ def split_sections(segments: list[dict], section_ms: int = SECTION_MS) -> list[l
 
 
 def language_name(code: str) -> str:
-    return LANGUAGES.get((code or "").split("-")[0].lower(), code or PROMPTS["unknownLanguage"])
+    return prompts()["languages"].get((code or "").split("-")[0].lower(), code or prompts()["unknownLanguage"])
 
 
 def glossary_text(g) -> str:
     if isinstance(g, list):
         g = ", ".join(str(x) for x in g if str(x).strip())
     g = (g or "").strip()
-    return fill(PROMPTS["glossary"], glossary=g) if g else ""
+    return fill(prompts()["glossary"], glossary=g) if g else ""
 
 
 def _rules(language: str) -> str:
-    return fill(PROMPTS["rules"], language=language)
+    return fill(prompts()["rules"], language=language)
 
 
 def section_prompt(lines: list[str], language: str, glossary, part: int, parts: int) -> list[dict]:
-    where = fill(PROMPTS["sectionWhere"], part=part, parts=parts) if parts > 1 else ""
-    system = fill(PROMPTS["sectionSystem"], schema=SCHEMA, rules=_rules(language))
-    user = fill(PROMPTS["sectionUser"], where=where, glossary=glossary_text(glossary), transcript="\n".join(lines))
+    where = fill(prompts()["sectionWhere"], part=part, parts=parts) if parts > 1 else ""
+    system = fill(prompts()["sectionSystem"], schema=prompts()["schema"], rules=_rules(language))
+    user = fill(prompts()["sectionUser"], where=where, glossary=glossary_text(glossary), transcript="\n".join(lines))
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 
 def merge_prompt(parts: list[dict], language: str, glossary) -> list[dict]:
-    system = fill(PROMPTS["mergeSystem"], schema=SCHEMA, rules=_rules(language))
-    body = PROMPTS["mergePartSeparator"].join(fill(PROMPTS["mergePart"], n=i + 1, json=compact_json(p)) for i, p in enumerate(parts))
-    return [{"role": "system", "content": system}, {"role": "user", "content": fill(PROMPTS["mergeUser"], glossary=glossary_text(glossary), parts=body)}]
+    system = fill(prompts()["mergeSystem"], schema=prompts()["schema"], rules=_rules(language))
+    body = prompts()["mergePartSeparator"].join(fill(prompts()["mergePart"], n=i + 1, json=compact_json(p)) for i, p in enumerate(parts))
+    return [{"role": "system", "content": system}, {"role": "user", "content": fill(prompts()["mergeUser"], glossary=glossary_text(glossary), parts=body)}]
 
 
 def _norm(s: str) -> str:
     return re.sub(r"\s+", " ", s.strip().lower())
+
+
+def words(s: str) -> list[str]:
+    """The words of s for the "stated in the transcript" check: lower case, accents removed (NFKD without
+    combining marks), split at anything that is not a letter or a digit. The hub does the same."""
+    t = "".join(c for c in unicodedata.normalize("NFKD", s.lower()) if unicodedata.category(c) != "Mn")
+    return "".join(c if c.isalnum() else " " for c in t).split()
 
 
 def _str(v) -> str:
@@ -626,10 +640,11 @@ def repair_summary(raw, transcript_text: str, max_ms: int | None = None) -> dict
     attendees, and timestamps become ts_ms."""
     if not isinstance(raw, dict):
         raw = {}
-    hay = _norm(transcript_text)
+    hay = " " + " ".join(words(transcript_text)) + " "
 
     def stated(v: str) -> bool:
-        return bool(v) and _norm(v) in hay
+        w = words(v)
+        return bool(w) and " " + " ".join(w) + " " in hay
 
     actions = []
     for a in raw.get("actions") if isinstance(raw.get("actions"), list) else []:
@@ -641,19 +656,19 @@ def repair_summary(raw, transcript_text: str, max_ms: int | None = None) -> dict
         if not text:
             continue
         owner = _str(a.get("owner"))
-        if _norm(owner) in UNKNOWN_OWNERS or not stated(owner):
+        if _norm(owner) in prompts()["_unknown"] or not stated(owner):
             owner = ""
         due = _str(a.get("due"))
-        if _norm(due) in UNKNOWN_OWNERS or not stated(due):
+        if _norm(due) in prompts()["_unknown"] or not stated(due):
             due = ""
         act = {"text": text, "owner": owner, "due": due}
         ts = parse_ts(a.get("ts_ms", a.get("ts")))
         if ts is not None and (max_ms is None or ts <= max_ms):
             act["ts_ms"] = ts
         actions.append(act)
-    attendees = [n for n in _strs(raw.get("attendees")) if not GENERIC_SPEAKER.match(n) and stated(n)]
+    attendees = [n for n in _strs(raw.get("attendees")) if not prompts()["_generic"].match(n) and stated(n)]
     return {
-        "title": _str(raw.get("title"))[:TITLE_MAX],
+        "title": _str(raw.get("title"))[:int(prompts()["titleMax"])],
         "summary": _str(raw.get("summary")),
         "topics": _strs(raw.get("topics")),
         "decisions": _points(raw.get("decisions"), max_ms),

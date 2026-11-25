@@ -177,3 +177,23 @@ func (s *Store) SetMeetingActionIssue(meetingID, actionID, url string) (ok bool,
 	n, err := res.RowsAffected()
 	return n == 1, err
 }
+
+// AttachMeetingIssueByText records url on the first action without an issue whose text equals text
+// (normalised): the action an issue was created from was replaced meanwhile by one with the same text.
+// ok is false when there is none.
+func (s *Store) AttachMeetingIssueByText(meetingID, text, url string) (a proto.MeetingAction, ok bool, err error) {
+	acts, err := s.MeetingActions(meetingID)
+	if err != nil {
+		return a, false, err
+	}
+	for _, x := range acts {
+		if x.IssueURL == "" && normAction(x.Text) == normAction(text) {
+			if ok, err = s.SetMeetingActionIssue(meetingID, x.ID, url); err != nil || !ok {
+				return a, false, err
+			}
+			a, err = s.MeetingAction(meetingID, x.ID)
+			return a, err == nil, err
+		}
+	}
+	return a, false, nil
+}

@@ -288,6 +288,73 @@
      "Señora Núñez"
     ]
    }
+  },
+  {
+   "name": "owners are matched by whole words, accents aside",
+   "transcript": "[00:01] Speaker 1: mañana lo revisa Jose Núñez\n[00:05] Speaker 2: Ok, Luis-Miguel envía el acta el lunes.",
+   "maxMs": -1,
+   "raw": {
+    "actions": [
+     {
+      "text": "A",
+      "owner": "Ana",
+      "due": "mañana"
+     },
+     {
+      "text": "B",
+      "owner": "José Nuñez",
+      "due": "lunes"
+     },
+     {
+      "text": "C",
+      "owner": "luis miguel",
+      "due": "el lun"
+     },
+     {
+      "text": "D",
+      "owner": "Jose",
+      "due": "el lunes."
+     }
+    ],
+    "attendees": [
+     "Ana",
+     "José Núñez",
+     "Luis-Miguel"
+    ]
+   },
+   "want": {
+    "title": "",
+    "summary": "",
+    "topics": [],
+    "decisions": [],
+    "openPoints": [],
+    "actions": [
+     {
+      "text": "A",
+      "owner": "",
+      "due": "mañana"
+     },
+     {
+      "text": "B",
+      "owner": "José Nuñez",
+      "due": "lunes"
+     },
+     {
+      "text": "C",
+      "owner": "luis miguel",
+      "due": ""
+     },
+     {
+      "text": "D",
+      "owner": "Jose",
+      "due": "el lunes."
+     }
+    ],
+    "attendees": [
+     "José Núñez",
+     "Luis-Miguel"
+    ]
+   }
   }
  ],
  "naiveMerge": [

@@ -183,8 +183,8 @@ after the builder check", which override the body.
   - write the summary and actions, computing "mine" with the person plus the aliases;
   - project into `meeting_notes` with source `quorum`, keyed by meeting id;
   - fire the project briefing event.
-- Speaker names: `PUT /api/meetings/{id}/speakers {label: name}` → stored in `meeting_speakers`, applied when serving segments and passed to summaries.
-- `PUT /api/meetings/{id}/speakers {label: name}` stores names in `meeting_speakers`; they are applied when serving
+- Speaker names: `POST /api/meetings/{id}/speakers {label: name}` (POST: a PUT on this path clashes with the upload route) → stored in `meeting_speakers`, applied when serving segments and passed to summaries.
+- `POST /api/meetings/{id}/speakers {label: name}` (POST: a PUT on this path clashes with the upload route) stores names in `meeting_speakers`; they are applied when serving
   segments and passed to summaries.
 - `POST /api/meetings/{id}/reprocess {provider?}` re-summarises, keeping actions that have an `issue_url`.
 - `POST /api/meetings/{id}/actions/{actionId}/issue` creates the issue (or returns the existing URL) through `gh` in

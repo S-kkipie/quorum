@@ -10,6 +10,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
+
+	"golang.org/x/text/unicode/norm"
 
 	"github.com/S-kkipie/quorum/internal/proto"
 	meetingworker "github.com/S-kkipie/quorum/worker/meetings"
@@ -231,6 +234,22 @@ func oneMessage(msgs []chatMsg) string {
 
 func normText(s string) string { return strings.Join(strings.Fields(strings.ToLower(s)), " ") }
 
+// statedWords is worker.py words: lower case, accents removed (NFKD without combining marks), split at
+// anything that is not a letter or a digit.
+func statedWords(s string) []string {
+	var b strings.Builder
+	for _, r := range norm.NFKD.String(strings.ToLower(s)) {
+		switch {
+		case unicode.Is(unicode.Mn, r):
+		case unicode.IsLetter(r) || unicode.IsNumber(r):
+			b.WriteRune(r)
+		default:
+			b.WriteByte(' ')
+		}
+	}
+	return strings.Fields(b.String())
+}
+
 func strOf(v any) string {
 	if s, ok := v.(string); ok {
 		return strings.TrimSpace(s)
@@ -324,8 +343,11 @@ func repairMinutes(raw any, transcript string, maxMs int64) minutes {
 	if !ok {
 		d = map[string]any{}
 	}
-	hay := normText(transcript)
-	stated := func(v string) bool { return v != "" && strings.Contains(hay, normText(v)) }
+	hay := " " + strings.Join(statedWords(transcript), " ") + " "
+	stated := func(v string) bool {
+		w := statedWords(v)
+		return len(w) > 0 && strings.Contains(hay, " "+strings.Join(w, " ")+" ")
+	}
 	m := emptyMinutes()
 	acts, _ := d["actions"].([]any)
 	for _, a := range acts {

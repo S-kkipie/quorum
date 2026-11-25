@@ -593,7 +593,11 @@ func (s *Server) handleRetryMeeting(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 500, "internal error")
 		return
 	} else if len(segs) > 0 {
-		if err := s.summarizeMeeting(id, ""); err != nil {
+		provider := m.Provider // the provider that failed, as the owner chose it
+		if !validProvider(provider) {
+			provider = ""
+		}
+		if err := s.summarizeMeeting(id, provider); err != nil {
 			apiErr(w, 400, trimRunes(err.Error(), maxJobError))
 			return
 		}

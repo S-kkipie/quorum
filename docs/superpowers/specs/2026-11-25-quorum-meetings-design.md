@@ -268,5 +268,6 @@ can turn the owner's actions into tickets.
 - **Naming speakers.** On the meeting page the owner renames a speaker label, for example "Speaker 2" to "Luis".
   - The rename applies to every segment of that meeting.
   - The rename is passed to a re-summary (owners in actions use the names).
-  - Stored as `meeting_speakers(meeting_id, label, name)`.
+  - Stored as `meeting_speakers(meeting_id, label, name)`, set with `POST /api/meetings/{id}/speakers {label: name}`
+    (a PUT on that path would clash with the upload route).
 - **Later plan:** voice embeddings per named person, to suggest or auto-apply names in future meetings.

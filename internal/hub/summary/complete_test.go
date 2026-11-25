@@ -110,3 +110,19 @@ func TestValidBaseURL(t *testing.T) {
 	require.True(t, ValidBaseURL("http://127.0.0.1:8000"))
 	require.False(t, ValidBaseURL("api.example.com"))
 }
+
+func TestOpenAICompatibleNoCrossHostRedirect(t *testing.T) {
+	var elsewhere atomic.Int32
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		elsewhere.Add(1)
+		w.Write([]byte(`{"choices":[{"message":{"content":"stolen"}}]}`))
+	}))
+	defer other.Close()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, other.URL+"/chat/completions", http.StatusTemporaryRedirect)
+	}))
+	defer srv.Close()
+	_, err := (&OpenAI{BaseURL: srv.URL, Model: "m", Key: "sk-x"}).Complete(context.Background(), "p", 10, false)
+	require.ErrorContains(t, err, "HTTP 307")
+	require.Equal(t, int32(0), elsewhere.Load())
+}
