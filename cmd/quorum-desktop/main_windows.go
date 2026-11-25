@@ -4,6 +4,7 @@ package main
 
 import (
 	"log"
+	"syscall"
 	"os"
 	"path/filepath"
 	"time"
@@ -15,6 +16,20 @@ import (
 //go:generate go run github.com/tc-hib/go-winres@v0.3.3 make --arch amd64 --in winres/winres.json --out rsrc
 
 const probeTimeout = 5 * time.Second
+
+// scaled converts a size in CSS pixels to physical pixels: the app is per-monitor DPI aware (see winres), so
+// the window size is given in physical pixels and must follow the display scale (150% → ×1.5).
+func scaled(px uint) uint {
+	proc := syscall.NewLazyDLL("user32.dll").NewProc("GetDpiForSystem")
+	if proc.Find() != nil {
+		return px
+	}
+	dpi, _, _ := proc.Call()
+	if dpi == 0 {
+		return px
+	}
+	return px * uint(dpi) / 96
+}
 
 func main() {
 	base, err := os.UserConfigDir() // %APPDATA%
@@ -32,7 +47,7 @@ func main() {
 		AutoFocus: true,
 		// localStorage (the device token, drafts, the event cache) lives here and survives restarts.
 		DataPath:      filepath.Join(cache, "Quorum", "WebView2"),
-		WindowOptions: webview2.WindowOptions{Title: "Quorum", Width: 1280, Height: 860, Center: true, IconId: 1},
+		WindowOptions: webview2.WindowOptions{Title: "Quorum", Width: scaled(1440), Height: scaled(900), Center: true, IconId: 1},
 	})
 	if w == nil {
 		log.Fatal("Quorum needs the Microsoft Edge WebView2 runtime")
