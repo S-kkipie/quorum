@@ -157,7 +157,8 @@ func (s *Server) handlePatchMeeting(w http.ResponseWriter, r *http.Request) {
 // handleDeleteMeeting: DELETE /api/meetings/{id} removes the meeting, its audio file and its projection.
 func (s *Server) handleDeleteMeeting(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	s.cancelMeetingJobs(id) // stops a worker that is processing it
+	s.cancelMeetingJobs(id)    // stops a worker that is processing it
+	s.forgetMeetingSummary(id) // and a hub-side summary
 	gone, err := s.st.DeleteMeeting(id)
 	if errors.Is(err, store.ErrNotFound) {
 		apiErr(w, 404, "no such meeting")

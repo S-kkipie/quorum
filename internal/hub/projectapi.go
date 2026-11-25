@@ -358,12 +358,20 @@ func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 			hit[suggestionRoot{c.Machine, c.Root}] = true
 		}
 	}
+	// its meetings become unassigned: the devices hear about each one
+	meetings, err := s.st.Meetings(store.MeetingFilter{ProjectID: id})
+	if err != nil {
+		log.Printf("hub: delete project %s: meetings: %v", id, err)
+	}
 	if err := s.st.DeleteProject(id); err != nil {
 		s.fail(w, err, "project not found")
 		return
 	}
 	s.sum.Forget(id)
 	s.hub.publishGoneID("project_gone", id)
+	for _, m := range meetings {
+		s.publishMeeting(m.ID, "", m.Status)
+	}
 	s.hub.republishSessions(hit)
 	w.WriteHeader(204)
 }

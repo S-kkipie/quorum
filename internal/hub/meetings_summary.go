@@ -475,6 +475,22 @@ func tsOf(p *int64) int64 {
 	return *p
 }
 
+// forgetMeetingSummary ends a deleted meeting's hub-side summary run (its result is discarded) and drops
+// the meeting's run and lock entries.
+func (s *Server) forgetMeetingSummary(id string) {
+	s.meet.mu.Lock()
+	if cancel := s.meet.cancel[id]; cancel != nil {
+		cancel()
+	}
+	delete(s.meet.cancel, id)
+	// a run of a deleted meeting never becomes current again: its generation is gone, and ids are not reused
+	delete(s.meet.gen, id)
+	s.meet.mu.Unlock()
+	s.meet.locksMu.Lock()
+	delete(s.meet.locks, id)
+	s.meet.locksMu.Unlock()
+}
+
 // lockMeeting takes the meeting's actions lock; the result releases it.
 func (s *Server) lockMeeting(id string) func() {
 	s.meet.locksMu.Lock()
@@ -808,7 +824,8 @@ func issueTitle(a proto.MeetingAction) string {
 func issueBody(a proto.MeetingAction, m proto.Meeting, link string) string {
 	var b strings.Builder
 	b.WriteString(strings.TrimSpace(a.Text) + "\n\n")
-	if a.Owner != "" {
+	if a.Mine && a.Owner != "" {
+		// other people's names stay out of the repo: only the owner's own actions name them
 		b.WriteString("Owner: " + a.Owner + "\n")
 	}
 	if a.Due != "" {
@@ -848,6 +865,15 @@ func meetingLink(r *http.Request, id string) string {
 	return base + "/?meeting=" + url.QueryEscape(id)
 }
 
+// urlHost is the lowercase host (with port) of an http(s) URL, or the URL itself when it does not parse.
+func urlHost(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	return strings.ToLower(u.Host)
+}
+
 // handleGetMeetingSettings: GET /api/settings/meetings (the key is never returned: hasKey).
 func (s *Server) handleGetMeetingSettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, s.meetingSettings())
@@ -868,6 +894,7 @@ func (s *Server) handlePutMeetingSettings(w http.ResponseWriter, r *http.Request
 		return
 	}
 	set := s.meetingSettings()
+	keyMoved := false
 	if b.Provider != nil {
 		if !validProvider(*b.Provider) {
 			apiErr(w, 400, "unknown summary provider")
@@ -889,6 +916,8 @@ func (s *Server) handlePutMeetingSettings(w http.ResponseWriter, r *http.Request
 			apiErr(w, 400, "the base URL must be an http(s) URL")
 			return
 		}
+		// the key belongs to the host it was given for: another host never receives it
+		keyMoved = set.BaseURL != "" && urlHost(set.BaseURL) != urlHost(u)
 		set.BaseURL = u
 	}
 	if b.Language != nil {
@@ -923,6 +952,10 @@ func (s *Server) handlePutMeetingSettings(w http.ResponseWriter, r *http.Request
 		}
 		aliasesChanged = strings.Join(out, "\x00") != strings.Join(set.Aliases, "\x00")
 		set.Aliases = out
+	}
+	if b.Key == nil && keyMoved {
+		empty := ""
+		b.Key = &empty // re-enter the key for the new host
 	}
 	if b.Key != nil {
 		k := strings.TrimSpace(*b.Key)

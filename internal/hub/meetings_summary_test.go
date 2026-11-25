@@ -188,13 +188,13 @@ func TestMeetingSummarySectionsAt15Minutes(t *testing.T) {
 
 func TestMeetingSummaryMineWithPersonAndAliases(t *testing.T) {
 	f := newSumFx(t, func(int, string) (string, error) {
-		return `{"summary":"x","actions":[{"text":"Write the spec","owner":"adri"},{"text":"Review","owner":"Adrian Q"},
+		return `{"summary":"x","actions":[{"text":"Write the spec","owner":"zorv"},{"text":"Review","owner":"Zorvan Q"},
 			{"text":"Deploy","owner":"Luis"},{"text":"Call the client","owner":""}]}`, nil
 	})
-	rr := f.do("PUT", "/api/settings/meetings", `{"aliases":[" Adri ","adri","Adrián"]}`)
+	rr := f.do("PUT", "/api/settings/meetings", `{"aliases":[" Zorv ","zorv","Zorván"]}`)
 	require.Equal(t, 200, rr.Code, rr.Body.String())
-	p := f.project(t, "none", map[string]string{"person": "Adrian Q"})
-	m := f.transcribed(t, p.ID, []proto.MeetingSegment{seg(0, "Speaker 1", "Adri writes the spec, Adrian Q reviews, Luis deploys")})
+	p := f.project(t, "none", map[string]string{"person": "Zorvan Q"})
+	m := f.transcribed(t, p.ID, []proto.MeetingSegment{seg(0, "Speaker 1", "Zorv writes the spec, Zorvan Q reviews, Luis deploys")})
 	require.Equal(t, "ready", m.Status, m.Error)
 	mine := map[string]bool{}
 	for _, a := range m.Actions {
@@ -213,9 +213,9 @@ func TestMeetingSummaryMineWithPersonAndAliases(t *testing.T) {
 	notes, err := f.st.MeetingNotes(p.ID, "")
 	require.NoError(t, err)
 	require.Len(t, notes, 1)
-	require.Equal(t, "- Adrian Q: Write the spec\n- Adrian Q: Review\n- Luis: Deploy\n- Call the client", notes[0].Actions)
+	require.Equal(t, "- Zorvan Q: Write the spec\n- Zorvan Q: Review\n- Luis: Deploy\n- Call the client", notes[0].Actions)
 
-	// without the alias, "adri" is no longer mine: the projection is rewritten
+	// without the alias, "zorv" is no longer mine: the projection is rewritten
 	rr = f.do("PUT", "/api/settings/meetings", `{"aliases":[]}`)
 	require.Equal(t, 200, rr.Code)
 	m = f.detail(t, m.ID)
@@ -234,9 +234,9 @@ func TestIsMine(t *testing.T) {
 }
 
 func TestBriefingPersonActionsAcceptAliases(t *testing.T) {
-	text := "- Adri: write it\n  and send it\n- Luis: deploy\nadrian: review\n- Other: x"
-	require.Equal(t, []string{"write it and send it", "review"}, personActions(text, "Adrian", "Adri"))
-	require.Equal(t, []string{"review"}, personActions(text, "Adrian"))
+	text := "- Zorv: write it\n  and send it\n- Luis: deploy\nzorvan: review\n- Other: x"
+	require.Equal(t, []string{"write it and send it", "review"}, personActions(text, "Zorvan", "Zorv"))
+	require.Equal(t, []string{"review"}, personActions(text, "Zorvan"))
 	require.Nil(t, personActions(text))
 }
 
@@ -350,8 +350,13 @@ func TestIssueBodyAndLink(t *testing.T) {
 	req.Header.Set("Origin", "https://app.example")
 	require.Equal(t, "https://app.example/?meeting=m1", meetingLink(req, "m1"))
 	at := time.Date(2026, 11, 20, 10, 0, 0, 0, time.Local).UnixMilli()
-	body := issueBody(proto.MeetingAction{Text: "Send the report", Owner: "Ana", Due: "Friday", TsMs: 65000}, proto.Meeting{Title: "Beta sync", StartedAt: at}, "https://app.example/?meeting=m1")
-	require.Equal(t, "Send the report\n\nOwner: Ana\nDue: Friday\nFrom the meeting \"Beta sync\" on 2026-11-20 (at 01:05).\n\nMeeting in Quorum: https://app.example/?meeting=m1\n", body)
+	m := proto.Meeting{Title: "Beta sync", StartedAt: at}
+	body := issueBody(proto.MeetingAction{Text: "Send the report", Owner: "Zorvan", Mine: true, Due: "Friday", TsMs: 65000}, m, "https://app.example/?meeting=m1")
+	require.Equal(t, "Send the report\n\nOwner: Zorvan\nDue: Friday\nFrom the meeting \"Beta sync\" on 2026-11-20 (at 01:05).\n\nMeeting in Quorum: https://app.example/?meeting=m1\n", body)
+	// someone else's action never names them in the repo
+	body = issueBody(proto.MeetingAction{Text: "Send the report", Owner: "Quillon", TsMs: 65000}, m, "https://app.example/?meeting=m1")
+	require.NotContains(t, body, "Quillon")
+	require.Equal(t, "Send the report\n\nFrom the meeting \"Beta sync\" on 2026-11-20 (at 01:05).\n\nMeeting in Quorum: https://app.example/?meeting=m1\n", body)
 }
 
 func TestMeetingSettingsKeyIsWriteOnly(t *testing.T) {
@@ -359,10 +364,10 @@ func TestMeetingSettingsKeyIsWriteOnly(t *testing.T) {
 	rr := f.do("GET", "/api/settings/meetings", "")
 	require.Equal(t, 200, rr.Code)
 	require.JSONEq(t, `{"provider":"local","model":"","baseUrl":"","language":"es","aliases":[],"hasKey":false}`, rr.Body.String())
-	rr = f.do("PUT", "/api/settings/meetings", `{"provider":"openai-compatible","model":"m-1","baseUrl":"https://llm.example/v1","key":"sk-very-secret","language":"auto","aliases":["Adri"]}`)
+	rr = f.do("PUT", "/api/settings/meetings", `{"provider":"openai-compatible","model":"m-1","baseUrl":"https://llm.example/v1","key":"sk-very-secret","language":"auto","aliases":["Zorv"]}`)
 	require.Equal(t, 200, rr.Code, rr.Body.String())
 	require.NotContains(t, rr.Body.String(), "sk-very-secret")
-	require.JSONEq(t, `{"provider":"openai-compatible","model":"m-1","baseUrl":"https://llm.example/v1","language":"auto","aliases":["Adri"],"hasKey":true}`, rr.Body.String())
+	require.JSONEq(t, `{"provider":"openai-compatible","model":"m-1","baseUrl":"https://llm.example/v1","language":"auto","aliases":["Zorv"],"hasKey":true}`, rr.Body.String())
 	rr = f.do("GET", "/api/settings/meetings", "")
 	require.NotContains(t, rr.Body.String(), "sk-very-secret")
 	raw, err := f.st.Meta(metaMeetingSettings)
@@ -460,7 +465,7 @@ func TestMeetingWithoutSpeechIsReadyWithAnEmptySummary(t *testing.T) {
 
 func TestMeetingLocalSummaryThroughTheWorker(t *testing.T) {
 	f := newJobFx(t)
-	rr := f.do("PUT", "/api/settings/meetings", `{"provider":"local","model":"gemma3:4b","aliases":["Adri"]}`)
+	rr := f.do("PUT", "/api/settings/meetings", `{"provider":"local","model":"gemma3:4b","aliases":["Zorv"]}`)
 	require.Equal(t, 200, rr.Code)
 	gpu := f.connect(t, "gpu", true)
 	m := f.uploadMeeting(t, "", "audio")
@@ -479,7 +484,7 @@ func TestMeetingLocalSummaryThroughTheWorker(t *testing.T) {
 	require.Equal(t, "gemma3:4b", set["model"])
 	require.Equal(t, "es", set["language"])
 	require.Equal(t, map[string]any{"Speaker 2": "Luis"}, set["speakerNames"])
-	require.Equal(t, []any{"Luis", "Adri"}, set["glossary"])
+	require.Equal(t, []any{"Luis", "Zorv"}, set["glossary"])
 	require.NotContains(t, string(s.Settings), "second", "the transcript is not in the RPC")
 	require.Equal(t, "summarising", f.status(m.ID))
 
@@ -672,4 +677,71 @@ func TestMeetingRetryUsesTheMeetingsProvider(t *testing.T) {
 func TestMeetingSpeakersUnknownMeetingIs404(t *testing.T) {
 	f := newMeetFx(t)
 	require.Equal(t, 404, f.do("POST", "/api/meetings/nope/speakers", `{"Speaker 1":"Ana"}`).Code)
+}
+
+func TestMeetingSettingsNewHostClearsTheKey(t *testing.T) {
+	f := newMeetFx(t)
+	rr := f.do("PUT", "/api/settings/meetings", `{"provider":"openai-compatible","model":"m-1","baseUrl":"https://llm.example/v1","key":"sk-one"}`)
+	require.Equal(t, 200, rr.Code, rr.Body.String())
+	// the same host keeps the key
+	require.Equal(t, 200, f.do("PUT", "/api/settings/meetings", `{"baseUrl":"https://LLM.example/v2"}`).Code)
+	require.Equal(t, "sk-one", f.s.meetingKey())
+	// another host never receives it: re-enter it
+	rr = f.do("PUT", "/api/settings/meetings", `{"baseUrl":"https://elsewhere.example/v1"}`)
+	require.Equal(t, 200, rr.Code)
+	require.Contains(t, rr.Body.String(), `"hasKey":false`)
+	require.Equal(t, "", f.s.meetingKey())
+	// a key sent with the new host is kept
+	require.Equal(t, 200, f.do("PUT", "/api/settings/meetings", `{"baseUrl":"https://third.example/v1","key":"sk-two"}`).Code)
+	require.Equal(t, "sk-two", f.s.meetingKey())
+	// a port is part of the host
+	require.Equal(t, 200, f.do("PUT", "/api/settings/meetings", `{"baseUrl":"https://third.example:8443/v1"}`).Code)
+	require.Equal(t, "", f.s.meetingKey())
+}
+
+func TestMeetingDeleteCancelsTheHubSummary(t *testing.T) {
+	f := newSumFx(t, func(int, string) (string, error) { return shortAnswer, nil })
+	f.model.gate, f.model.entered = make(chan struct{}), make(chan struct{}, 4)
+	m := f.uploadMeeting(t, "", "audio")
+	f.s.cancelMeetingJobs(m.ID)
+	require.NoError(t, f.st.ReplaceMeetingSegments(m.ID, shortTranscript))
+	f.s.jobs.onTranscribed(m.ID)
+	<-f.model.entered // the ccapi summary is running
+	f.s.lockMeeting(m.ID)() // a lock entry exists
+	require.Equal(t, 204, f.do("DELETE", "/api/meetings/"+m.ID, "").Code)
+	f.s.meet.wg.Wait() // the run ended without the gate opening: its call was cancelled
+	require.Empty(t, f.model.calls())
+	f.s.meet.mu.Lock()
+	_, hasGen := f.s.meet.gen[m.ID]
+	_, hasCancel := f.s.meet.cancel[m.ID]
+	f.s.meet.mu.Unlock()
+	f.s.meet.locksMu.Lock()
+	_, hasLock := f.s.meet.locks[m.ID]
+	f.s.meet.locksMu.Unlock()
+	require.False(t, hasGen || hasCancel || hasLock, "the meeting's run and lock entries are gone")
+	close(f.model.gate)
+}
+
+func TestProjectDeletePublishesItsMeetings(t *testing.T) {
+	f := newSumFx(t, func(int, string) (string, error) { return shortAnswer, nil })
+	p := f.project(t, "none", nil)
+	m := f.uploadMeeting(t, p.ID, "audio")
+	f.uploadMeeting(t, "", "audio") // an inbox meeting is not announced
+	cp := &capture{}
+	f.s.hub.SetBroadcaster(cp)
+	require.Equal(t, 204, f.do("DELETE", "/api/projects/"+p.ID, "").Code)
+	var changed []map[string]string
+	cp.mu.Lock()
+	for _, e := range cp.envs {
+		if e.Type == "meeting_changed" {
+			var v map[string]string
+			require.NoError(t, json.Unmarshal(e.Payload, &v))
+			changed = append(changed, v)
+		}
+	}
+	cp.mu.Unlock()
+	require.Equal(t, []map[string]string{{"id": m.ID, "projectId": "", "status": m.Status}}, changed)
+	got, err := f.st.Meeting(m.ID)
+	require.NoError(t, err)
+	require.Equal(t, "", got.ProjectID)
 }
