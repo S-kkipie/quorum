@@ -76,7 +76,21 @@ describe('Composer', () => {
     expect(screen.queryByRole('button', { name: 'Queue' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Interrupt and send' })).toBeNull()
   })
-  it('Enter adds a new line; Ctrl+Enter sends', async () => {
+  it('on a computer Enter sends and Shift+Enter is a new line', async () => {
+    const prev = window.matchMedia
+    window.matchMedia = ((q: string) => ({ matches: q.includes('pointer: fine'), media: q, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, onchange: null, dispatchEvent: () => false })) as unknown as typeof window.matchMedia
+    try {
+      render(<Composer session={sess({ state: 'working' as any })} />)
+      const box = screen.getByRole('combobox')
+      fireEvent.change(box, { target: { value: 'hello' } })
+      fireEvent.keyDown(box, { key: 'Enter', shiftKey: true })
+      await new Promise((r) => setTimeout(r, 10))
+      expect(fetchMock).not.toHaveBeenCalled()
+      fireEvent.keyDown(box, { key: 'Enter' })
+      await waitFor(() => expect(fetchMock).toHaveBeenCalled())
+    } finally { window.matchMedia = prev }
+  })
+  it('on a touch screen Enter adds a new line; Ctrl+Enter sends', async () => {
     render(<Composer session={sess({ state: 'working' as any })} />)
     const box = screen.getByRole('combobox')
     fireEvent.change(box, { target: { value: 'hello' } })

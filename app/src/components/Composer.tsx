@@ -14,6 +14,14 @@ export function composerBlock(s: SessionInfo): string {
   return ''
 }
 
+/**
+ * Enter sends on a computer (a fine pointer that can hover: mouse or trackpad), Shift+Enter is a new line.
+ * On a touch screen Enter stays a new line (phone keyboards) and the Send button sends; Ctrl/Cmd+Enter works on both.
+ */
+export function enterSends(): boolean {
+  try { return typeof matchMedia === 'function' && matchMedia('(hover: hover) and (pointer: fine)').matches } catch { return false }
+}
+
 export default function Composer({ session, commands }: {
   session: SessionInfo
   /** the session's slash commands (undefined: never reported, an older mod) */
@@ -133,7 +141,7 @@ export default function Composer({ session, commands }: {
           aria-expanded={menuOpen}
           aria-controls={menuOpen ? 'slash-menu' : undefined}
           aria-activedescendant={menuOpen && active ? optionId(rows.indexOf(active)) : undefined}
-          submitOn="mod-enter"
+          submitOn={enterSends() ? 'enter' : 'mod-enter'}
           rows={2}
           placeholder="Type a message or / for commands"
           className="min-h-14 px-3 py-2 text-sm text-ink placeholder:text-muted-foreground disabled:opacity-40"
