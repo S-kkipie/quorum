@@ -105,6 +105,11 @@ function applyPalette(p: StoredPalette, theme: ThemeName): void {
     document.head.appendChild(meta)
   }
   meta.content = PALETTE_BG[p.id][theme === 'dark' ? 1 : 0]
+  // The Windows desktop app (quorum-desktop) binds this to paint its title bar like the app.
+  const chrome = (window as { quorumChrome?: (bg: string, dark: boolean) => unknown }).quorumChrome
+  if (typeof chrome === 'function') {
+    try { void Promise.resolve(chrome(meta.content, theme === 'dark')).catch(() => {}) } catch { /* not in the desktop app */ }
+  }
 }
 
 /** Puts the resolved theme on <html> (`.dark`, color-scheme) with the palette in effect and the browser chrome colour. */

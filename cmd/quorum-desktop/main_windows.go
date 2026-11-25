@@ -4,10 +4,11 @@ package main
 
 import (
 	"log"
-	"syscall"
 	"os"
 	"path/filepath"
+	"syscall"
 	"time"
+	"unsafe"
 
 	"github.com/jchv/go-webview2"
 )
@@ -16,6 +17,41 @@ import (
 //go:generate go run github.com/tc-hib/go-winres@v0.3.3 make --arch amd64 --in winres/winres.json --out rsrc
 
 const probeTimeout = 5 * time.Second
+
+// DWM window attributes (Windows 11): dark title bar, border, caption and caption text colours.
+const (
+	dwmUseImmersiveDarkMode = 20
+	dwmBorderColor          = 34
+	dwmCaptionColor         = 35
+	dwmTextColor            = 36
+)
+
+var dwmSet = syscall.NewLazyDLL("dwmapi.dll").NewProc("DwmSetWindowAttribute")
+
+// paintChrome paints the window's title bar and border with the app's background, like Discord does, keeping
+// the native caption buttons. Older Windows versions ignore the attributes.
+func paintChrome(hwnd uintptr, bg string, dark bool) {
+	if dwmSet.Find() != nil || hwnd == 0 {
+		return
+	}
+	set := func(attr uintptr, v uint32) {
+		dwmSet.Call(hwnd, attr, uintptr(unsafe.Pointer(&v)), 4)
+	}
+	var d uint32
+	if dark {
+		d = 1
+	}
+	set(dwmUseImmersiveDarkMode, d)
+	if c, ok := colorref(bg); ok {
+		set(dwmCaptionColor, c)
+		set(dwmBorderColor, c)
+	}
+	text := uint32(0x00111111)
+	if dark {
+		text = 0x00EEEEEE
+	}
+	set(dwmTextColor, text)
+}
 
 // scaled converts a size in CSS pixels to physical pixels: the app is per-monitor DPI aware (see winres), so
 // the window size is given in physical pixels and must follow the display scale (150% → ×1.5).
@@ -80,6 +116,9 @@ func main() {
 		open(hub)
 		return ""
 	})
+	hwnd := uintptr(w.Window())
+	paintChrome(hwnd, "#0E1311", true) // Terminal green dark until the page reports its theme
+	_ = w.Bind("quorumChrome", func(bg string, dark bool) { w.Dispatch(func() { paintChrome(hwnd, bg, dark) }) })
 	_ = w.Bind("quorumRetry", func() { open(s.Hub) })
 	_ = w.Bind("quorumChangeHub", func() { w.SetHtml(page(firstRunPage, s.Hub)) })
 

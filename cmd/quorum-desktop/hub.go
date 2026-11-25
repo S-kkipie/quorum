@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -70,4 +71,18 @@ func reachable(hub string, timeout time.Duration) bool {
 	}
 	res.Body.Close()
 	return res.StatusCode >= 200 && res.StatusCode < 300
+}
+
+// colorref turns "#RRGGBB" into a Windows COLORREF (0x00BBGGRR); ok is false for anything else.
+func colorref(hex string) (uint32, bool) {
+	hex = strings.TrimPrefix(strings.TrimSpace(hex), "#")
+	if len(hex) != 6 {
+		return 0, false
+	}
+	v, err := strconv.ParseUint(hex, 16, 32)
+	if err != nil {
+		return 0, false
+	}
+	r, g, b := uint32(v>>16)&0xff, uint32(v>>8)&0xff, uint32(v)&0xff
+	return b<<16 | g<<8 | r, true
 }

@@ -298,3 +298,19 @@ describe('pre-paint script', () => {
     expect(doc.documentElement.classList.contains('dark')).toBe(true)
   })
 })
+
+describe('desktop title bar', () => {
+  afterEach(() => { delete (window as { quorumChrome?: unknown }).quorumChrome })
+  it('tells the Windows app the background and mode when the theme applies', () => {
+    const chrome = vi.fn(async () => {})
+    ;(window as { quorumChrome?: unknown }).quorumChrome = chrome
+    applyTheme('dark')
+    expect(chrome).toHaveBeenLastCalledWith(expect.stringMatching(/^#[0-9A-Fa-f]{6}$/), true)
+    applyTheme('light')
+    expect(chrome).toHaveBeenLastCalledWith(expect.stringMatching(/^#[0-9A-Fa-f]{6}$/), false)
+  })
+  it('never throws when the binding throws', () => {
+    ;(window as { quorumChrome?: unknown }).quorumChrome = () => { throw new Error('x') }
+    expect(() => applyTheme('dark')).not.toThrow()
+  })
+})

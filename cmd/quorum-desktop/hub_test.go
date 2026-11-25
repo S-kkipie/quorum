@@ -75,3 +75,16 @@ func TestWindowsIconResourceIsCommitted(t *testing.T) {
 		require.Greater(t, st.Size(), int64(1000), f)
 	}
 }
+
+func TestColorref(t *testing.T) {
+	c, ok := colorref("#0E1311")
+	require.True(t, ok)
+	require.Equal(t, uint32(0x0011130E), c) // 0x00BBGGRR
+	c, ok = colorref(" #3ddc97 ")
+	require.True(t, ok)
+	require.Equal(t, uint32(0x0097DC3D), c)
+	for _, bad := range []string{"", "#123", "red", "#GGGGGG", "#0E13111"} {
+		_, ok := colorref(bad)
+		require.False(t, ok, bad)
+	}
+}
