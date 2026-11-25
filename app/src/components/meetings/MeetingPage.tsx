@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { deleteMeeting, getMeeting, meetingAudioURL, nameSpeakers, patchMeeting, reprocessMeeting, retryMeeting } from '../../lib/meetingsApi'
+import { addMeetingPending } from '../../lib/pendingsApi'
 import type { AppState } from '../../lib/store'
 import type { Meeting, MeetingPoint } from '../../proto.gen'
 import { Button } from '@/components/ui/button'
@@ -20,7 +21,17 @@ const merge = (prev: Meeting | null, r: Meeting): Meeting => (prev ? {
   summary: r.summary ?? prev.summary, segments: r.segments ?? prev.segments, actions: r.actions ?? prev.actions, speakers: r.speakers ?? prev.speakers,
 } : r)
 
-function Points({ items, onSeek }: { items: MeetingPoint[]; onSeek: (ms: number) => void }) {
+function Points({ items, onSeek, onAdd }: { items: MeetingPoint[]; onSeek: (ms: number) => void; onAdd?: (text: string) => Promise<void> }) {
+  // per point (by text): the ones added, the one in flight and the last error
+  const [added, setAdded] = useState<Record<string, boolean>>({})
+  const [busy, setBusy] = useState<string | null>(null)
+  const [err, setErr] = useState<Record<string, string>>({})
+  const add = async (text: string) => {
+    if (!onAdd) return
+    setBusy(text)
+    setErr((p) => ({ ...p, [text]: '' }))
+    try { await onAdd(text); setAdded((p) => ({ ...p, [text]: true })) } catch (e) { setErr((p) => ({ ...p, [text]: e instanceof Error ? e.message : 'error' })) } finally { setBusy(null) }
+  }
   if (!items.length) return <p className="text-xs text-muted-foreground">None.</p>
   return (
     <ul className="divide-y divide-line">
@@ -28,6 +39,15 @@ function Points({ items, onSeek }: { items: MeetingPoint[]; onSeek: (ms: number)
         <li key={i} className={`py-1.5 text-sm text-ink ${wrap}`}>
           {x.text}
           {!!x.tsMs && <> <button type="button" onClick={() => onSeek(x.tsMs!)} className="inline-flex min-h-11 items-center px-1 text-xs text-accent hover:underline">at {clock(x.tsMs)}</button></>}
+          {onAdd && (
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <button type="button" disabled={!!added[x.text] || busy === x.text} onClick={() => void add(x.text)}
+                className="inline-flex min-h-11 items-center rounded-lg px-2 text-xs text-accent hover:underline disabled:text-muted-foreground disabled:no-underline">
+                {added[x.text] ? 'Added' : 'Add as pending'}
+              </button>
+              {err[x.text] && <span role="alert" className={`text-xs text-danger ${wrap}`}>{err[x.text]}</span>}
+            </div>
+          )}
         </li>
       ))}
     </ul>
@@ -227,7 +247,7 @@ export default function MeetingPage({ state, id, onBack }: { state: AppState; id
               </>
             ) : <p className="text-xs text-muted-foreground">No summary: the recording had no speech.</p>)}
             {sec('Decisions', <Points items={s?.decisions ?? []} onSeek={seek} />)}
-            {sec('Open points', <Points items={s?.openPoints ?? []} onSeek={seek} />)}
+            {sec('Open points', <Points items={s?.openPoints ?? []} onSeek={seek} onAdd={m.projectId ? async (t) => { await addMeetingPending(id, t) } : undefined} />)}
             {sec('Actions', actions.length ? (
               <ul className="divide-y divide-line">
                 {actions.map((a) => <ActionRow key={a.id} meetingId={id} a={a} github={github} onSeek={seek} onIssue={onIssue} />)}

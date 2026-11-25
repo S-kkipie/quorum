@@ -10,13 +10,13 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 const wrap = '[overflow-wrap:anywhere]'
 const NOTE_MAX = 2000
 
-/** An agent item the owner has not seen yet (added after the previous visit). */
 /** The text: a plain span, or a 44 px button that expands the detail and note when there are any. */
 function Label({ onClick, className, children, ...rest }: { onClick?: () => void; className: string; children: ReactNode; 'aria-expanded'?: boolean }) {
   if (!onClick) return <span className={className}>{children}</span>
   return <button type="button" onClick={onClick} className={`${className} min-h-11`} {...rest}>{children}</button>
 }
 
+/** An agent item the owner has not seen yet (added after the previous visit). */
 export const isNewPending = (p: Pending, prevSeenAt: number) => p.source === 'agent' && p.createdAt > prevSeenAt
 
 /**

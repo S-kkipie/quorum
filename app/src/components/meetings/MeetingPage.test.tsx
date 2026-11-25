@@ -7,6 +7,8 @@ const api = vi.hoisted(() => ({
   getMeeting: vi.fn(), patchMeeting: vi.fn(), retryMeeting: vi.fn(), reprocessMeeting: vi.fn(), nameSpeakers: vi.fn(),
   createMeetingIssue: vi.fn(), deleteMeeting: vi.fn(), meetingAudioURL: vi.fn(),
 }))
+const pend = vi.hoisted(() => ({ addMeetingPending: vi.fn() }))
+vi.mock('../../lib/pendingsApi', async (orig) => ({ ...(await orig<typeof import('../../lib/pendingsApi')>()), ...pend }))
 vi.mock('../../lib/meetingsApi', async (orig) => ({ ...(await orig<typeof import('../../lib/meetingsApi')>()), ...api }))
 import MeetingPage from './MeetingPage'
 import { initialState, reduce, type AppState } from '../../lib/store'
@@ -44,7 +46,7 @@ beforeEach(() => {
   api.meetingAudioURL.mockResolvedValue('http://h/api/meeting-audio/tok')
   vi.stubGlobal('localStorage', { getItem: () => 'tok', setItem() {}, removeItem() {} })
 })
-afterEach(() => { for (const f of Object.values(api)) f.mockReset() })
+afterEach(() => { for (const f of [...Object.values(api), ...Object.values(pend)]) f.mockReset() })
 
 const regions = () => screen.queryAllByRole('region').map((r) => r.getAttribute('aria-label'))
 
@@ -303,5 +305,44 @@ describe('MeetingPage header', () => {
     expect(screen.getByRole('heading', { level: 2 }).className).toContain('truncate')
     for (const r of screen.getAllByRole('region')) expect(r.className).toContain('min-w-0')
     for (const b of screen.getAllByRole('button')) expect(b.className).toMatch(/min-h-11|size-11|h-11/)
+  })
+})
+
+describe('MeetingPage add as pending', () => {
+  it('add as pending calls the API and shows Added', async () => {
+    api.getMeeting.mockResolvedValue(ready())
+    pend.addMeetingPending.mockResolvedValue({ id: 'x1', added: true })
+    render(<MeetingPage state={state()} id="m1" />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Add as pending' }))
+    await screen.findByRole('button', { name: 'Added' })
+    expect(pend.addMeetingPending).toHaveBeenCalledWith('m1', 'Who owns the backups?')
+    expect((screen.getByRole('button', { name: 'Added' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+  it('a 409 also shows Added', async () => {
+    api.getMeeting.mockResolvedValue(ready())
+    pend.addMeetingPending.mockResolvedValue({ id: 'x1', added: false })
+    render(<MeetingPage state={state()} id="m1" />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Add as pending' }))
+    await screen.findByRole('button', { name: 'Added' })
+  })
+  it('shows the error and allows a retry', async () => {
+    api.getMeeting.mockResolvedValue(ready())
+    pend.addMeetingPending.mockRejectedValue(new Error('hub down'))
+    render(<MeetingPage state={state()} id="m1" />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Add as pending' }))
+    await screen.findByText('hub down')
+    expect((screen.getByRole('button', { name: 'Add as pending' }) as HTMLButtonElement).disabled).toBe(false)
+  })
+  it('no button when the meeting has no project', async () => {
+    api.getMeeting.mockResolvedValue({ ...ready(), projectId: '' })
+    render(<MeetingPage state={state()} id="m1" />)
+    await screen.findByText('Who owns the backups?')
+    expect(screen.queryByRole('button', { name: 'Add as pending' })).toBeNull()
+  })
+  it('decisions have no button', async () => {
+    api.getMeeting.mockResolvedValue(ready())
+    render(<MeetingPage state={state()} id="m1" />)
+    await screen.findByText('Ship the export on Monday')
+    expect(screen.getAllByRole('button', { name: 'Add as pending' })).toHaveLength(1)
   })
 })
