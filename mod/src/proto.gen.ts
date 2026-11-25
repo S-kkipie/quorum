@@ -111,6 +111,12 @@ export interface SessionInfo {
   modelOptions: ModelOption[];
   effortOptions: string[];
   /**
+   * Worktrees are the absolute paths of the git worktrees of the session's repo (`git worktree
+   * list`), filled in by the daemon (whatever the mod sends is replaced); empty outside a repo or
+   * with an older daemon. View links may serve files from them as well as from the session base.
+   */
+  worktrees?: string[];
+  /**
    * Unread is computed by the hub (whatever the mod sends is ignored): the session is idle and its
    * last turn_end is newer than its seen mark ("done, unread"). background/working/needs_you/closed never are.
    */

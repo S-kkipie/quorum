@@ -1,4 +1,4 @@
-import { absPath, inBase } from './timeline'
+import { absPath, inBases } from './timeline'
 
 export type PathMatch = { start: number; end: number; path: string }
 
@@ -9,11 +9,11 @@ const FILE_EXT = /\.[A-Za-z][A-Za-z0-9]{0,9}$/
 
 /**
  * Paths in prose that point at a file inside `base`: absolute ones, and relative ones with a `/`
- * and an extension (`src/a.ts`, `./docs/x.md`), resolved against `base`. URLs, paths outside
- * `base`, bare words and `..` escapes are ignored. `start`/`end` cover the text as written
+ * and an extension (`src/a.ts`, `./docs/x.md`), resolved against `base`; absolute ones may also lie in
+ * one of the session's git `worktrees`. URLs, paths outside them, bare words and `..` escapes are ignored. `start`/`end` cover the text as written
  * (without trailing punctuation or a `:line` suffix).
  */
-export function findPaths(text: string, base: string): PathMatch[] {
+export function findPaths(text: string, base: string, worktrees: readonly string[] = []): PathMatch[] {
   const out: PathMatch[] = []
   if (!base || !text) return out
   for (const m of text.matchAll(TOKEN)) {
@@ -23,7 +23,7 @@ export function findPaths(text: string, base: string): PathMatch[] {
     tok = tok.replace(/[.,:!?]+$/, '').replace(LINE_SUFFIX, '').replace(/[.,:!?]+$/, '')
     if (!tok.includes('/') || !FILE_EXT.test(tok) || tok.endsWith('/')) continue
     const path = absPath(tok, base)
-    if (!inBase(path, base)) continue
+    if (!inBases(path, base, worktrees)) continue
     out.push({ start, end: start + tok.length, path })
   }
   return out

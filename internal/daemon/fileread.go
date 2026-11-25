@@ -132,3 +132,52 @@ func rpcFileRead(_ context.Context, _ *Host, params json.RawMessage) (any, error
 		EOF:  p.Offset+int64(got) >= size,
 	}, nil
 }
+
+// fileStatMax caps the candidates of one file_stat call.
+const fileStatMax = 1 + worktreesMax
+
+func init() {
+	rpcHandlers["file_stat"] = rpcFileStat
+}
+
+// regularInside reports whether p is a regular file inside base, with the checks of file_read:
+// both absolute, p lexically inside base, and still inside it once symlinks are resolved.
+func regularInside(base, p string) bool {
+	if !filepath.IsAbs(p) || !filepath.IsAbs(base) || strings.ContainsRune(p+base, 0) {
+		return false
+	}
+	if !inside(filepath.Clean(base), filepath.Clean(p)) {
+		return false
+	}
+	rb, err := filepath.EvalSymlinks(base)
+	if err != nil {
+		return false
+	}
+	rp, err := filepath.EvalSymlinks(p)
+	if err != nil || !inside(rb, rp) {
+		return false
+	}
+	st, err := os.Lstat(rp)
+	return err == nil && st.Mode().IsRegular()
+}
+
+// rpcFileStat returns the index of the first candidate (paths[i] inside bases[i]) that is a
+// regular file, or -1 when none is. The hub uses it to pick the worktree a link is served from.
+func rpcFileStat(_ context.Context, _ *Host, params json.RawMessage) (any, error) {
+	var p struct {
+		Paths []string `json:"paths"`
+		Bases []string `json:"bases"`
+	}
+	if err := decodeParams(params, &p); err != nil {
+		return nil, err
+	}
+	if len(p.Paths) != len(p.Bases) || len(p.Paths) > fileStatMax {
+		return nil, errors.New("invalid candidates")
+	}
+	for i := range p.Paths {
+		if regularInside(p.Bases[i], p.Paths[i]) {
+			return map[string]int{"index": i}, nil
+		}
+	}
+	return map[string]int{"index": -1}, nil
+}

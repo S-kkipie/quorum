@@ -254,6 +254,7 @@ export default function Session({ state, id, onBack, onEvents, onTrim, onSeen, o
       <Transcript
         events={events}
         base={s.root || s.cwd}
+        worktrees={s.worktrees}
         machine={s.machine}
         sessionId={id}
         live={state.live[id]}

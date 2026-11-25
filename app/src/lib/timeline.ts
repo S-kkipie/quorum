@@ -126,6 +126,17 @@ export function inBase(path: string, base: string): boolean {
   return p.length > prefix.length && p.startsWith(prefix)
 }
 
+/** True when `path` lies inside the base or inside one of the session's git worktrees. */
+export function inBases(path: string, base: string, worktrees: readonly string[] = []): boolean {
+  return inBase(path, base) || worktrees.some((w) => inBase(path, w))
+}
+
+/** The folder `path` belongs to: the base if it holds it, else the first worktree that does, else the base. */
+export function baseOf(path: string, base: string, worktrees: readonly string[] = []): string {
+  if (inBase(path, base)) return base
+  return worktrees.find((w) => inBase(path, w)) ?? base
+}
+
 function lines(s: string): string[] {
   if (!s) return []
   const l = s.split('\n')
@@ -228,13 +239,13 @@ function describe(name: string, kind: ToolKind, input: any, summary: string): Pi
   }
 }
 
-function artifactFor(t: ToolItem, base: string): ArtifactItem | undefined {
+function artifactFor(t: ToolItem, base: string, worktrees: readonly string[]): ArtifactItem | undefined {
   if (t.state !== 'ok' || !t.file) return undefined
   const x = ext(t.file)
   const ok = t.name === 'Write' ? VIEWABLE.has(x) : (t.name === 'Edit' || t.name === 'MultiEdit') && EDIT_VIEWABLE.has(x)
   if (!ok) return undefined
   const path = absPath(t.file, base)
-  return { t: 'artifact', seq: t.seq, path, name: basename(path), inBase: inBase(path, base) }
+  return { t: 'artifact', seq: t.seq, path, name: basename(path), inBase: inBases(path, base, worktrees) }
 }
 
 function groupState(ts: ToolItem[]): ToolState {
@@ -275,7 +286,7 @@ export const itemKey = (r: Item): string => `${r.t}:${r.t === 'command' ? r.id :
  * consecutive Reads of the same agent merged, one artifact card per viewable file (the last one wins).
  * `base` is the session's root, else its cwd.
  */
-export function buildTimeline(events: Event[], base: string): Item[] {
+export function buildTimeline(events: Event[], base: string, worktrees: readonly string[] = []): Item[] {
   const flat: Item[] = []
   const tools = new Map<string, ToolItem>()
   // background tasks: tool rows by task id, and the status of tasks that already ended (a task_end can come first)
@@ -285,7 +296,7 @@ export function buildTimeline(events: Event[], base: string): Item[] {
   const commands = new Map<string, CommandItem>()
   // user events of commands a device ran: the command card shows them (see hideDeviceCommands)
   const deviceCommands = new Set<Item>()
-  const settle = (t: ToolItem) => { const a = artifactFor(t, base); if (a) flat.push(a) }
+  const settle = (t: ToolItem) => { const a = artifactFor(t, base, worktrees); if (a) flat.push(a) }
 
   let histLeft = 0
   for (const e of events) if (!e.seq) histLeft++

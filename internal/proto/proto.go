@@ -84,6 +84,10 @@ type SessionInfo struct {
 	// by the mod), EffortOptions the effort levels /effort takes. Both empty with an older mod.
 	ModelOptions  []ModelOption `json:"modelOptions"`
 	EffortOptions []string      `json:"effortOptions"`
+	// Worktrees are the absolute paths of the git worktrees of the session's repo (`git worktree
+	// list`), filled in by the daemon (whatever the mod sends is replaced); empty outside a repo or
+	// with an older daemon. View links may serve files from them as well as from the session base.
+	Worktrees []string `json:"worktrees,omitempty"`
 	// Unread is computed by the hub (whatever the mod sends is ignored): the session is idle and its
 	// last turn_end is newer than its seen mark ("done, unread"). background/working/needs_you/closed never are.
 	Unread bool `json:"unread"`

@@ -79,6 +79,25 @@ describe('Viewer', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Back' }))
     expect(back).toHaveBeenCalled()
   })
+  it('a file in a git worktree shows its folder relative to that worktree', async () => {
+    createView.mockResolvedValue({ url: '/v/tok/page.html' })
+    render(<Viewer {...props} path="/p-rewrite/docs/page.html" base="/p" worktrees={['/p', '/p-rewrite']} />)
+    await screen.findByTitle('page.html')
+    expect(screen.getByText('vps-1 · docs')).toBeTruthy()
+  })
+  it('a file missing from every project folder says so', async () => {
+    createView.mockResolvedValue({ url: '/v/tok/x.md' })
+    vi.stubGlobal('fetch', vi.fn(async () => new Response("File not found in this project's folders\n", { status: 404 })))
+    render(<Viewer {...props} path="/p/docs/x.md" />)
+    expect(await screen.findByText("File not found in this project's folders")).toBeTruthy()
+  })
+  it("an older hub's bare not-found gets the same sentence", async () => {
+    createView.mockResolvedValue({ url: '/v/tok/x.md' })
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('does not exist\n', { status: 404 })))
+    render(<Viewer {...props} path="/p/docs/x.md" />)
+    expect(await screen.findByText("File not found in this project's folders")).toBeTruthy()
+    expect(screen.queryByText('does not exist')).toBeNull()
+  })
   it('open in new tab uses noopener', async () => {
     createView.mockResolvedValue({ url: '/v/tok/p.html' })
     const open = vi.fn()

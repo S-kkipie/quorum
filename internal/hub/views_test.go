@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"path"
 	"strings"
 	"sync"
 	"testing"
@@ -23,12 +24,44 @@ type viewFx struct {
 	files map[string][]byte
 	fail  map[string]string // path -> daemon error (e.g. a symlink the daemon refuses)
 	reads []map[string]any
+	stats []map[string]any // file_stat params
+	// statErr: the daemon's file_stat error (e.g. an older daemon's unknown method)
+	statErr string
 }
 
 func newViewFx(t *testing.T) *viewFx {
 	t.Helper()
 	vf := &viewFx{appFx: newAppFx(t), files: map[string][]byte{}, fail: map[string]string{}}
 	fakeMachine(t, vf.appFx, vf.machTok, "m1", func(r proto.RPC) *proto.RPCResult {
+		if r.Method == "file_stat" {
+			var p struct {
+				Paths []string `json:"paths"`
+				Bases []string `json:"bases"`
+			}
+			_ = json.Unmarshal(r.Params, &p)
+			var raw map[string]any
+			_ = json.Unmarshal(r.Params, &raw)
+			vf.mu.Lock()
+			defer vf.mu.Unlock()
+			vf.stats = append(vf.stats, raw)
+			if vf.statErr != "" {
+				return &proto.RPCResult{Error: vf.statErr}
+			}
+			if len(p.Paths) != len(p.Bases) {
+				return &proto.RPCResult{Error: "invalid candidates"}
+			}
+			// the real daemon's containment: both absolute, the cleaned path strictly below the cleaned base
+			for i, fp := range p.Paths {
+				cp, cb := path.Clean(strings.ReplaceAll(fp, `\`, "/")), path.Clean(strings.ReplaceAll(p.Bases[i], `\`, "/"))
+				if !isAbsAnyOS(fp) || !isAbsAnyOS(p.Bases[i]) || !strings.HasPrefix(cp, strings.TrimRight(cb, "/")+"/") {
+					continue
+				}
+				if _, ok := vf.files[cp]; ok {
+					return okResult(map[string]int{"index": i})
+				}
+			}
+			return okResult(map[string]int{"index": -1})
+		}
 		if r.Method != "file_read" {
 			return okResult(map[string]string{})
 		}

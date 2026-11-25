@@ -330,7 +330,8 @@ function Main() {
   )
   const viewerView = viewer && (
     <Viewer key={viewer.machine + '\x00' + viewer.sessionId + '\x00' + viewer.path} {...viewer}
-      base={state.sessions[viewer.sessionId]?.root || state.sessions[viewer.sessionId]?.cwd || ''} onBack={back} />
+      base={state.sessions[viewer.sessionId]?.root || state.sessions[viewer.sessionId]?.cwd || ''}
+      worktrees={state.sessions[viewer.sessionId]?.worktrees} onBack={back} />
   )
   const startingView = starting && <LazyBoundary><Starting pending={pending} terminal={!!(pending && state.machines[pending.machine]?.caps?.terminal)} onBack={back} onViewTerminal={onViewTerminal} /></LazyBoundary>
   const sessionView = current && vanished.current !== current ? <LazyBoundary><Session key={viewKey} state={shown} id={current} onBack={wide ? undefined : back} onEvents={onEvents} onTrim={onTrim} onSeen={onSeen} onCommands={onCommands} reconnects={reconnects} onGuard={guardLaunch} busy={launchBusy} onViewTerminal={onViewTerminal} onOpenFile={(machine, path, o) => current && go({ viewer: { machine, sessionId: current, path, ...(o && 'images' in o ? { images: true } : o && 'read' in o ? { read: true } : {}) } })} /></LazyBoundary> : null

@@ -112,6 +112,11 @@ describe('buildTimeline', () => {
     expect(noBase.find((i) => i.t === 'artifact')).toMatchObject({ inBase: false })
   })
 
+  it('an artifact in a git worktree of the session opens', () => {
+    const items = buildTimeline([start('w1', 'Write', { file_path: '/home/u/work/acme/app-rewrite/r.html' }), end('w1')], BASE, ['/home/u/work/acme/app-rewrite'])
+    expect(items.find((i) => i.t === 'artifact')).toMatchObject({ inBase: true })
+  })
+
   it('a backfilled write (negative seq, no tool_end) is done and gets its card', () => {
     const items = buildTimeline([ev('tool_start', { id: 'w', name: 'Write', summary: `${BASE}/a.svg` }, -5)], BASE)
     expect(tool(items).state).toBe('ok')

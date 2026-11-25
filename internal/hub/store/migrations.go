@@ -166,6 +166,8 @@ func migrate(s *Store) error {
 		{"model_cfg", "TEXT NOT NULL DEFAULT '{}'"}, // Plan 8: effort, model options, effort options
 		// Plan 10: the session's machine served its history at least once.
 		{"history_ok", "INTEGER NOT NULL DEFAULT 0"},
+		// the git worktrees of the session's repo, reported by the daemon
+		{"worktrees", "TEXT NOT NULL DEFAULT '[]'"},
 	} {
 		if err := s.db.QueryRow(`SELECT count(*) FROM pragma_table_info('sessions') WHERE name=?`, c[0]).Scan(&n); err != nil {
 			return err

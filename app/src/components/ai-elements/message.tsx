@@ -366,12 +366,13 @@ export const MessageResponse = memo(
     // Tappable file paths: only when a PathLinksProvider is above (the Session screen).
     const links = usePathLinks();
     const base = links?.base;
+    const worktrees = links?.worktrees;
     const rehypePlugins = useMemo(
       () =>
         base
-          ? [...Object.values(defaultRehypePlugins), [rehypePathLinks, { base }] as const]
+          ? [...Object.values(defaultRehypePlugins), [rehypePathLinks, { base, worktrees }] as const]
           : undefined,
-      [base]
+      [base, worktrees]
     );
     return (
       <Streamdown

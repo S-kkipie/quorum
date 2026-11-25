@@ -3,6 +3,7 @@ import { ExternalLink, Minus, Plus, RotateCw, X } from 'lucide-react'
 import Markdown from '../components/Markdown'
 import { folderOf } from '../components/timeline/ArtifactCard'
 import { createView, hubUrl } from '../lib/api'
+import { baseOf } from '../lib/timeline'
 import { Button } from '@/components/ui/button'
 
 const ViewerCode = lazy(() => import('./ViewerCode'))
@@ -50,8 +51,13 @@ async function readCapped(r: Response, max: number): Promise<{ text: string; cut
   }
 }
 
+/** The text shown for a link error; an older hub's bare "does not exist" gets the full sentence. */
+export function viewErrorText(msg: string): string {
+  return msg === 'does not exist' ? "File not found in this project's folders" : msg
+}
+
 /** Full-screen viewer of a file of a session, served by the hub through a short-lived /v/ link. */
-export default function Viewer({ machine, sessionId, path, base = '', images = false, read = false, onBack }: {
+export default function Viewer({ machine, sessionId, path, base = '', worktrees, images = false, read = false, onBack }: {
   machine: string
   sessionId: string
   path: string
@@ -61,6 +67,8 @@ export default function Viewer({ machine, sessionId, path, base = '', images = f
   read?: boolean
   /** session base, only used to show the folder relative to it */
   base?: string
+  /** the git worktrees of the session's repo: a file in one shows its folder relative to it */
+  worktrees?: readonly string[]
   onBack: () => void
 }) {
   const name = path.split(/[\\/]/).pop() || path
@@ -93,14 +101,14 @@ export default function Viewer({ machine, sessionId, path, base = '', images = f
         }
         if (live) setSrc(full)
       } catch (e) {
-        if (live) setError(e instanceof Error ? e.message : 'error')
+        if (live) setError(viewErrorText(e instanceof Error ? e.message : 'error'))
       }
     })()
     return () => { live = false }
   }, [machine, sessionId, path, kind, nonce, images, read])
 
   const openTab = useCallback(() => { if (src) window.open(src, '_blank', 'noopener') }, [src])
-  const where = [machine, folderOf(path, base || path.replace(/[\\/]+[^\\/]*$/, ''))].filter(Boolean).join(' · ')
+  const where = [machine, folderOf(path, baseOf(path, base, worktrees) || path.replace(/[\\/]+[^\\/]*$/, ''))].filter(Boolean).join(' · ')
   const step = (d: 1 | -1) => setZoom((z) => {
     const i = ZOOMS.indexOf(z)
     return ZOOMS[Math.min(ZOOMS.length - 1, Math.max(0, i + d))]

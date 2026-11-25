@@ -1,12 +1,13 @@
 import { createContext, useContext, useMemo, type ComponentProps, type ReactNode } from "react";
 import { findPaths } from "@/lib/paths";
+import { baseOf } from "@/lib/timeline";
 
-type Ctx = { base: string; onOpen: (path: string) => void };
+type Ctx = { base: string; worktrees?: readonly string[]; onOpen: (path: string) => void };
 const PathLinksContext = createContext<Ctx | null>(null);
 
 /** Makes file paths inside `MessageResponse` text tappable; `onOpen` gets the absolute path. */
-export function PathLinksProvider({ base, onOpen, children }: Ctx & { children: ReactNode }) {
-  const value = useMemo(() => ({ base, onOpen }), [base, onOpen]);
+export function PathLinksProvider({ base, worktrees, onOpen, children }: Ctx & { children: ReactNode }) {
+  const value = useMemo(() => ({ base, worktrees, onOpen }), [base, worktrees, onOpen]);
   return <PathLinksContext.Provider value={value}>{children}</PathLinksContext.Provider>;
 }
 
@@ -22,9 +23,11 @@ type HastNode = {
 
 const SKIP = new Set(["pre", "a", "script", "style"]);
 
-function splitText(node: HastNode, base: string): HastNode[] | null {
+type Bases = { base: string; worktrees?: readonly string[] };
+
+function splitText(node: HastNode, b: Bases): HastNode[] | null {
   const text = node.value ?? "";
-  const found = findPaths(text, base);
+  const found = findPaths(text, b.base, b.worktrees);
   if (found.length === 0) return null;
   const out: HastNode[] = [];
   let at = 0;
@@ -42,7 +45,7 @@ function splitText(node: HastNode, base: string): HastNode[] | null {
   return out;
 }
 
-function walk(node: HastNode, base: string) {
+function walk(node: HastNode, base: Bases) {
   if (!node.children || (node.tagName && SKIP.has(node.tagName))) return;
   const next: HastNode[] = [];
   for (const c of node.children) {
@@ -57,14 +60,15 @@ function walk(node: HastNode, base: string) {
 }
 
 /** Rehype plugin: wraps path-like text (also in inline code, never in fenced blocks or links) in marked spans. */
-export const rehypePathLinks = (opts: { base: string }) => (tree: HastNode) => walk(tree, opts.base);
+export const rehypePathLinks = (opts: Bases) => (tree: HastNode) => walk(tree, opts);
 
 /** `span` override: marked spans become inline link-style buttons, everything else stays a span. */
 export function PathSpan(props: ComponentProps<"span"> & { node?: unknown; "data-quorum-path"?: string }) {
   const { node: _node, "data-quorum-path": path, children, ...rest } = props;
   const ctx = usePathLinks();
   if (!path || !ctx) return <span {...rest}>{children}</span>;
-  const rel = path.startsWith(ctx.base) ? path.slice(ctx.base.length).replace(/^[\\/]+/, "") : path;
+  const b = baseOf(path, ctx.base, ctx.worktrees);
+  const rel = path.startsWith(b) ? path.slice(b.length).replace(/^[\\/]+/, "") : path;
   return (
     <button
       type="button"

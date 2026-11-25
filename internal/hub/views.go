@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
@@ -27,6 +28,7 @@ const (
 	viewOutside   = "outside the project folder"
 	viewNoImage   = "This image is not available."
 	viewDenied    = "this file is not served"
+	viewNotFound  = "File not found in this project's folders"
 	viewCSPHeader = "sandbox allow-scripts allow-popups allow-forms allow-modals; frame-ancestors 'self'; " +
 		"default-src 'self' 'unsafe-inline' data: blob:; connect-src 'self'; form-action 'none'; base-uri 'none'"
 	viewWriteWait = 30 * time.Second
@@ -196,7 +198,9 @@ func (s *Server) handleCreateView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	fold := s.hub.caseInsensitiveOS(m)
-	base, only := sessionBase(si.Root, si.Cwd), ""
+	var base, only string
+	var rel []string
+	ok := false
 	switch {
 	case b.Images && b.Read:
 		base = ""
@@ -208,8 +212,12 @@ func (s *Server) handleCreateView(w http.ResponseWriter, r *http.Request) {
 			apiErr(w, 500, "internal error")
 			return
 		}
+	default:
+		base, rel, ok = s.viewBaseOf(r.Context(), m, si, b.Path, fold)
 	}
-	rel, ok := relInside(base, b.Path, fold)
+	if b.Images || b.Read {
+		rel, ok = relInside(base, b.Path, fold)
+	}
 	if b.Images && ok {
 		// exactly one pasted image right in the folder
 		ok = len(rel) == 1 && pastedImage.MatchString(rel[0])
@@ -238,6 +246,72 @@ func (s *Server) handleCreateView(w http.ResponseWriter, r *http.Request) {
 		esc[i] = url.PathEscape(seg)
 	}
 	writeJSON(w, 200, map[string]string{"url": "/v/" + tok + "/" + strings.Join(esc, "/")})
+}
+
+// viewBases are the folders a session's view links may serve from: its base (root, else cwd),
+// then the git worktrees of its repo the daemon reported (absolute, without duplicates).
+func viewBases(si proto.SessionInfo, fold bool) []string {
+	out := []string{sessionBase(si.Root, si.Cwd)}
+	seen := map[string]bool{normRoot(out[0], fold): true}
+	for _, w := range si.Worktrees {
+		if len(out) >= 1+maxViewWorktrees {
+			break
+		}
+		if !worktreeOK(w) || seen[normRoot(w, fold)] {
+			continue
+		}
+		seen[normRoot(w, fold)] = true
+		out = append(out, w)
+	}
+	return out
+}
+
+// worktreeOK: an absolute folder with no NUL, no "." or ".." segment, and not a bare root ("/", "C:\\").
+func worktreeOK(w string) bool {
+	if !isAbsAnyOS(w) || strings.ContainsRune(w, 0) {
+		return false
+	}
+	for _, seg := range strings.FieldsFunc(w, func(r rune) bool { return r == '/' || r == '\\' }) {
+		if seg == "." || seg == ".." {
+			return false
+		}
+	}
+	segs := pathSegs(w)
+	return len(segs) > 1 || (len(segs) == 1 && !(len(segs[0]) == 2 && segs[0][1] == ':'))
+}
+
+// maxViewWorktrees caps the worktrees a link may be looked up in.
+const maxViewWorktrees = 20
+
+// viewBaseOf picks the base of a link to p and p's segments below it: the first of viewBases
+// holding p. When that is the session base and the session has worktrees, the app may have joined a
+// path relative to a worktree onto the session base: the daemon is asked which of the session base
+// and each worktree (same relative path) has the file, and the first that does is used. Any failure
+// of that question keeps the session base (an older daemon never reports worktrees).
+func (s *Server) viewBaseOf(ctx context.Context, m string, si proto.SessionInfo, p string, fold bool) (string, []string, bool) {
+	bases := viewBases(si, fold)
+	for i, b := range bases {
+		rel, ok := relInside(b, p, fold)
+		if !ok {
+			continue
+		}
+		if i > 0 || len(bases) == 1 || len(rel) == 0 || viewSensitive(strings.Join(rel, "/")) {
+			return b, rel, true
+		}
+		paths, cands := []string{p}, []string{b}
+		for _, w := range bases[1:] {
+			paths = append(paths, strings.TrimRight(strings.ReplaceAll(w, `\`, "/"), "/")+"/"+strings.Join(rel, "/"))
+			cands = append(cands, w)
+		}
+		var out struct {
+			Index int `json:"index"`
+		}
+		if err := s.hub.call(ctx, m, "file_stat", map[string]any{"paths": paths, "bases": cands}, &out); err == nil && out.Index > 0 && out.Index < len(cands) {
+			return cands[out.Index], rel, true
+		}
+		return b, rel, true
+	}
+	return "", nil, false
 }
 
 // readImageBase returns the folder of p when p is an image Claude read in session sid: an
@@ -305,7 +379,9 @@ func viewRPCFail(w http.ResponseWriter, err error, outside string) {
 		switch {
 		case strings.HasPrefix(msg, "outside"):
 			viewFail(w, 403, outside)
-		case msg == "does not exist" || msg == "not a file":
+		case msg == "does not exist":
+			viewFail(w, 404, viewNotFound)
+		case msg == "not a file":
 			viewFail(w, 404, msg)
 		case msg == "file too large":
 			viewFail(w, 413, msg)

@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"slices"
 	"sync"
 	"time"
 
@@ -32,6 +33,8 @@ type Registry struct {
 	index *transcriptIndex
 	// misses: session ids last searched for on disk without a hit (see transcriptOf)
 	misses map[string]time.Time
+	// wt finds each session's git worktrees off the hot path (nil: never looked up)
+	wt *worktreeFinder
 }
 
 type sub struct{ ch chan proto.Command }
@@ -45,6 +48,7 @@ func NewRegistry(machine string) *Registry {
 		commands: map[string]proto.SessionCommands{},
 		index:    loadTranscriptIndex("", maxIndexedTranscripts),
 		misses:   map[string]time.Time{},
+		wt:       newWorktreeFinder(),
 	}
 }
 
@@ -207,6 +211,12 @@ func (r *Registry) Upsert(si proto.SessionInfo) {
 			r.sessions[id] = other
 		}
 	}
+	// the daemon owns Worktrees: the cached list (refreshed below, never waited for here)
+	wtDir, wtFresh := worktreeDir(si.Root, si.Cwd), true
+	si.Worktrees = nil
+	if r.wt != nil {
+		si.Worktrees, wtFresh = r.wt.lookup(wtDir)
+	}
 	r.sessions[si.ID] = si
 	idx := r.index
 	r.mu.Unlock()
@@ -221,6 +231,30 @@ func (r *Registry) Upsert(si proto.SessionInfo) {
 		// After the upsert: if the hub applied the rename the old id no longer exists and
 		// nothing happens; if it did not, this way no phantom open session is left.
 		r.emit(proto.Envelope{Type: "session_gone", Machine: r.machine, Session: renamed}, false, dl)
+	}
+	if !wtFresh && wtDir != "" {
+		r.wt.refresh(wtDir, r.applyWorktrees)
+	}
+}
+
+// applyWorktrees stores a new worktree list on the live sessions of dir and re-sends the ones it changed.
+func (r *Registry) applyWorktrees(dir string, list []string) {
+	r.emu.Lock()
+	defer r.emu.Unlock()
+	r.mu.Lock()
+	var changed []proto.SessionInfo
+	for id, s := range r.sessions {
+		if worktreeDir(s.Root, s.Cwd) == dir && !slices.Equal(s.Worktrees, list) {
+			s.Worktrees = list
+			r.sessions[id] = s
+			changed = append(changed, s)
+		}
+	}
+	r.mu.Unlock()
+	dl := time.Now().Add(outBlockMax)
+	for _, s := range changed {
+		p, _ := json.Marshal(s)
+		r.emit(proto.Envelope{Type: "session_upsert", Machine: r.machine, Session: s.ID, Payload: p}, false, dl)
 	}
 }
 

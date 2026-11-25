@@ -116,13 +116,15 @@ export const hhmm = (ms: number) => { const d = new Date(ms); return `${pad2(d.g
  */
 const answer = 'w-full max-w-[70ch] break-words font-serif text-[15.5px] leading-[1.6] text-ink'
 
-export default function Transcript({ events, base = '', machine = '', sessionId = '', live, liveAgent, working, bgEnded, hasMore, autoLoad = true, loading, notice, onLoadMore, onAtBottom, onOpenFile, focus }: {
+export default function Transcript({ events, base = '', worktrees, machine = '', sessionId = '', live, liveAgent, working, bgEnded, hasMore, autoLoad = true, loading, notice, onLoadMore, onAtBottom, onOpenFile, focus }: {
   /** scrolls to a row (the inspector's changed files) */
   focus?: Focus
   autoLoad?: boolean
   events: Event[]
   /** session root, else cwd: decides which artifact cards can be opened */
   base?: string
+  /** the git worktrees of the session's repo: files in them open too */
+  worktrees?: readonly string[]
   machine?: string
   /** the session's id: pasted-image thumbnails ask the hub for links with it */
   sessionId?: string
@@ -143,7 +145,10 @@ export default function Transcript({ events, base = '', machine = '', sessionId 
   /** true when a background task no longer runs although no task_end was seen (it left the session's live items) */
   bgEnded?: (taskId: string) => boolean
 }) {
-  const items = useMemo(() => buildTimeline(events, base), [events, base])
+  // a stable list while its contents stay the same (every session update brings a new array)
+  const wtKey = (worktrees ?? []).join('\u0000')
+  const wts = useMemo(() => (wtKey ? wtKey.split('\u0000') : []), [wtKey])
+  const items = useMemo(() => buildTimeline(events, base, wts), [events, base, wts])
   const last = events[events.length - 1]
   const thinking = last?.kind === 'thinking'
   const indicator = live ? '' : thinking ? 'Thinking…' : working ? 'Working…' : ''
@@ -221,7 +226,7 @@ export default function Transcript({ events, base = '', machine = '', sessionId 
         </div>
       )
       case 'info': return <Message from="system" role="note" className="my-2 max-w-full text-center text-xs text-muted-foreground">{r.text}</Message>
-      case 'tool': case 'reads': return <ToolItem item={r} base={base} machine={machine} sessionId={sessionId} onOpenFile={onOpenFile} bgEnded={bgEnded} />
+      case 'tool': case 'reads': return <ToolItem item={r} base={base} worktrees={wts} machine={machine} sessionId={sessionId} onOpenFile={onOpenFile} bgEnded={bgEnded} />
       case 'agent': return <ToolItem item={r} live={liveAgent?.[r.id]} bgEnded={bgEnded} />
       case 'artifact': return <ArtifactCard item={r} machine={machine} base={base} onOpen={onOpenFile} />
       case 'command': return <CommandCard item={r} />
@@ -259,7 +264,7 @@ export default function Transcript({ events, base = '', machine = '', sessionId 
   }
 
   return (
-    <PathLinksProvider base={linkBase} onOpen={openPath}>
+    <PathLinksProvider base={linkBase} worktrees={wts} onOpen={openPath}>
     <Conversation className="min-h-0" initial="instant">
       <ConversationContent className="gap-0 px-3 py-2 sm:px-4">
         <VirtualRows rows={rows} render={renderRow} focus={focus} />

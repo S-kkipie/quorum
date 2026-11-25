@@ -6,7 +6,7 @@ import {
 import { Tool as ToolBox, ToolContent, ToolHeader } from '@/components/ai-elements/tool'
 import { cn } from '@/lib/utils'
 import { toolPartState, toolView, type ToolView } from '../../lib/elements'
-import { absPath, basename, inBase, type AgentItem, type OpenOpts, type ReadsItem, type ToolItem as Tool, type ToolKind } from '../../lib/timeline'
+import { absPath, basename, inBases, type AgentItem, type OpenOpts, type ReadsItem, type ToolItem as Tool, type ToolKind } from '../../lib/timeline'
 import ViewThumb from './ViewThumb'
 
 // Colour only where it carries meaning: changes to files in the accent, subagents and skills in the
@@ -221,7 +221,7 @@ function Row({ name, view, tint, Icon, right, nested, below, bg, children }: {
  * One timeline action as a short, collapsed row; tapping it shows the detail for its kind.
  * Handles single tools, merged reads and subagents.
  */
-export default function ToolItem({ item, live, base = '', machine = '', sessionId = '', onOpenFile, bgEnded }: {
+export default function ToolItem({ item, live, base = '', worktrees = [], machine = '', sessionId = '', onOpenFile, bgEnded }: {
   item: Tool | ReadsItem | AgentItem
   /** the task left the session's live items without a task_end */
   bgEnded?: (taskId: string) => boolean
@@ -229,6 +229,8 @@ export default function ToolItem({ item, live, base = '', machine = '', sessionI
   live?: string
   /** session base: decides whether an edited file can be opened */
   base?: string
+  /** the git worktrees of the session's repo: edited files in them open too */
+  worktrees?: readonly string[]
   /** the session's machine and id: read-image thumbnails ask the hub for links with them */
   machine?: string
   sessionId?: string
@@ -257,7 +259,7 @@ export default function ToolItem({ item, live, base = '', machine = '', sessionI
       </Row>
     )
   }
-  const canOpen = item.kind === 'edit' && item.state === 'ok' && !!item.file && OPENABLE_EDIT.test(item.file) && inBase(item.file, base)
+  const canOpen = item.kind === 'edit' && item.state === 'ok' && !!item.file && OPENABLE_EDIT.test(item.file) && inBases(item.file, base, worktrees)
   // same text as view.meta, coloured per side
   const diff = item.diff && (
     <span className="shrink-0 font-mono text-xs">
