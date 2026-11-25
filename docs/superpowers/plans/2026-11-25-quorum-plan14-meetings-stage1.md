@@ -90,6 +90,8 @@ after the builder check", which override the body.
   recording of 20–30 minutes, kept outside the repo.
 - [ ] **Transcription.** In WSL on the RTX 5080, compare faster-whisper `large-v3-turbo` with Parakeet
   `tdt-0.6b-v3`: speed, VRAM, and a by-eye error check on 5 passages.
+- [ ] **Diarization.** On public multi-speaker Spanish audio (3+ voices), compare pyannote (if the owner provides a
+  free Hugging Face token) and sherpa-onnx: speakers found, confusion on 5 sampled turns, time and VRAM.
 - [ ] **Summary.** With Ollama, compare `gemma3:12b` and `qwen3:14b` on the transcript. Score the decisions and
   actions against the passages.
 - [ ] **Record** the chosen defaults in the ledger. They become the plan's defaults.
@@ -153,6 +155,8 @@ after the builder check", which override the body.
   - It reads a job JSON on stdin and downloads the audio.
   - It converts with ffmpeg and splits channels when `channels_meta` says so.
   - The engine interface: `FasterWhisperEngine` and `FakeEngine` for tests. Transcription emits progress.
+  - A diarization step (engine from the spike) assigns stable `Speaker N` labels to segments by time overlap. For
+    two-channel audio only the `Others` channel is diarized; `Me` stays `Me`.
   - For `summarize_local`, it calls Ollama `/api/chat` with JSON format and `num_ctx` set, sectioned and merged.
   - It writes the result JSON on stdout.
 
@@ -180,6 +184,8 @@ after the builder check", which override the body.
   - project into `meeting_notes` with source `quorum`, keyed by meeting id;
   - fire the project briefing event.
 - Speaker names: `PUT /api/meetings/{id}/speakers {label: name}` → stored in `meeting_speakers`, applied when serving segments and passed to summaries.
+- `PUT /api/meetings/{id}/speakers {label: name}` stores names in `meeting_speakers`; they are applied when serving
+  segments and passed to summaries.
 - `POST /api/meetings/{id}/reprocess {provider?}` re-summarises, keeping actions that have an `issue_url`.
 - `POST /api/meetings/{id}/actions/{actionId}/issue` creates the issue (or returns the existing URL) through `gh` in
   the connector repo, with a body containing the action, the meeting title and date, and the Quorum meeting link.
@@ -216,6 +222,8 @@ after the builder check", which override the body.
     shows sections in order; mine first in actions; "Create issue" only for GitHub projects and opens the URL once it
     exists.
   - **Speakers:** each speaker label can be renamed inline; all its segments update; "Re-summarise with names" offered after a rename.
+  - **Speakers:** each speaker label can be renamed inline, all its segments update, and "Re-summarise with names" is
+    offered after a rename.
   - **Transcript:** search highlights matches, and a click seeks the audio (`currentTime`).
   - **Settings:** the key is never echoed.
   - **Layout:** 320 px with no overflow, and the initial JS budget test.
