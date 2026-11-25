@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -302,6 +303,9 @@ func pruneMeetingFiles(st *store.Store, audioDir string, now time.Time) {
 
 // pruneOrphanAudio removes the audio files (<meeting id><ext> in audioDir) older than orphanAudioAge whose
 // meeting does not exist and that no upload will create.
+// meetingIDRe matches the store's ids (12 random bytes, hex): only such files are meeting audio.
+var meetingIDRe = regexp.MustCompile(`^[0-9a-f]{24}$`)
+
 func pruneOrphanAudio(st *store.Store, audioDir string, now time.Time) {
 	if audioDir == "" {
 		return
@@ -326,7 +330,11 @@ func pruneOrphanAudio(st *store.Store, audioDir string, now time.Time) {
 		if err != nil || now.Sub(info.ModTime()) < orphanAudioAge {
 			continue
 		}
-		used, err := st.MeetingIDInUse(strings.TrimSuffix(name, filepath.Ext(name)))
+		stem := strings.TrimSuffix(name, filepath.Ext(name))
+		if !meetingIDRe.MatchString(stem) {
+			continue // not a meeting's audio: never touch it
+		}
+		used, err := st.MeetingIDInUse(stem)
 		if err != nil || used {
 			continue
 		}

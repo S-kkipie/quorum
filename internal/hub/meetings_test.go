@@ -482,17 +482,18 @@ func TestMeetingRetentionRemovesOrphanAudio(t *testing.T) {
 	orphan := filepath.Join(f.dir, "0123456789abcdef01234567.m4a")
 	young := filepath.Join(f.dir, "aaaaaaaaaaaaaaaaaaaaaaaa.ogg")
 	other := filepath.Join(f.dir, "notes.txt")
-	for _, p := range []string{pending, orphan, young, other} {
+	song := filepath.Join(f.dir, "song.mp3") // audio that is not a meeting's: never removed
+	for _, p := range []string{pending, orphan, young, other, song} {
 		require.NoError(t, os.WriteFile(p, []byte("x"), 0o600))
 	}
 	old := time.Now().Add(-48 * time.Hour)
-	for _, p := range []string{kept, pending, orphan, other} {
+	for _, p := range []string{kept, pending, orphan, other, song} {
 		require.NoError(t, os.Chtimes(p, old, old))
 	}
 	pruneMeetingFiles(f.st, f.dir, time.Now())
 	_, err = os.Stat(orphan)
 	require.True(t, errors.Is(err, os.ErrNotExist), "an old file no meeting names is removed")
-	for _, p := range []string{kept, pending, young, other} {
+	for _, p := range []string{kept, pending, young, other, song} {
 		_, err = os.Stat(p)
 		require.NoError(t, err, p)
 	}
