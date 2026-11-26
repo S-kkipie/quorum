@@ -43,6 +43,7 @@ func Serve(ctx context.Context, cfg Config) error {
 	}
 	go runUploadSweep(ctx)
 	defer meetingJobs.shutdown() // a meeting worker never outlives the daemon
+	defer liveWorkers.shutdown()
 	SweepMeetingTmp()            // job folders of workers killed with an earlier daemon
 	lk := &linker{reg: reg, parent: ctx}
 	lk.start(cfg)

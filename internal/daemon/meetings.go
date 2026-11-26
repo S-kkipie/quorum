@@ -250,6 +250,15 @@ func (s *meetingSupervisor) start(hubURL, ollamaURL string, reg *Registry, job p
 	if !jobIDRe.MatchString(job.JobID) || job.Attempt < 1 || job.ResultURL == "" {
 		return errors.New("invalid meeting job")
 	}
+	if job.Step == proto.MeetingStepTranscribeChunk {
+		// chunk jobs go to the resident worker, never while a full job runs
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.cur != nil {
+			return errMeetingBusy
+		}
+		return liveWorkers.run(hubURL, reg, job)
+	}
 	for {
 		s.mu.Lock()
 		cur := s.cur
@@ -292,6 +301,8 @@ func (s *meetingSupervisor) start(hubURL, ollamaURL string, reg *Registry, job p
 	if err != nil {
 		return err
 	}
+	// a full job never runs beside the resident live worker (one GPU user at a time)
+	liveWorkers.stop()
 	// nothing runs now: whatever is left in tmp/ belongs to a worker that was killed with the daemon
 	sweepMeetingTmp(dir)
 	// the daemon owns the job's folder (the downloaded recording and its WAV files), so it is removed
@@ -383,6 +394,9 @@ type workerLine struct {
 	Message string          `json:"message"`
 	Error   string          `json:"error"`
 	Result  json.RawMessage `json:"result"`
+	// JobID and Attempt tag the lines of the resident live worker.
+	JobID   string `json:"jobId"`
+	Attempt int    `json:"attempt"`
 }
 
 func (s *meetingSupervisor) supervise(run *meetingRun, cmd *exec.Cmd, stdout io.Reader, stderr *tailBuffer, reg *Registry, resultURL string) {
@@ -626,6 +640,7 @@ func init() {
 		if err := json.Unmarshal(params, &c); err != nil {
 			return nil, err
 		}
-		return map[string]bool{"cancelled": meetingJobs.cancelJob(c.JobID, c.Attempt)}, nil
+		cancelled := meetingJobs.cancelJob(c.JobID, c.Attempt) || liveWorkers.cancelJob(c.JobID, c.Attempt)
+		return map[string]bool{"cancelled": cancelled}, nil
 	}
 }
