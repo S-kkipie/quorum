@@ -31,6 +31,19 @@ The summary prompts and repair rules live in prompts.json next to this file; the
 the ccapi and OpenAI-compatible providers, and tests on both sides check the shared cases in
 testdata/summary_cases.json.
 
+Live mode (--live): a resident worker for live meetings. quorumd writes one transcribe_chunk job per stdin
+line, in the same shape as above, with settings {language, model, prompt, fromMs, contextMs, liveBytes}. Every
+output line carries the job's "jobId" and "attempt", and each job ends with its own result or error line; the
+process keeps running and loads Whisper once (again only when settings.model changes). At stdin EOF it frees
+the model and exits 0.
+- The audio is the live meeting's growing WebM/Opus file. The worker keeps a mirror of it in the job's workDir
+  (<workDir>/<meetingId>.webm) and fetches only the bytes it lacks, up to liveBytes, with an HTTP Range request.
+- It decodes the header plus the clusters from the last one at or before fromMs - contextMs, up to the last
+  complete block, and transcribes that. Words whose midpoint is before fromMs (the context) are dropped, and a
+  last segment ending within 1 s of the decoded end is held back for the next chunk.
+- The result is {segments: [{start_ms, end_ms, speaker, text}] (absolute times), through_ms, language}.
+- liveBytes 0 is a warm-up: it only loads the model and returns no segments, with through_ms = fromMs.
+
 Other modes (used by the setup): --check-cuda, --download-model NAME, --version.
 
 The heavy libraries (faster_whisper, sherpa_onnx, numpy, soundfile) are imported lazily, so the logic can
@@ -82,14 +95,16 @@ class WorkerError(Exception):
 
 
 class Emitter:
-    """Writes the protocol's JSON lines; progress is only written when it moves."""
+    """Writes the protocol's JSON lines; progress is only written when it moves. Every line carries the tags
+    (in live mode, the job's jobId and attempt)."""
 
-    def __init__(self, out=None):
+    def __init__(self, out=None, tags: dict | None = None):
         self.out = out or sys.stdout
+        self.tags = dict(tags or {})
         self.last = None
 
     def _write(self, obj):
-        self.out.write(json.dumps(obj, ensure_ascii=False) + "\n")
+        self.out.write(json.dumps({**obj, **self.tags}, ensure_ascii=False) + "\n")
         self.out.flush()
 
     def progress(self, pct: float, stage: str):
@@ -1145,6 +1160,354 @@ def run_summarize(job: dict, emit: Emitter, chat: Callable[[list[dict]], str] | 
 
 
 # ---------------------------------------------------------------------------------------------------
+# live mode (transcribe_chunk)
+#
+# A live meeting's audio is one growing WebM/Opus file (Chrome's MediaRecorder: a Segment and Clusters of
+# unknown size). The worker keeps a mirror of it in the job's work folder, fetches only the new bytes with
+# Range, and for each chunk decodes the header plus the clusters from the last one at or before
+# fromMs - contextMs, up to the last complete block. Cluster timecodes count from the recorder's start, so the
+# times are absolute.
+
+STEP_TRANSCRIBE_CHUNK = "transcribe_chunk"
+LIVE_CONTEXT_MS = 2000
+LIVE_HOLD_MS = 1000
+MEETING_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
+NOT_WEBM = "The live recording is not WebM audio."
+
+EBML_ID = 0x1A45DFA3
+SEGMENT_ID = 0x18538067
+INFO_ID = 0x1549A966
+TIMECODE_SCALE_ID = 0x2AD7B1
+TRACKS_ID = 0x1654AE6B
+CLUSTER_ID = 0x1F43B675
+TIMECODE_ID = 0xE7
+SIMPLE_BLOCK_ID = 0xA3
+BLOCK_GROUP_ID = 0xA0
+CUES_ID = 0x1C53BB6B
+# the Segment-level ids that end an unknown-size Cluster (SeekHead, Tags, Chapters and Attachments too)
+SEGMENT_LEVEL_IDS = {CLUSTER_ID, CUES_ID, INFO_ID, TRACKS_ID, 0x114D9B74, 0x1254C367, 0x1043A770, 0x1941A469,
+                     EBML_ID, SEGMENT_ID}
+UNKNOWN_SIZE = bytes.fromhex("01FFFFFFFFFFFFFF")
+
+
+@dataclass
+class WebmIndex:
+    header_end: int  # the offset of the first cluster (everything before it is the header)
+    clusters: list[tuple[int, int]]  # (byte offset, timecode in ms) of each top-level cluster
+    end: int  # the offset after the last complete block
+
+
+def _ebml_element(data, pos: int) -> tuple[int, int, int] | None:
+    """(id, data start, data size) of the element at pos, size -1 when unknown; None when the element's header
+    is cut off or invalid."""
+    n = len(data)
+    if pos >= n:
+        return None
+    first = data[pos]
+    width = 1
+    while width <= 4 and not first & (0x80 >> (width - 1)):
+        width += 1
+    if width > 4 or pos + width > n:
+        return None
+    eid = int.from_bytes(data[pos:pos + width], "big")
+    p = pos + width
+    if p >= n:
+        return None
+    first = data[p]
+    length = 1
+    while length <= 8 and not first & (0x80 >> (length - 1)):
+        length += 1
+    if length > 8 or p + length > n:
+        return None
+    size = first & (0xFF >> length)
+    for b in data[p + 1:p + length]:
+        size = (size << 8) | b
+    if size == (1 << (7 * length)) - 1:
+        size = -1
+    return eid, p + length, size
+
+
+def _uint(data, start: int, size: int) -> int:
+    return int.from_bytes(data[start:start + size], "big") if size > 0 else 0
+
+
+def _scan_cluster(data, start: int, stop: int, unknown: bool) -> tuple[int | None, int, int, bool]:
+    """Walks a cluster's children from start to stop: (timecode, end of its last complete block or 0, the
+    offset after the cluster, whether the cluster is complete)."""
+    tc, block_end, pos = None, 0, start
+    while pos < stop:
+        el = _ebml_element(data, pos)
+        if el is None:
+            return tc, block_end, pos, False
+        eid, s, size = el
+        if unknown and eid in SEGMENT_LEVEL_IDS:
+            return tc, block_end, pos, True
+        if size < 0 or s + size > stop:
+            return tc, block_end, pos, False
+        if eid == TIMECODE_ID:
+            tc = _uint(data, s, size)
+        elif eid in (SIMPLE_BLOCK_ID, BLOCK_GROUP_ID):
+            block_end = s + size
+        pos = s + size
+    return tc, block_end, pos, stop < len(data) or not unknown
+
+
+def _segment_header(data) -> tuple[int, int, int]:
+    """(Segment element offset, Segment data start, Segment data end) of a WebM file."""
+    el = _ebml_element(data, 0)
+    if el is None or el[0] != EBML_ID or el[2] < 0:
+        raise WorkerError(NOT_WEBM)
+    seg = el[1] + el[2]
+    el = _ebml_element(data, seg)
+    if el is None or el[0] != SEGMENT_ID:
+        raise WorkerError(NOT_WEBM)
+    end = len(data) if el[2] < 0 else min(len(data), el[1] + el[2])
+    return seg, el[1], end
+
+
+def webm_index(data) -> WebmIndex:
+    """The top-level clusters of a WebM file (or of a prefix of one), with their timecodes in ms."""
+    _, pos, seg_end = _segment_header(data)
+    scale = 1_000_000
+    raw: list[tuple[int, int]] = []
+    header_end, end = None, 0
+    while pos < seg_end:
+        el = _ebml_element(data, pos)
+        if el is None:
+            break
+        eid, start, size = el
+        if eid == CLUSTER_ID:
+            if header_end is None:
+                header_end = pos
+            stop = seg_end if size < 0 else min(seg_end, start + size)
+            tc, block_end, nxt, complete = _scan_cluster(data, start, stop, size < 0)
+            if tc is None:
+                break
+            raw.append((pos, tc))
+            end = max(end, block_end)
+            if not complete:
+                break
+            pos = nxt if size < 0 else start + size
+            continue
+        if size < 0:
+            break
+        if eid == INFO_ID:
+            p, info_end = start, min(seg_end, start + size)
+            while p < info_end:
+                child = _ebml_element(data, p)
+                if child is None or child[2] < 0:
+                    break
+                if child[0] == TIMECODE_SCALE_ID and child[1] + child[2] <= len(data):
+                    scale = _uint(data, child[1], child[2]) or 1_000_000
+                p = child[1] + child[2]
+        pos = start + size
+    if header_end is None:
+        header_end = min(pos, len(data))
+    clusters = [(off, tc * scale // 1_000_000) for off, tc in raw]
+    return WebmIndex(header_end, clusters, max(end, header_end) if clusters else header_end)
+
+
+def fetch_range(url: str, dest: Path, start: int, end: int) -> None:
+    """Appends the bytes [start, end) of url to dest (which holds the first `start` bytes). A server that
+    ignores Range (200) rewrites dest from the body's first `end` bytes."""
+    if urllib.parse.urlsplit(url).scheme not in ("http", "https"):
+        raise WorkerError("The recording's URL is not an http(s) URL; refused.")
+    if end <= start:
+        return
+    if end > MAX_DOWNLOAD:
+        raise WorkerError("The recording is larger than the 400 MB limit.")
+    have = dest.stat().st_size if dest.exists() else 0
+    if have < start:
+        raise WorkerError("The local copy of the live recording is shorter than expected.")
+    req = urllib.request.Request(url, headers={"Range": f"bytes={start}-{end - 1}"})
+    opener = urllib.request.build_opener(_SameHostRedirects)
+    try:
+        with opener.open(req, timeout=60) as r:
+            if r.status == 206:
+                if not (r.headers.get("Content-Range") or "").startswith(f"bytes {start}-"):
+                    raise WorkerError("The hub answered a different part of the live recording.")
+                f, need = open(dest, "r+b" if dest.exists() else "wb"), end - start
+                f.seek(start)
+                f.truncate()
+            else:
+                f, need = open(dest, "wb"), end
+            got = 0
+            with f:
+                while got < need:
+                    chunk = r.read(min(1 << 20, need - got))
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    got += len(chunk)
+            if got < need:
+                raise WorkerError("The hub sent less of the live recording than expected.")
+    except urllib.error.HTTPError as e:
+        raise WorkerError(f"Could not download the live recording from the hub (HTTP {e.code}).") from e
+    except (urllib.error.URLError, OSError) as e:
+        raise WorkerError(f"Could not download the live recording from the hub: {e}") from e
+
+
+def _wav_ms(path: Path) -> int:
+    import wave
+
+    with wave.open(str(path), "rb") as f:
+        return f.getnframes() * 1000 // max(f.getframerate(), 1)
+
+
+def live_audio(mirror: Path, from_ms: int, context_ms: int, workdir: Path) -> tuple[Path | None, int, int]:
+    """The WAV of the mirror's audio from (from_ms - context_ms) to its last complete block, with its absolute
+    start and end in ms; the WAV is None when nothing lies after from_ms."""
+    import mmap
+
+    with open(mirror, "rb") as f:
+        if os.fstat(f.fileno()).st_size == 0:
+            raise WorkerError(NOT_WEBM)
+        with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as data:
+            idx = webm_index(data)
+            if not idx.clusters or idx.end <= idx.clusters[0][0]:
+                return None, from_ms, from_ms
+            target = max(0, from_ms - context_ms)
+            off, tc = idx.clusters[0]
+            for c in idx.clusters:
+                if c[1] <= target:
+                    off, tc = c
+            seg, seg_data, _ = _segment_header(data)
+            chunk = workdir / "live-chunk.webm"
+            with open(chunk, "wb") as out:
+                # the Segment's size becomes unknown: the chunk is shorter than the file it was cut from
+                out.write(data[:seg] + data[seg:seg_data][:4] + UNKNOWN_SIZE + data[seg_data:idx.header_end])
+                out.write(data[off:idx.end])
+    skip_ms = max(0, target - tc)
+    wav = workdir / "live-chunk.wav"
+    try:
+        _run(["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-protocol_whitelist", "file,pipe",
+              "-i", str(chunk), "-vn", "-ss", f"{skip_ms / 1000:.3f}", "-ac", "1", "-ar", str(SAMPLE_RATE),
+              "-c:a", "pcm_s16le", str(wav)], "ffmpeg could not convert the live recording")
+    finally:
+        chunk.unlink(missing_ok=True)
+    start_ms = tc + skip_ms
+    end_ms = start_ms + _wav_ms(wav)
+    if end_ms <= from_ms:
+        wav.unlink(missing_ok=True)
+        return None, from_ms, from_ms
+    return wav, start_ms, end_ms
+
+
+def keep_new(segs: list[Segment], start_ms: int, from_ms: int, end_ms: int, hold_ms: int = LIVE_HOLD_MS,
+             final: bool = False) -> tuple[list[Segment], int]:
+    """The new part of a chunk's segments, in absolute times, and the time transcribed through. A word whose
+    midpoint is before from_ms belongs to the context and is dropped (the text is rebuilt from the words left).
+    A last segment ending within hold_ms of end_ms may be cut, so it is held back for the next chunk (through_ms
+    is then its start), unless nothing else is new or final is set."""
+    off = start_ms / 1000
+    lo = from_ms / 1000
+    out: list[Segment] = []
+    for s in segs:
+        ws = [(a + off, b + off, t) for a, b, t in s.words if t.strip()]
+        if ws:
+            ws = [x for x in ws if (x[0] + x[1]) / 2 >= lo]
+            if not ws:
+                continue
+            text = "".join(x[2] for x in ws).strip()
+            out.append(Segment(ws[0][0], max(ws[-1][1], ws[0][0]), text, s.speaker, ws))
+        else:
+            a, b = s.start + off, s.end + off
+            if (a + b) / 2 >= lo and s.text.strip():
+                out.append(Segment(a, b, s.text.strip(), s.speaker))
+    out = [s for s in out if s.text]
+    through = end_ms
+    if not final and len(out) > 1 and out[-1].end * 1000 > end_ms - hold_ms:
+        held = out.pop()
+        through = max(from_ms, int(round(held.start * 1000)))
+    return out, through
+
+
+def run_chunk(job: dict, emit: Emitter, engine) -> dict:
+    settings = job.get("settings") or {}
+    meeting = job.get("meetingId")
+    if not isinstance(meeting, str) or not MEETING_ID_RE.fullmatch(meeting):
+        raise WorkerError("The chunk job has an invalid meeting id; update quorumd on this machine.")
+    work = Path(job.get("workDir") or "")
+    if not job.get("workDir") or not work.is_dir():
+        raise WorkerError("The job has no work folder; update quorumd on this machine.")
+    language = settings.get("language") or None
+    if language == "auto":
+        language = None
+    prompt = settings.get("prompt") or None
+    from_ms = max(0, int(settings.get("fromMs") or 0))
+    context_ms = max(0, int(settings.get("contextMs", LIVE_CONTEXT_MS) or 0))
+    live_bytes = max(0, int(settings.get("liveBytes") or 0))
+    nothing = {"segments": [], "through_ms": from_ms, "language": language or ""}
+    if live_bytes == 0:
+        return nothing  # warm-up: the engine is loaded, nothing to transcribe yet
+    mirror = work / f"{meeting}.webm"
+    have = mirror.stat().st_size if mirror.exists() else 0
+    if have > live_bytes:
+        mirror.unlink()
+        have = 0
+    if have < live_bytes:
+        fetch_range(job.get("audioURL") or "", mirror, have, live_bytes)
+    wav, start_ms, end_ms = live_audio(mirror, from_ms, context_ms, work)
+    if wav is None:
+        return nothing
+    try:
+        audio = load_wav(wav)
+    finally:
+        wav.unlink(missing_ok=True)
+    segs, lang = engine.transcribe(audio, language, lambda _f: None, prompt)
+    kept, through = keep_new(segs, start_ms, from_ms, end_ms)
+    return {
+        "segments": [{"start_ms": int(round(s.start * 1000)), "end_ms": int(round(s.end * 1000)),
+                      "speaker": s.speaker, "text": s.text} for s in kept],
+        "through_ms": through,
+        "language": lang or language or "",
+    }
+
+
+def _live_engine(model: str):
+    return FakeEngine() if fakes_enabled() else FasterWhisperEngine(model)
+
+
+def run_live(lines: Iterable[str], out, engine_factory=None) -> int:
+    """The resident worker: one JSON job per line, every output line tagged with the job's jobId and attempt.
+    The engine (engine_factory(model)) is created on the first job and again only when the model changes; a
+    failed job becomes an error line and the loop goes on. At EOF the engine is closed."""
+    factory = engine_factory or _live_engine
+    engine, model = None, None
+    try:
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            emit = Emitter(out)
+            try:
+                job = json.loads(line)
+                if not isinstance(job, dict):
+                    raise WorkerError("The job could not be read (not a JSON object).")
+                emit = Emitter(out, tags={"jobId": job.get("jobId") or "", "attempt": job.get("attempt") or 0})
+                if job.get("step") != STEP_TRANSCRIBE_CHUNK:
+                    raise WorkerError(f"Unknown live step {job.get('step')!r}; update quorumd on this machine.")
+                want = (job.get("settings") or {}).get("model") or WHISPER_MODEL
+                if engine is None or want != model:
+                    if engine is not None:
+                        old, engine = engine, None
+                        old.close()
+                    emit.log(f"loading the Whisper model {want}")
+                    engine, model = factory(want), want
+                emit.result(run_chunk(job, emit, engine))
+            except WorkerError as e:
+                emit.error(str(e))
+            except json.JSONDecodeError:
+                emit.error("The job could not be read (invalid JSON).")
+            except Exception as e:  # noqa: BLE001 - every failure ends as a readable error line
+                emit.error(f"The meeting worker failed: {e.__class__.__name__}: {e}")
+    finally:
+        if engine is not None:
+            engine.close()
+    return 0
+
+
+# ---------------------------------------------------------------------------------------------------
 # setup helpers
 
 
@@ -1211,6 +1574,8 @@ def main(argv: list[str]) -> int:
         name = argv[i + 1] if i + 1 < len(argv) else WHISPER_MODEL
         print(download_model(name))
         return 0
+    if "--live" in argv:
+        return run_live(sys.stdin, sys.stdout)
     emit = Emitter()
     try:
         job = json.loads(sys.stdin.read() or "{}")
