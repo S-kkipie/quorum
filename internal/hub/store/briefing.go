@@ -67,6 +67,7 @@ func migrateBriefing(s *Store) error {
 		{"projects", "where_left_off", "TEXT NOT NULL DEFAULT ''"},
 		{"projects", "where_left_off_at", "INTEGER NOT NULL DEFAULT 0"},
 		{"projects", "where_left_off_sessions", "INTEGER NOT NULL DEFAULT 0"},
+		{"projects", "glossary", "TEXT NOT NULL DEFAULT ''"},
 		{"project_visits", "last_at", "INTEGER NOT NULL DEFAULT 0"},
 		{"meeting_notes", "first_seen_at", "INTEGER NOT NULL DEFAULT 0"},
 	} {

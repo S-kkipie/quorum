@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/S-kkipie/quorum/internal/hub/connectors"
 	"github.com/S-kkipie/quorum/internal/hub/store"
@@ -163,6 +164,7 @@ func (s *Server) handlePatchProject(w http.ResponseWriter, r *http.Request) {
 		Name        *string `json:"name"`
 		WorkspaceID *string `json:"workspaceId"`
 		RepoURL     *string `json:"repoURL"`
+		Glossary    *string `json:"glossary"`
 		Connector   *struct {
 			Kind        *string            `json:"kind"`
 			Settings    *map[string]string `json:"settings"`
@@ -197,6 +199,13 @@ func (s *Server) handlePatchProject(w http.ResponseWriter, r *http.Request) {
 	}
 	if b.RepoURL != nil {
 		cur.RepoURL = store.StripRepoUserinfo(*b.RepoURL)
+	}
+	if b.Glossary != nil {
+		if utf8.RuneCountInString(*b.Glossary) > maxGlossaryChars {
+			apiErr(w, 400, "glossary is longer than 2000 characters")
+			return
+		}
+		cur.Glossary = *b.Glossary
 	}
 	if c := b.Connector; c != nil {
 		if c.Kind != nil {

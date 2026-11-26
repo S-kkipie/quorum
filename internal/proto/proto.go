@@ -520,6 +520,7 @@ type Project struct {
 	Progress    Progress        `json:"progress"`
 	SyncError   string          `json:"syncError"`
 	SyncedAt    int64           `json:"syncedAt"`
+	Glossary    string          `json:"glossary"`
 }
 
 type Checkout struct {

@@ -600,6 +600,7 @@ export interface Project {
   progress: Progress;
   syncError: string;
   syncedAt: number /* int64 */;
+  glossary: string;
 }
 export interface Checkout {
   id: string;

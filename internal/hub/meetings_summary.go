@@ -340,6 +340,9 @@ func (s *Server) glossary(m proto.Meeting, names map[string]string) []string {
 	if m.ProjectID != "" {
 		if p, err := s.st.GetProject(m.ProjectID); err == nil {
 			add(store.ProjectPerson(p))
+			for _, t := range glossaryTerms(p.Glossary) {
+				add(t)
+			}
 		}
 	}
 	for _, a := range s.meetingSettings().Aliases {

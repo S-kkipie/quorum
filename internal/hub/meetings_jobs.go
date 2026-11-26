@@ -301,7 +301,13 @@ func transcribeSettings(s *Server, _ store.MeetingJob, m proto.Meeting) (string,
 	if lang == "" {
 		lang = s.defaultMeetingLanguage()
 	}
-	b, err := json.Marshal(proto.MeetingTranscribeSettings{Language: lang, Channels: m.Channels, Speakers: m.SpeakerCount, Model: defaultWhisperModel})
+	prompt := ""
+	if m.ProjectID != "" {
+		if p, err := s.st.GetProject(m.ProjectID); err == nil {
+			prompt = whisperPrompt(glossaryTerms(p.Glossary))
+		}
+	}
+	b, err := json.Marshal(proto.MeetingTranscribeSettings{Language: lang, Channels: m.Channels, Speakers: m.SpeakerCount, Model: defaultWhisperModel, Prompt: prompt})
 	return string(b), err
 }
 

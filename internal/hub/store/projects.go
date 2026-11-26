@@ -181,7 +181,7 @@ func affected(res sql.Result, err error) error {
 
 // ---- Projects ----
 
-const projectCols = `p.id,p.workspace_id,p.name,p.repo_url,p.kind,p.settings,p.interval_min,p.summary,p.summary_at,p.progress_done,p.progress_total,p.sync_error,p.synced_at,EXISTS(SELECT 1 FROM project_tokens t WHERE t.project_id=p.id)`
+const projectCols = `p.id,p.workspace_id,p.name,p.repo_url,p.kind,p.settings,p.interval_min,p.summary,p.summary_at,p.progress_done,p.progress_total,p.sync_error,p.synced_at,EXISTS(SELECT 1 FROM project_tokens t WHERE t.project_id=p.id),p.glossary`
 
 type scanner interface{ Scan(...any) error }
 
@@ -189,7 +189,7 @@ func scanProject(r scanner) (proto.Project, error) {
 	var p proto.Project
 	var settings string
 	err := r.Scan(&p.ID, &p.WorkspaceID, &p.Name, &p.RepoURL, &p.Connector.Kind, &settings, &p.Connector.IntervalMin,
-		&p.Summary, &p.SummaryAt, &p.Progress.Done, &p.Progress.Total, &p.SyncError, &p.SyncedAt, &p.Connector.HasToken)
+		&p.Summary, &p.SummaryAt, &p.Progress.Done, &p.Progress.Total, &p.SyncError, &p.SyncedAt, &p.Connector.HasToken, &p.Glossary)
 	if err != nil {
 		return p, err
 	}
@@ -218,8 +218,8 @@ func (s *Store) CreateProject(p proto.Project) (proto.Project, error) {
 	p.RepoURL = StripRepoUserinfo(p.RepoURL)
 	p.ID = newID()
 	p.Connector.HasToken = false
-	_, err := s.db.Exec(`INSERT INTO projects(id,workspace_id,name,repo_url,kind,settings,interval_min) VALUES(?,?,?,?,?,?,?)`,
-		p.ID, p.WorkspaceID, p.Name, p.RepoURL, p.Connector.Kind, settingsJSON(p.Connector.Settings), p.Connector.IntervalMin)
+	_, err := s.db.Exec(`INSERT INTO projects(id,workspace_id,name,repo_url,kind,settings,interval_min,glossary) VALUES(?,?,?,?,?,?,?,?)`,
+		p.ID, p.WorkspaceID, p.Name, p.RepoURL, p.Connector.Kind, settingsJSON(p.Connector.Settings), p.Connector.IntervalMin, p.Glossary)
 	if p.Connector.Settings == nil {
 		p.Connector.Settings = map[string]string{}
 	}
@@ -260,8 +260,8 @@ func (s *Store) UpdateProject(p proto.Project) error {
 		p.Connector.Kind = "none"
 	}
 	p.RepoURL = StripRepoUserinfo(p.RepoURL)
-	res, err := s.db.Exec(`UPDATE projects SET workspace_id=?,name=?,repo_url=?,kind=?,settings=?,interval_min=? WHERE id=?`,
-		p.WorkspaceID, p.Name, p.RepoURL, p.Connector.Kind, settingsJSON(p.Connector.Settings), p.Connector.IntervalMin, p.ID)
+	res, err := s.db.Exec(`UPDATE projects SET workspace_id=?,name=?,repo_url=?,kind=?,settings=?,interval_min=?,glossary=? WHERE id=?`,
+		p.WorkspaceID, p.Name, p.RepoURL, p.Connector.Kind, settingsJSON(p.Connector.Settings), p.Connector.IntervalMin, p.Glossary, p.ID)
 	return affected(res, err)
 }
 
@@ -295,8 +295,8 @@ func (s *Store) UpdateProjectResetConnector(p proto.Project) (out ConnectorReset
 			tx.Rollback()
 		}
 	}()
-	res, err := tx.Exec(`UPDATE projects SET workspace_id=?,name=?,repo_url=?,kind=?,settings=?,interval_min=?,synced_at=0,sync_error='' WHERE id=?`,
-		p.WorkspaceID, p.Name, p.RepoURL, p.Connector.Kind, settingsJSON(p.Connector.Settings), p.Connector.IntervalMin, p.ID)
+	res, err := tx.Exec(`UPDATE projects SET workspace_id=?,name=?,repo_url=?,kind=?,settings=?,interval_min=?,glossary=?,synced_at=0,sync_error='' WHERE id=?`,
+		p.WorkspaceID, p.Name, p.RepoURL, p.Connector.Kind, settingsJSON(p.Connector.Settings), p.Connector.IntervalMin, p.Glossary, p.ID)
 	if err = affected(res, err); err != nil {
 		return out, err
 	}
