@@ -19,6 +19,8 @@ export interface SliceUploader {
   pending(): number
   /** The hub's message once the upload stopped on a permanent error; '' otherwise. */
   error(): string
+  /** The last transient failure (e.g. "disk full", "network"), kept while retrying and cleared on the next success. */
+  lastError(): string
   subscribe(fn: () => void): () => void
 }
 
@@ -40,6 +42,7 @@ export function createSliceUploader(put: (seq: number, b: Blob) => Promise<unkno
   const subs = new Set<() => void>()
   const waiters: Array<{ ok: () => void; fail: (e: Error) => void }> = []
   let err = ''
+  let last = ''
   let running = false
   const emit = () => subs.forEach(fn => { try { fn() } catch { /* a listener must not break the upload */ } })
   const settle = () => {
@@ -56,12 +59,16 @@ export function createSliceUploader(put: (seq: number, b: Blob) => Promise<unkno
         try {
           await put(seq, queue.get(seq)!)
         } catch (e) {
-          if (!retryable(e)) { err = e instanceof Error ? e.message : String(e); emit(); break }
+          const msg = e instanceof Error ? e.message : String(e)
+          if (!retryable(e)) { err = msg; last = ''; emit(); break }
+          last = msg
+          emit()
           await sleep(wait)
           wait = Math.min(wait * 2, BACKOFF_MAX_MS)
           continue
         }
         queue.delete(seq)
+        last = ''
         wait = BACKOFF_FIRST_MS
         emit()
       }
@@ -79,6 +86,7 @@ export function createSliceUploader(put: (seq: number, b: Blob) => Promise<unkno
     },
     pending: () => queue.size,
     error: () => err,
+    lastError: () => last,
     subscribe(fn) { subs.add(fn); return () => { subs.delete(fn) } },
   }
 }
@@ -96,7 +104,11 @@ async function requestWake() {
   try {
     const wl = (navigator as { wakeLock?: { request(t: 'screen'): Promise<Sentinel> } }).wakeLock
     if (!wl) return
-    sentinel = await wl.request('screen')
+    const s = await wl.request('screen')
+    if (!wantAwake) { await s.release().catch(() => {}); return }
+    const old = sentinel
+    sentinel = s
+    if (old && old !== s) await old.release().catch(() => {})
   } catch { /* denied or not supported: the screen may lock */ }
 }
 
@@ -135,6 +147,8 @@ export interface LiveRecording {
   state: RecorderState
   error: string
   pending: number
+  /** The uploader's last transient error while it retries ("" when none); cleared on the next stored slice. */
+  lastError: string
   subscribe(fn: () => void): () => void
   stop(): Promise<Meeting>
 }
@@ -144,6 +158,9 @@ let current: LiveRecording | null = null
 export const currentRecording = (): LiveRecording | null => current
 
 const MIME = 'audio/webm;codecs=opus'
+
+/** Best effort: ends a live meeting that never recorded, so it does not sit in `live` until the hub's idle stop. */
+const abandon = (id: string) => { void stopLiveMeeting(id, { slices: 0 }).catch(() => {}) }
 
 /**
  * Checks the secure context, Opus support and the microphone, in that order, and only then creates the live
@@ -181,6 +198,7 @@ export async function startLiveRecording(opts: { projectId?: string; title?: str
     rec = new MediaRecorder(stream, { mimeType: MIME, audioBitsPerSecond: 48000 })
   } catch (e) {
     releaseTracks()
+    abandon(id)
     throw e
   }
   let slices = 0
@@ -188,7 +206,7 @@ export async function startLiveRecording(opts: { projectId?: string; title?: str
   let stopping: Promise<Meeting> | null = null
 
   const r: LiveRecording = {
-    meetingId: id, startedAt, state: 'recording', error: '', pending: 0,
+    meetingId: id, startedAt, state: 'recording', error: '', pending: 0, lastError: '',
     subscribe(fn) { subs.add(fn); return () => { subs.delete(fn) } },
     stop() { return stopping ??= doStop() },
   }
@@ -243,12 +261,25 @@ export async function startLiveRecording(opts: { projectId?: string; title?: str
   })
   uploader.subscribe(() => {
     r.pending = uploader.pending()
+    r.lastError = uploader.lastError()
     if (uploader.error()) fail(uploader.error())
     else emit()
   })
+  // the recorder or the microphone ended by itself (call, unplugged, permission revoked): release everything and
+  // let what was captured finish uploading; the meeting stays live on the hub for "Stop and process"
+  const interrupted = () => { if (r.state === 'recording') fail('Recording was interrupted.') }
+  rec.addEventListener('stop', interrupted)
+  rec.addEventListener('error', interrupted)
+  stream.getTracks().forEach(t => t.addEventListener?.('ended', interrupted))
+  try {
+    rec.start(SLICE_MS)
+  } catch (e) {
+    releaseTracks()
+    abandon(id)
+    throw e
+  }
   current = r
   if (typeof window !== 'undefined') window.addEventListener('beforeunload', onUnload)
   void keepScreenOn(true)
-  rec.start(SLICE_MS)
   return r
 }

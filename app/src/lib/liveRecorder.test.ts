@@ -60,7 +60,8 @@ class FakeRecorder extends EventTarget {
   state = 'inactive'
   startArg: number | undefined
   constructor(public stream: unknown, public opts: unknown) { super(); FakeRecorder.last = this }
-  start(ms?: number) { this.startArg = ms; this.state = 'recording' }
+  static failStart = false
+  start(ms?: number) { if (FakeRecorder.failStart) throw new Error('start failed'); this.startArg = ms; this.state = 'recording' }
   stop() {
     this.state = 'inactive'
     this.dispatchEvent(new Event('stop'))
@@ -80,6 +81,7 @@ beforeEach(() => {
   calls = []; stopBodies = []; stopAnswers = []
   track.stop.mockClear()
   FakeRecorder.supported = true
+  FakeRecorder.failStart = false
   getUserMedia = vi.fn(async () => ({ getTracks: () => [track] }))
   vi.stubGlobal('isSecureContext', true)
   vi.stubGlobal('MediaRecorder', FakeRecorder)
@@ -158,7 +160,80 @@ describe('startLiveRecording', () => {
   })
 })
 
+describe('recorder failures', () => {
+  it('releases everything when start throws, and a new start works', async () => {
+    FakeRecorder.failStart = true
+    await expect(startLiveRecording({})).rejects.toThrow('start failed')
+    expect(track.stop).toHaveBeenCalled()
+    expect(currentRecording()).toBeNull()
+    await vi.waitFor(() => expect(stopBodies).toEqual([{ slices: 0 }]))
+    FakeRecorder.failStart = false
+    const r = await startLiveRecording({})
+    expect(currentRecording()).toBe(r)
+  })
+
+  it('stops the hub meeting when the recorder cannot be built', async () => {
+    vi.stubGlobal('MediaRecorder', Object.assign(class { constructor() { throw new Error('nope') } }, { isTypeSupported: () => true }))
+    await expect(startLiveRecording({})).rejects.toThrow('nope')
+    await vi.waitFor(() => expect(stopBodies).toEqual([{ slices: 0 }]))
+    expect(track.stop).toHaveBeenCalled()
+  })
+
+  it('fails as interrupted when the recorder stops by itself, still uploading what was captured', async () => {
+    const r = await startLiveRecording({})
+    FakeRecorder.last.emit(blob('a'))
+    FakeRecorder.last.stop()
+    expect(r.state).toBe('failed')
+    expect(r.error).toBe('Recording was interrupted.')
+    expect(currentRecording()).toBeNull()
+    expect(track.stop).toHaveBeenCalled()
+    await vi.waitFor(() => expect(calls).toContain('PUT /api/meetings/m1/live/0'))
+    expect(stopBodies).toEqual([])
+  })
+
+  it('fails as interrupted when the microphone track ends', async () => {
+    const t = new EventTarget() as EventTarget & { stop: () => void }
+    t.stop = vi.fn()
+    getUserMedia.mockResolvedValueOnce({ getTracks: () => [t] })
+    const r = await startLiveRecording({})
+    t.dispatchEvent(new Event('ended'))
+    expect(r.state).toBe('failed')
+    expect(r.error).toBe('Recording was interrupted.')
+    expect(t.stop).toHaveBeenCalled()
+  })
+
+  it('exposes the transient upload error until a slice is stored', async () => {
+    let n = 0
+    const u = createSliceUploader(async () => { if (n++ === 0) throw new ApiError('disk full', 507, null) }, async () => { expect(u.lastError()).toBe('disk full') })
+    u.add(0, blob('a'))
+    await u.flush()
+    expect(u.lastError()).toBe('')
+    expect(u.error()).toBe('')
+  })
+})
+
 describe('keepScreenOn', () => {
+  it('releases a lock that arrives after the screen was released, and the one it replaces', async () => {
+    const mk = () => ({ release: vi.fn(async () => {}) })
+    const a = mk(), b = mk(), c = mk()
+    let resolveC!: (s: unknown) => void
+    const request = vi.fn()
+      .mockResolvedValueOnce(a).mockResolvedValueOnce(b)
+      .mockImplementationOnce(() => new Promise(r => { resolveC = r }))
+    const doc = new EventTarget() as EventTarget & { visibilityState: string }
+    doc.visibilityState = 'visible'
+    vi.stubGlobal('document', doc)
+    vi.stubGlobal('navigator', { wakeLock: { request } })
+    await keepScreenOn(true)
+    doc.dispatchEvent(new Event('visibilitychange'))
+    await vi.waitFor(() => expect(a.release).toHaveBeenCalled())
+    doc.dispatchEvent(new Event('visibilitychange'))
+    await keepScreenOn(false)
+    expect(b.release).toHaveBeenCalled()
+    resolveC(c)
+    await vi.waitFor(() => expect(c.release).toHaveBeenCalled())
+  })
+
   it('uses the wake lock on the web and requests it again when visible', async () => {
     const release = vi.fn(async () => {})
     const request = vi.fn(async () => ({ release }))
