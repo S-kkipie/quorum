@@ -42,6 +42,7 @@ export function statusText(status: string, progress = 0): string {
     case 'queued': return 'Waiting for a machine'
     case 'transcribing': return progress > 0 ? `Transcribing ${progress}%` : 'Transcribing'
     case 'summarising': return progress > 0 ? `Summarising ${progress}%` : 'Summarising'
+    case 'live': return 'Recording'
     case 'ready': return 'Ready'
     case 'failed': return 'Failed'
     default: return status
@@ -55,7 +56,7 @@ const STAGES: Record<string, string> = {
 /** The worker's stage as a note next to the status ("" when the status already says it). */
 export const stageText = (stage: string) => STAGES[stage] ?? ''
 
-export const statusTone = (status: string) => (status === 'failed' ? 'text-danger' : status === 'ready' ? 'text-success' : 'text-warning')
+export const statusTone = (status: string) => (status === 'failed' || status === 'live' ? 'text-danger' : status === 'ready' ? 'text-success' : 'text-warning')
 
 /** The owner's actions first, each group in the summary's order. */
 export const sortActions = (a: MeetingAction[]) => [...a.filter((x) => x.mine), ...a.filter((x) => !x.mine)]

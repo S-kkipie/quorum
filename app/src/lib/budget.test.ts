@@ -21,7 +21,7 @@ describe('bundle budget', () => {
       const js = readFileSync(resolve(DIST, f), 'utf8')
       expect(js).not.toContain('Written by Haiku from')
       // the meeting page, its API and Settings → Meetings load on first use
-      for (const s of ['Re-summarise with names', 'How many people?', '/api/settings/meetings', '/api/meetings/uploads', 'Names I go by']) expect(js).not.toContain(s)
+      for (const s of ['Re-summarise with names', 'How many people?', '/api/settings/meetings', '/api/meetings/uploads', 'Names I go by', 'Transcription waiting for', '/live/stop', 'audio/webm;codecs=opus']) expect(js).not.toContain(s)
     }
   })
 })

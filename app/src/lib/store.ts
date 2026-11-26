@@ -1,4 +1,4 @@
-import type { AccountUsage, Ask, Attention, Checkout, Conversation, Envelope, Event, Project, Proposal, SessionCommands, SessionInfo, SessionTicket, Ticket, Workspace } from '../proto.gen'
+import type { AccountUsage, Ask, Attention, Checkout, Conversation, Envelope, Event, MeetingLiveState, MeetingSegment, Project, Proposal, SessionCommands, SessionInfo, SessionTicket, Ticket, Workspace } from '../proto.gen'
 import type { Machine, TicketView } from './api'
 
 export interface AppState {
@@ -44,6 +44,8 @@ export interface AppState {
   meetingLive: Record<string, MeetingLive>
   /** Bumped by every meeting_changed that is not only progress: open meeting lists refetch. */
   meetingsRev: number
+  /** Live transcript per recording meeting: the segments the hub pushed (sorted, no repeats) and its live state. */
+  meetingText: Record<string, { segments: MeetingSegment[]; live: MeetingLiveState }>
 }
 
 export interface MeetingLive { projectId: string; status: string; progress: number; stage: string; rev: number }
@@ -55,7 +57,7 @@ export type AskEntry = Ask & { session: string }
 
 export const initialState = (): AppState => ({
   machines: {}, sessions: {}, order: [], events: {}, live: {}, liveAgent: {}, asks: {}, replaced: {}, replacedBy: {},
-  workspaces: {}, projects: {}, tickets: {}, links: {}, proposals: {}, checkouts: {}, worked: {}, conversations: {}, usage: {}, commands: {}, commandsRev: {}, lastAttention: {}, briefingRev: {}, meetingLive: {}, meetingsRev: 0,
+  workspaces: {}, projects: {}, tickets: {}, links: {}, proposals: {}, checkouts: {}, worked: {}, conversations: {}, usage: {}, commands: {}, commandsRev: {}, lastAttention: {}, briefingRev: {}, meetingLive: {}, meetingsRev: 0, meetingText: {},
 })
 
 /** An event read from the machine's transcript (history page): no hub seq, identified by its key. */
@@ -448,6 +450,15 @@ export function reduce(s: AppState, env: Envelope): AppState {
       if (!progressOnly) next.rev++
       return { ...s, meetingLive: { ...s.meetingLive, [p.id]: next }, meetingsRev: (s.meetingsRev ?? 0) + (progressOnly ? 0 : 1) }
     }
+    case 'meeting_live': {
+      const p = env.payload ?? {}
+      if (typeof p.id !== 'string' || !p.id || !p.live) return s
+      const prev = s.meetingText?.[p.id]?.segments ?? []
+      const seen = new Set(prev.map(segKey))
+      const added = (Array.isArray(p.segments) ? (p.segments as MeetingSegment[]) : []).filter((g) => { const k = segKey(g); if (seen.has(k)) return false; seen.add(k); return true })
+      const segments = added.length ? [...prev, ...added].sort((a, b) => a.startMs - b.startMs) : prev
+      return { ...s, meetingText: { ...s.meetingText, [p.id]: { segments, live: p.live as MeetingLiveState } } }
+    }
     case 'proposal_upsert': {
       const p = env.payload as Proposal
       return p?.id ? { ...s, proposals: { ...s.proposals, [p.id]: p } } : s
@@ -456,6 +467,8 @@ export function reduce(s: AppState, env: Envelope): AppState {
       return s // hello, launch_result and unknown types are ignored
   }
 }
+
+const segKey = (g: MeetingSegment) => `${g.startMs}\u0000${g.text}`
 
 const evKey = (e: Event) => {
   const d = e.data ?? {}

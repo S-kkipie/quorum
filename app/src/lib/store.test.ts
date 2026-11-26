@@ -375,3 +375,16 @@ describe('meeting_changed', () => {
     expect(reduce(s, mc({ projectId: 'p1' }))).toBe(s)
   })
 })
+
+describe('meeting_live', () => {
+  const ml = (segments: unknown[], live: Record<string, unknown>) => ({ type: 'meeting_live', payload: { id: 'm1', projectId: 'p1', segments, live } } as unknown as Envelope)
+  const seg = (startMs: number, text: string) => ({ startMs, endMs: startMs + 1000, speaker: '', text })
+  const lv = (slices: number, waiting = false) => ({ slices, bytes: slices * 10, throughMs: 0, lastSliceAt: 1, waiting })
+  it('appends, dedupes by start and text, keeps order, and keeps the last live state', () => {
+    let s = reduce(initialState(), ml([seg(5000, 'second'), seg(0, 'first')], lv(1)))
+    s = reduce(s, ml([seg(5000, 'second'), seg(9000, 'third')], lv(2, true)))
+    expect(s.meetingText.m1.segments.map((x) => x.text)).toEqual(['first', 'second', 'third'])
+    expect(s.meetingText.m1.live).toEqual(lv(2, true))
+    expect(reduce(s, { type: 'meeting_live', payload: {} } as unknown as Envelope)).toBe(s)
+  })
+})

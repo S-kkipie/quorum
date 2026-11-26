@@ -10,6 +10,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import { MoreHorizontal, Pencil } from 'lucide-react'
 import Section, { wrap } from '../briefing/Section'
 import ActionRow from './ActionRow'
+import LiveView from './LiveView'
 import Transcript from './Transcript'
 import { BEFORE_TRANSCRIPT, LANGUAGES, PROVIDERS, clock, date, duration, liveStatus, meetingTitle, renameSegments, sortActions, stageText, statusText, statusTone } from './util'
 
@@ -107,14 +108,15 @@ export default function MeetingPage({ state, id, onBack }: { state: AppState; id
 
   const hasSegments = !!m?.segments?.length
   const hasAudio = !!m?.hasAudio
+  const isLive = m?.status === 'live'
   // the playback link is valid for an hour: a page left open longer asks for a new one when the audio fails
   const [audioTry, setAudioTry] = useState(0)
   useEffect(() => {
-    if (!hasSegments || !hasAudio) return
+    if (!hasSegments || !hasAudio || isLive) return
     let off = false
     meetingAudioURL(id).then((u) => { if (!off) setAudio(u) }).catch(() => { /* playback is optional */ })
     return () => { off = true }
-  }, [id, hasSegments, hasAudio, audioTry])
+  }, [id, hasSegments, hasAudio, audioTry, isLive])
   const audioAt = useRef(0)
   useEffect(() => { audioAt.current = Date.now() }, [audio])
 
@@ -216,7 +218,9 @@ export default function MeetingPage({ state, id, onBack }: { state: AppState; id
         </div>
         {error && <p role="alert" className={`text-xs text-danger ${wrap}`}>{error}</p>}
 
-        {st.status !== 'ready' && (
+        {st.status === 'live' && <LiveView state={state} m={m} onStopped={(r) => setM((p) => merge(p, r))} />}
+
+        {st.status !== 'ready' && st.status !== 'live' && (
           <div role="status" aria-label="Processing" className="space-y-2 rounded-xl border border-line bg-surface p-3">
             <p className={`text-sm font-medium ${statusTone(st.status)}`}>{statusText(st.status, st.progress)}{stageText(st.stage) && st.status !== 'failed' ? <span className="font-normal text-muted-foreground"> · {stageText(st.stage)}</span> : null}</p>
             {(st.status === 'transcribing' || (st.status === 'summarising' && st.progress > 0)) && <Progress value={st.progress} aria-label="Progress" />}
@@ -257,7 +261,7 @@ export default function MeetingPage({ state, id, onBack }: { state: AppState; id
           </>
         )}
 
-        {hasSegments && sec('Transcript', (
+        {hasSegments && st.status !== 'live' && sec('Transcript', (
           <>
             {audio ? (
               <audio ref={player} src={audio} controls preload="metadata" aria-label="Recording" className="w-full"

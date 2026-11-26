@@ -4,6 +4,7 @@ import type { AppState } from '../../lib/store'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import MeetingsList, { useMeetings } from './MeetingsList'
+import RecordMeeting from './RecordMeeting'
 import UploadMeeting from './UploadMeeting'
 import { LANGUAGES, PROVIDERS, bytes } from './util'
 
@@ -163,7 +164,10 @@ export default function MeetingsSettings({ state, onOpenMeeting }: { state: AppS
       </p>
 
       <h4 className={h4}>Inbox: unassigned meetings</h4>
-      <div className="mb-2"><UploadMeeting projectId="" onUploaded={() => setUploads((n) => n + 1)} /></div>
+      <div className="mb-2 flex min-w-0 flex-wrap items-start gap-2">
+        <UploadMeeting projectId="" onUploaded={() => setUploads((n) => n + 1)} />
+        <RecordMeeting onStarted={(m) => onOpenMeeting?.(m.id)} />
+      </div>
       {inbox.error ? <p role="alert" className="text-xs text-danger">{inbox.error}</p>
         : inbox.list && <MeetingsList list={inbox.list} live={state.meetingLive ?? {}} onOpen={(id) => onOpenMeeting?.(id)} empty="No unassigned meetings. Recordings uploaded without a project wait here." />}
     </div>

@@ -374,3 +374,14 @@ describe('MeetingPage: corrected transcript', () => {
     expect(await screen.findByText(/correcting the transcript/)).toBeTruthy()
   })
 })
+
+describe('a live meeting', () => {
+  it('renders the live view and asks for no audio URL', async () => {
+    api.getMeeting.mockResolvedValue(meeting({ status: 'live', hasAudio: true, segments: [{ startMs: 0, endMs: 1000, speaker: '', text: 'so far' }] }))
+    render(<MeetingPage state={state()} id="m1" />)
+    expect(await screen.findByText('so far')).toBeTruthy()
+    expect(screen.getByText('Recording')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Stop and process' })).toBeTruthy()
+    expect(api.meetingAudioURL).not.toHaveBeenCalled()
+  })
+})
