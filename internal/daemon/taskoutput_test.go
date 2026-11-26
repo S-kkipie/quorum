@@ -177,3 +177,20 @@ func TestTaskOutputHolders(t *testing.T) {
 		t.Fatalf("procs not an empty array: %s", b)
 	}
 }
+
+func TestTaskOutputTailOfContinuationBytesIsBounded(t *testing.T) {
+	ctx, dir := toSetup(t)
+	// the cut lands on 5 continuation bytes then "a": at most UTFMax (4) are dropped, the 5th becomes U+FFFD
+	data := append([]byte(strings.Repeat("x", 70000-taskTailMax)), []byte("\x80\x80\x80\x80\x80a")...)
+	data = append(data, []byte(strings.Repeat("a", taskTailMax-6))...)
+	if err := os.WriteFile(filepath.Join(dir, "t1.output"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r, err := toCall(ctx, toSession, "t1")
+	if err != nil || !r.Found {
+		t.Fatalf("res %+v err %v", r, err)
+	}
+	if want := "\uFFFD" + strings.Repeat("a", taskTailMax-5); r.Tail != want {
+		t.Fatalf("tail prefix %q (len %d)", r.Tail[:8], len(r.Tail))
+	}
+}

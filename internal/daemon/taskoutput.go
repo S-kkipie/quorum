@@ -92,6 +92,9 @@ func rpcTaskOutput(ctx context.Context, _ *Host, params json.RawMessage) (any, e
 	if err != nil {
 		return res, nil
 	}
+	if pre, err := os.Stat(resolved); err != nil || !pre.Mode().IsRegular() {
+		return res, nil // a FIFO or device must never block the handler
+	}
 	f, err := os.Open(resolved)
 	if err != nil {
 		return res, nil
@@ -115,10 +118,11 @@ func rpcTaskOutput(ctx context.Context, _ *Host, params json.RawMessage) (any, e
 	buf = buf[:n]
 	if off > 0 {
 		// the cut may fall inside a rune: drop its continuation bytes
-		for i := 0; i < len(buf) && i < utf8.UTFMax && !utf8.RuneStart(buf[i]); i++ {
-			buf = buf[1:]
-			i--
+		n := 0
+		for n < len(buf) && n < utf8.UTFMax && !utf8.RuneStart(buf[n]) {
+			n++
 		}
+		buf = buf[n:]
 	}
 	res.Found = true
 	res.Size = size

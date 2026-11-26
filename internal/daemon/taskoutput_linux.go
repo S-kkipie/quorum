@@ -19,7 +19,7 @@ func fileHolders(resolved string) ([]procInfo, bool) {
 	scanned := false
 	for _, e := range ents {
 		pid, err := strconv.Atoi(e.Name())
-		if err != nil || pid <= 0 {
+		if err != nil || pid <= 0 || pid == os.Getpid() {
 			continue
 		}
 		dir := "/proc/" + e.Name() + "/fd"

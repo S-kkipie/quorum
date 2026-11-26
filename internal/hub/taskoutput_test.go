@@ -53,6 +53,8 @@ func TestTaskOutputPassesThrough(t *testing.T) {
 	code, body := tf.req(t, "GET", "/api/sessions/s1/tasks/bg_1-x/output", "")
 	require.Equal(t, 200, code, body)
 	require.JSONEq(t, taskOutJSON, body)
+	tf.mu.Lock()
+	defer tf.mu.Unlock()
 	require.Equal(t, []map[string]string{{"session": "s1", "task": "bg_1-x"}}, tf.calls)
 }
 
