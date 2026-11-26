@@ -255,6 +255,7 @@ func (s *Server) routes() {
 	dev("GET /api/machines/{m}/terminals/{pane}/read", s.handleTermRead)
 	dev("DELETE /api/machines/{m}/terminals/{pane}", s.handleTermClose)
 	dev("POST /api/machines/{m}/views", s.handleCreateView)
+	dev("GET /api/sessions/{sid}/tasks/{task}/output", s.handleTaskOutput)
 	// /v/ carries no device token: the link token is the auth. Server.Handler() routes every
 	// /v/ path to handleView before the mux (viewHandler), so this registration is never
 	// reached in practice; it only reserves the pattern ahead of "/".
