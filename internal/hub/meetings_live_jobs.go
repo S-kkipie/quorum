@@ -108,30 +108,16 @@ func mustMarshal(v any) json.RawMessage {
 // that stopped recording is discarded (the full transcription replaces the live one).
 func applyChunk(s *Server, j store.MeetingJob, v any) error {
 	r := v.(chunkResult)
-	ls, err := s.st.MeetingLiveState(j.MeetingID)
+	fresh, err := s.st.ApplyLiveChunk(j.MeetingID, r.segs, r.through)
 	if errors.Is(err, store.ErrNotFound) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	var fresh []proto.MeetingSegment
-	for _, sg := range r.segs {
-		if sg.EndMs > ls.ThroughMs {
-			fresh = append(fresh, sg)
-		}
-	}
-	if len(fresh) > 0 {
-		if err := s.st.AppendMeetingSegments(j.MeetingID, fresh); err != nil {
-			return err
-		}
-	}
-	if err := s.st.SetLiveThrough(j.MeetingID, max(r.through, ls.ThroughMs)); err != nil {
-		return err
-	}
 	m, err := s.st.Meeting(j.MeetingID)
 	if err != nil {
-		return err
+		return nil // the segments are stored; only the push is lost
 	}
 	s.publishLive(j.MeetingID, m.ProjectID, fresh)
 	return nil

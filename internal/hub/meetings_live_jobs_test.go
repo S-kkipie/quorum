@@ -2,6 +2,7 @@ package hub
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -216,8 +217,46 @@ func TestLiveChunkResultAfterStopDiscarded(t *testing.T) {
 	p := gpu.start()
 	require.NoError(t, f.st.EndLive(m.ID))
 	code, body := postJSON(t, f.ts.URL, p.ResultURL, chunkBody(9000, proto.MeetingWorkerSegment{StartMs: 100, EndMs: 9000, Text: "late"}))
-	require.Contains(t, []int{200, 409}, code, body)
+	require.Equal(t, 200, code, body)
 	segs, err := f.st.MeetingSegments(m.ID)
 	require.NoError(t, err)
 	require.Empty(t, segs)
+}
+
+func TestDispatchSkipsMeetingWithRunningChunk(t *testing.T) {
+	f := newJobFx(t)
+	m := f.liveMeeting(t)
+	a := f.connect(t, "a", true)
+	b := f.connect(t, "b", true)
+	require.NoError(t, f.s.queueLiveChunk(m.ID))
+	p := a.start()
+	require.NoError(t, f.s.queueLiveChunk(m.ID)) // a second one queues while the first runs
+	f.s.dispatchMeetingJobs()
+	b.noStart(200 * time.Millisecond)
+	require.Len(t, f.queuedChunks(t, m.ID), 1)
+	// once the first finishes, the queued one goes out
+	code, body := postJSON(t, f.ts.URL, p.ResultURL, chunkBody(1000))
+	require.Equal(t, 200, code, body)
+	a.start() // the machine that just finished is idle again and takes it (names sort a before b)
+	require.Empty(t, f.queuedChunks(t, m.ID))
+}
+
+func TestChunkApplyErrorFailsOnlyTheJob(t *testing.T) {
+	f := newJobFx(t)
+	m := f.liveMeeting(t)
+	gpu := f.connect(t, "gpu", true)
+	st := f.s.jobs.steps[proto.MeetingStepTranscribeChunk]
+	st.apply = func(*Server, store.MeetingJob, any) error { return errors.New("disk full") }
+	f.s.jobs.steps[proto.MeetingStepTranscribeChunk] = st
+	require.NoError(t, f.s.queueLiveChunk(m.ID))
+	p := gpu.start()
+	code, _ := postJSON(t, f.ts.URL, p.ResultURL, chunkBody(1000, proto.MeetingWorkerSegment{StartMs: 0, EndMs: 1000, Text: "x"}))
+	require.Equal(t, 500, code)
+	j, err := f.st.MeetingJob(p.JobID)
+	require.NoError(t, err)
+	require.Equal(t, store.JobFailed, j.Status)
+	mm, err := f.st.Meeting(m.ID)
+	require.NoError(t, err)
+	require.Equal(t, "live", mm.Status)
+	require.Equal(t, "", mm.Error)
 }

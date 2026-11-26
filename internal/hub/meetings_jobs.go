@@ -191,12 +191,27 @@ func (s *Server) dispatchMeetingJobs() {
 	sort.SliceStable(queued, func(a, b int) bool {
 		return queued[a].Step == proto.MeetingStepTranscribeChunk && queued[b].Step != proto.MeetingStepTranscribeChunk
 	})
+	// a meeting runs one chunk job at a time: two would transcribe the same audio twice
+	chunking := map[string]bool{}
+	if running, err := s.st.MeetingJobsWithStatus(store.JobRunning); err == nil {
+		for _, j := range running {
+			if j.Step == proto.MeetingStepTranscribeChunk {
+				chunking[j.MeetingID] = true
+			}
+		}
+	}
 	for _, j := range queued {
 		if len(idle) == 0 {
 			return
 		}
 		if len(live) > 0 && j.Step != proto.MeetingStepTranscribeChunk {
 			continue
+		}
+		if j.Step == proto.MeetingStepTranscribeChunk {
+			if chunking[j.MeetingID] {
+				continue
+			}
+			chunking[j.MeetingID] = true
 		}
 		switch s.startMeetingJob(j, idle[0]) {
 		case jobStarted, jobRefused:
@@ -532,6 +547,17 @@ func (s *Server) handleMeetingJobResult(w http.ResponseWriter, r *http.Request) 
 		apiErr(w, 400, err.Error())
 		return
 	}
+	if step.live {
+		// a live result is applied first: when that fails only this chunk job fails (never the meeting),
+		// and the worker is told, so the next chunk retries from the same point
+		if err := step.apply(s, j, v); err != nil {
+			log.Printf("hub: meetings: live result of job %s: %v", j.ID, err)
+			s.st.FinishMeetingJob(j.ID, j.Attempt, store.JobFailed, trimRunes("the result could not be stored: "+err.Error(), maxJobError))
+			s.kickJobs()
+			apiErr(w, 500, "the result could not be stored")
+			return
+		}
+	}
 	if ok, err := s.st.FinishMeetingJob(j.ID, j.Attempt, store.JobDone, ""); err != nil {
 		apiErr(w, 500, "internal error")
 		return
@@ -540,12 +566,12 @@ func (s *Server) handleMeetingJobResult(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	s.kickJobs() // the machine is free
+	if step.live {
+		writeJSON(w, 200, map[string]bool{"ok": true})
+		return
+	}
 	if err := step.apply(s, j, v); err != nil {
 		log.Printf("hub: meetings: result of job %s: %v", j.ID, err)
-		if step.live {
-			writeJSON(w, 200, map[string]bool{"ok": true})
-			return
-		}
 		s.setMeetingState(j.MeetingID, "failed", trimRunes("The result could not be stored: "+err.Error(), maxJobError), 0, "")
 	}
 	writeJSON(w, 200, map[string]bool{"ok": true})

@@ -148,3 +148,46 @@ func (s *Store) EndLive(id string) error {
 	_, err := s.db.Exec(`DELETE FROM meeting_live WHERE meeting_id=?`, id)
 	return err
 }
+
+// ApplyLiveChunk stores a chunk's result in one transaction: only the segments that end after the live
+// transcript's through_ms are kept and inserted (idx continues), and through_ms becomes the larger of itself
+// and throughMs. It returns the segments appended, or ErrNotFound when the meeting is not live.
+func (s *Store) ApplyLiveChunk(id string, segs []proto.MeetingSegment, throughMs int64) (appended []proto.MeetingSegment, err error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil {
+			tx.Rollback()
+		}
+	}()
+	var through int64
+	if err = tx.QueryRow(`SELECT through_ms FROM meeting_live WHERE meeting_id=?`, id).Scan(&through); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			err = ErrNotFound
+		}
+		return nil, err
+	}
+	var next int
+	if err = tx.QueryRow(`SELECT COALESCE(MAX(idx)+1,0) FROM meeting_segments WHERE meeting_id=?`, id).Scan(&next); err != nil {
+		return nil, err
+	}
+	for _, sg := range segs {
+		if sg.EndMs <= through {
+			continue
+		}
+		if _, err = tx.Exec(`INSERT INTO meeting_segments(meeting_id,idx,start_ms,end_ms,speaker,text) VALUES(?,?,?,?,?,?)`,
+			id, next+len(appended), sg.StartMs, sg.EndMs, sg.Speaker, sg.Text); err != nil {
+			return nil, err
+		}
+		appended = append(appended, sg)
+	}
+	if _, err = tx.Exec(`UPDATE meeting_live SET through_ms=MAX(through_ms,?) WHERE meeting_id=?`, throughMs, id); err != nil {
+		return nil, err
+	}
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
+	return appended, nil
+}

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -418,4 +419,41 @@ func TestLiveMeetingLifecycle(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 	all, _ = s.LiveMeetings()
 	require.Empty(t, all)
+}
+
+func TestApplyLiveChunkConcurrentNoDuplicates(t *testing.T) {
+	s, _ := briefingStore(t)
+	m, err := s.CreateLiveMeeting(MeetingUpload{}, func(id string) string { return "/x/" + id })
+	require.NoError(t, err)
+	segs := []proto.MeetingSegment{{StartMs: 0, EndMs: 1000, Text: "a"}, {StartMs: 1000, EndMs: 2000, Text: "b"}}
+	var wg sync.WaitGroup
+	total := make(chan int, 4)
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			got, err := s.ApplyLiveChunk(m.ID, segs, 2000)
+			require.NoError(t, err)
+			total <- len(got)
+		}()
+	}
+	wg.Wait()
+	close(total)
+	n := 0
+	for c := range total {
+		n += c
+	}
+	require.Equal(t, 2, n)
+	stored, err := s.MeetingSegments(m.ID)
+	require.NoError(t, err)
+	require.Len(t, stored, 2)
+	// overlapping follow-up: only the new tail is added
+	got, err := s.ApplyLiveChunk(m.ID, []proto.MeetingSegment{{StartMs: 1500, EndMs: 2000, Text: "b2"}, {StartMs: 2000, EndMs: 3000, Text: "c"}}, 3000)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	ls, _ := s.MeetingLiveState(m.ID)
+	require.Equal(t, int64(3000), ls.ThroughMs, "through never moves back")
+	require.NoError(t, s.EndLive(m.ID))
+	_, err = s.ApplyLiveChunk(m.ID, segs, 5)
+	require.ErrorIs(t, err, ErrNotFound)
 }
