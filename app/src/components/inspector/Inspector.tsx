@@ -48,7 +48,7 @@ export default function Inspector({ placement, open, onClose, session, usage, ev
     const down = (e: PointerEvent) => {
       const t = e.target as Node
       // a dialog opened from the inspector (the output view) lives in a portal
-      if (!root.current?.contains(t) && !ignore?.current?.contains(t) && !(t as Element).closest?.('[role="dialog"]')) close.current()
+      if (!root.current?.contains(t) && !ignore?.current?.contains(t) && !(t as Element).closest?.('[role="dialog"], [data-slot="dialog-overlay"], [data-slot="sheet-overlay"]')) close.current()
     }
     document.addEventListener('keydown', key)
     document.addEventListener('pointerdown', down)

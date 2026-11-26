@@ -136,8 +136,10 @@ export default function Transcript({ events, base = '', worktrees, machine = '',
   // an outside request (the inspector's background list) opens a subagent's screen like its card does
   const [askedN, setAskedN] = useState(0)
   if (wanted && wanted.n !== askedN) {
+    // consumed even when unresolved: a later history load must not open it by surprise
     const a = tl.agents.get(wanted.id)
-    if (a) { setAskedN(wanted.n); pushAgent(a.key) }
+    setAskedN(wanted.n)
+    if (a) pushAgent(a.key)
   }
   const last = events[events.length - 1]
   // a subagent thinking shows on its own screen, not as the session's indicator

@@ -280,6 +280,47 @@ describe('Background card', () => {
     expect(screen.getByRole('dialog', { name: 'Audit the docs' })).toBeTruthy()
     expect(screen.queryByRole('complementary', { name: 'Inspector' })).toBeNull()
   })
+  it('clicking the output dialog backdrop does not close the overlay inspector', async () => {
+    stubFacts()
+    width = 1100
+    show(live())
+    fireEvent.click(screen.getByRole('button', { name: 'Inspector' }))
+    fireEvent.click(within(card()).getByRole('button', { name: /npm run watch/ }))
+    await screen.findByRole('dialog')
+    const overlay = document.querySelector('[data-slot="dialog-overlay"]')!
+    fireEvent.pointerDown(overlay)
+    // aria-hidden while the modal is open
+    expect(screen.getByRole('complementary', { name: 'Inspector', hidden: true })).toBeTruthy()
+  })
+  it('a task already ended is not listed as running and gets no Dead badge', () => {
+    stubFacts()
+    const evs = [ev(5, 'task_end', { taskId: 'c1', kind: 'command', summary: 'npm run watch', status: 'completed', exitCode: 0 })]
+    show(st({ background: { tasks: 1, wakeAt: 0, items: [items[0]] } }, evs))
+    expect(within(card()).getAllByRole('listitem')).toHaveLength(1)
+    expect(within(card()).queryByText('Dead')).toBeNull()
+    expect(within(card()).getByText('Ended')).toBeTruthy()
+  })
+  it('found:false reads "no output yet" with no Dead badge', async () => {
+    stubFacts(() => facts({ found: false, procs: [] }))
+    show(live())
+    expect(await within(card()).findByText('no output yet')).toBeTruthy()
+    expect(within(card()).queryByText('Dead')).toBeNull()
+  })
+  it('the output view stops polling once closed', async () => {
+    vi.useFakeTimers()
+    try {
+      const fn = stubFacts()
+      show(live())
+      fireEvent.click(within(card()).getByRole('button', { name: /npm run watch/ }))
+      await act(async () => { await vi.advanceTimersByTimeAsync(2_500) })
+      const calls = () => fn.mock.calls.length
+      fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+      await act(async () => { await vi.advanceTimersByTimeAsync(100) })
+      const n = calls()
+      await act(async () => { await vi.advanceTimersByTimeAsync(7_000) })
+      expect(calls()).toBe(n)
+    } finally { vi.useRealTimers() }
+  })
   it('lists ended tasks with status and exit code, and shows the tail on click', async () => {
     stubFacts()
     const evs = [ev(5, 'task_end', { taskId: 'e1', kind: 'command', summary: 'npm test', status: 'failed', exitCode: 2, outputTail: 'boom: 3 failed' })]

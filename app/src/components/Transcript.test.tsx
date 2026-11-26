@@ -36,6 +36,14 @@ describe('Transcript', () => {
     fireEvent.click(screen.getByText('ls -la'))
     expect(screen.getByText('OUTPUT-ONE')).toBeTruthy()
   })
+  it('an openAgent request that does not resolve is consumed, so a later load does not open it', () => {
+    const agent = [ev(1, 'agent_start', { id: 'a', type: 'Explore', description: 'searches' })]
+    const { rerender } = render(<Transcript events={[]} openAgent={{ id: 'a', n: 1 }} />)
+    rerender(<Transcript events={agent} openAgent={{ id: 'a', n: 1 }} />)
+    expect(screen.queryByRole('dialog', { name: 'searches' })).toBeNull()
+    rerender(<Transcript events={agent} openAgent={{ id: 'a', n: 2 }} />)
+    expect(screen.getByRole('dialog', { name: 'searches' })).toBeTruthy()
+  })
   it('streaming text at the end and subagent with status', () => {
     render(<Transcript events={[ev(1, 'agent_start', { id: 'a', type: 'Explore', description: 'searches' })]} live="typing" />)
     expect(screen.getByLabelText('running')).toBeTruthy()

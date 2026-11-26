@@ -31,12 +31,21 @@ export default function BackgroundCard({ background, sessionId = '', sessionStat
   phone?: boolean
 }) {
   const ended = useMemo(() => endedTasksOf(events), [events])
-  const items = background?.items
+  // an item whose end is already in the history is not listed twice (the live list lags)
+  const endedIds = useMemo(() => new Set(ended.map((t) => t.taskId)), [ended])
+  const rawItems = background?.items
+  const items = useMemo(() => rawItems?.filter((i) => !endedIds.has(i.id)), [rawItems, endedIds])
   const closed = sessionState === 'closed'
   const [now, setNow] = useState(Date.now)
   const [facts, setFacts] = useState<Record<string, TaskFacts>>({})
   const [viewing, setViewing] = useState<Viewing | null>(null)
   const watched = (items ?? []).filter((i) => hasOutput(i.kind)).map((i) => i.id).join('\u0000')
+
+  // keeps "started X ago" and next wake current
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 30_000)
+    return () => clearInterval(t)
+  }, [])
 
   useEffect(() => {
     if (!sessionId || !watched || closed) return
@@ -53,7 +62,7 @@ export default function BackgroundCard({ background, sessionId = '', sessionStat
   }, [sessionId, watched, closed])
 
   if (!hasBackground(background) && !ended.length) return null
-  if (items === undefined && !ended.length) return <InspectorCard title="Background"><BackgroundContent background={background} /></InspectorCard>
+  if (rawItems === undefined && !ended.length) return <InspectorCard title="Background"><BackgroundContent background={background} /></InspectorCard>
 
   const row = 'flex min-h-11 w-full items-start gap-2.5 rounded-xl bg-chip p-2.5 text-left'
   const body = (it: BackgroundItem) => {
