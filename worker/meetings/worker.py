@@ -55,6 +55,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable
 
+# numpy's OpenBLAS starts one busy-waiting thread per core; the speaker clustering's eigen-decompositions ran
+# 4–20× slower with 24 threads than with 8, worst when the machine is busy. Read when numpy is first imported.
+os.environ.setdefault("OPENBLAS_NUM_THREADS", str(max(1, min(8, os.cpu_count() or 1))))
+
 WORKER_VERSION = "1"
 SAMPLE_RATE = 16000
 WHISPER_MODEL = "large-v3"
@@ -327,8 +331,10 @@ class Turn:
 
 
 class SherpaDiarizer:
-    """sherpa-onnx offline diarization: pyannote segmentation 3.0 + NeMo TitaNet-large embeddings, fast
-    clustering with threshold 0.8, or num_clusters when the owner gave the number of people."""
+    """Speaker separation with the installed sherpa-onnx models. sherpa (pyannote segmentation 3.0 + NeMo
+    TitaNet-large) gives the speech turns; its fixed-threshold clustering over-splits long meetings, so the
+    turns are relabelled: TitaNet embeddings of short windows inside each turn, spectral clustering with an
+    automatic speaker count (or the owner's count), see recluster_turns."""
 
     def __init__(self, num_speakers: int = 0, threshold: float = DIAR_THRESHOLD):
         if not SEGMENTATION_MODEL.exists() or not EMBEDDING_MODEL.exists():
@@ -336,25 +342,252 @@ class SherpaDiarizer:
         import sherpa_onnx
 
         threads = max(1, min(8, os.cpu_count() or 1))
+        emb_cfg = sherpa_onnx.SpeakerEmbeddingExtractorConfig(model=str(EMBEDDING_MODEL), num_threads=threads)
         cfg = sherpa_onnx.OfflineSpeakerDiarizationConfig(
             segmentation=sherpa_onnx.OfflineSpeakerSegmentationModelConfig(
                 pyannote=sherpa_onnx.OfflineSpeakerSegmentationPyannoteModelConfig(model=str(SEGMENTATION_MODEL)),
                 num_threads=threads),
-            embedding=sherpa_onnx.SpeakerEmbeddingExtractorConfig(model=str(EMBEDDING_MODEL), num_threads=threads),
+            embedding=emb_cfg,
             clustering=sherpa_onnx.FastClusteringConfig(num_clusters=num_speakers if num_speakers > 0 else -1,
                                                         threshold=threshold),
             min_duration_on=0.3, min_duration_off=0.5)
         if not cfg.validate():
             raise WorkerError("The speaker models are invalid; run `quorumd meetings setup` again.")
         self.sd = sherpa_onnx.OfflineSpeakerDiarization(cfg)
+        self.ex = sherpa_onnx.SpeakerEmbeddingExtractor(emb_cfg)
+        self.num_speakers = num_speakers
 
     def diarize(self, audio, on_progress: Callable[[float], None]) -> list[Turn]:
+        import numpy as np
+
         def cb(done, total):
-            on_progress(done / max(total, 1))
+            on_progress(0.7 * done / max(total, 1))
             return 0
 
         res = self.sd.process(audio, callback=cb).sort_by_start_time()
-        return [Turn(float(r.start), float(r.end), int(r.speaker)) for r in res]
+        turns = [Turn(float(r.start), float(r.end), int(r.speaker)) for r in res]
+        spans = window_spans(turns)
+        X = np.zeros((len(spans), self.ex.dim), dtype=np.float32)
+        for j, (_, a, b) in enumerate(spans):
+            s = self.ex.create_stream()
+            s.accept_waveform(SAMPLE_RATE, audio[int(a * SAMPLE_RATE):int(b * SAMPLE_RATE)])
+            s.input_finished()
+            X[j] = self.ex.compute(s)
+            if j % 50 == 0:
+                on_progress(0.7 + 0.25 * j / len(spans))
+        on_progress(0.95)
+        out = recluster_turns(turns, spans, X, self.num_speakers)
+        on_progress(1)
+        return out
+
+
+# Re-clustering. Dense windows inside the segmentation turns, NME-SC (normalised maximum eigengap spectral
+# clustering) for the speaker count, k-means on the spectral embedding for the labels.
+
+# A longer meeting is subsampled evenly for the speaker count and the clustering, and every window then takes
+# its nearest centroid. NME-SC runs one N×N eigen-decomposition per grid point (~30 at 2000, ~38 at 3000):
+# on the laptop's 24 threads under load, 3000 took ~22 s and 2000 ~6 s; the spike's 1,859 windows fit whole.
+MAX_CLUSTER_WINDOWS = 2000
+
+
+def window_spans(turns: list[Turn], win: float = 1.5, hop: float = 0.75,
+                 min_turn: float = 0.5) -> list[tuple[int, float, float]]:
+    """(turn index, start, end) of the embedding windows: `win` seconds every `hop` seconds inside each turn
+    of at least `min_turn` seconds; a turn no longer than `win` gives one window covering the whole turn."""
+    out: list[tuple[int, float, float]] = []
+    for i, t in enumerate(turns):
+        d = t.end - t.start
+        if d < min_turn:
+            continue
+        if d <= win:
+            out.append((i, t.start, t.end))
+            continue
+        n = int((d - win) / hop + 1e-6) + 1
+        for j in range(n):
+            s = t.start + j * hop
+            out.append((i, s, min(t.end, s + win)))
+    return out
+
+
+def _unit_rows(X):
+    import numpy as np
+
+    X = np.asarray(X, dtype=np.float64)
+    return X / (np.linalg.norm(X, axis=1, keepdims=True) + 1e-9)
+
+
+def _subsample(n: int):
+    import numpy as np
+
+    if n <= MAX_CLUSTER_WINDOWS:
+        return np.arange(n)
+    return np.linspace(0, n - 1, MAX_CLUSTER_WINDOWS).round().astype(int)
+
+
+def _binarize(A, p: int):
+    """The top-p neighbours of each row set to 1, symmetrised with (B+Bᵀ)/2."""
+    import numpy as np
+
+    B = np.zeros_like(A)
+    idx = np.argpartition(-A, p - 1, axis=1)[:, :p]
+    np.put_along_axis(B, idx, 1.0, axis=1)
+    return (B + B.T) / 2
+
+
+def _laplacian(B):
+    import numpy as np
+
+    return np.diag(B.sum(axis=1)) - B
+
+
+def _nme_sc(X, max_k: int = 12) -> tuple[int, int]:
+    """(p, K) by NME-SC on unit rows X: for each p of the grid, K is the largest gap among the first max_k+1
+    Laplacian eigenvalues, and the p that minimises p / (maxgap / λ_max) wins."""
+    import numpy as np
+
+    n = len(X)
+    if n < 2 or np.allclose(X, X[0], atol=1e-6):
+        return 1, 1
+    A = X @ X.T
+    grid = list(range(4, 40, 2)) + list(range(40, int(n * 0.08), 10))
+    grid = sorted({min(p, n - 1) for p in grid})
+    best = None
+    for p in grid:
+        w = np.linalg.eigvalsh(_laplacian(_binarize(A, p)))
+        gaps = np.diff(w[:max_k + 1])
+        k = int(np.argmax(gaps)) + 1
+        ratio = p / (gaps.max() / (w[-1] + 1e-9) + 1e-9)
+        if best is None or ratio < best[0]:
+            best = (ratio, p, k)
+    return best[1], best[2]
+
+
+def estimate_speakers(X, max_k: int = 12) -> int:
+    """The number of speakers in the embeddings X (one row per window), by NME-SC; 1 under 2 windows."""
+    X = _unit_rows(X)
+    return _nme_sc(X[_subsample(len(X))], max_k)[1]
+
+
+def _kmeans(E, k: int, restarts: int = 20, iters: int = 100, seed: int = 0):
+    """Spherical k-means on the unit rows E; the restart with the highest cohesion wins."""
+    import numpy as np
+
+    rng = np.random.default_rng(seed)
+    best = None
+    for _ in range(restarts):
+        C = E[rng.choice(len(E), k, replace=False)]
+        for _ in range(iters):
+            lab = np.argmax(E @ C.T, axis=1)
+            C2 = np.array([E[lab == j].mean(axis=0) if (lab == j).any() else C[j] for j in range(k)])
+            C2 = C2 / (np.linalg.norm(C2, axis=1, keepdims=True) + 1e-9)
+            if np.allclose(C2, C):
+                break
+            C = C2
+        lab = np.argmax(E @ C.T, axis=1)
+        cohesion = float((E * C[lab]).sum())
+        if best is None or cohesion > best[0]:
+            best = (cohesion, lab)
+    return best[1]
+
+
+def cluster_embeddings(X, k: int, p: int | None = None):
+    """A label in [0, k) for each row of X: spectral clustering into k clusters over the top-p binarised
+    cosine affinity (p from NME-SC when not given). k is clipped to the number of windows. Beyond
+    MAX_CLUSTER_WINDOWS rows an even subsample is clustered and every row takes its nearest centroid."""
+    import numpy as np
+
+    X = _unit_rows(X)
+    n = len(X)
+    k = max(1, min(int(k), n))
+    if n == 0:
+        return np.zeros(0, dtype=int)
+    if k == 1:
+        return np.zeros(n, dtype=int)
+    sub = _subsample(n)
+    Xs = X[sub]
+    if p is None:
+        p = _nme_sc(Xs)[0]
+    p = max(1, min(p, len(Xs) - 1))
+    _, v = np.linalg.eigh(_laplacian(_binarize(Xs @ Xs.T, p)))
+    lab = _kmeans(_unit_rows(v[:, :k]), k)
+    if len(sub) == n:
+        return lab
+    C = _unit_rows(np.array([Xs[lab == j].mean(axis=0) for j in range(k) if (lab == j).any()]))
+    return np.argmax(X @ C.T, axis=1)
+
+
+def recluster_turns(turns: list[Turn], spans, X, num_speakers: int = 0, min_talk: float = 10.0) -> list[Turn]:
+    """New turns (same times) whose speakers come from the window embeddings X (one row per span of
+    window_spans). K is num_speakers when given, else estimated. A turn takes the majority label of its
+    windows; a turn without windows takes the label of the nearest labelled turn in time. A cluster with less
+    than min_talk seconds of turn time merges into the most similar centroid, until none is left or one
+    cluster remains. Speakers are renumbered 0.. by first appearance."""
+    import numpy as np
+
+    if not turns:
+        return []
+    X = _unit_rows(X)
+    owner = np.array([s[0] for s in spans], dtype=int)
+    n = len(X)
+    if n < 2:
+        win_lab = np.zeros(n, dtype=int)
+    else:
+        sub = _subsample(n)
+        p, k = _nme_sc(X[sub])
+        if num_speakers > 0:
+            k = num_speakers
+        win_lab = cluster_embeddings(X, k, p)
+
+    label: dict[int, int] = {}
+    for ti in np.unique(owner):
+        vals, counts = np.unique(win_lab[owner == ti], return_counts=True)
+        label[int(ti)] = int(vals[np.argmax(counts)])
+    labelled = sorted(label)
+    for i, t in enumerate(turns):
+        if i in label:
+            continue
+        if not labelled:
+            label[i] = 0
+            continue
+        near = min(labelled, key=lambda j: (max(turns[j].start - t.end, t.start - turns[j].end, 0.0), j))
+        label[i] = label[near]
+
+    def talk() -> dict[int, float]:
+        out: dict[int, float] = {}
+        for i, t in enumerate(turns):
+            out[label[i]] = out.get(label[i], 0.0) + (t.end - t.start)
+        return out
+
+    while True:
+        tt = talk()
+        if len(tt) < 2:
+            break
+        small = min(tt, key=lambda c: (tt[c], c))
+        if tt[small] >= min_talk:
+            break
+        win_turn = np.array([label[int(o)] for o in owner], dtype=int)
+        cents = {c: X[win_turn == c].mean(axis=0) for c in tt if (win_turn == c).any()}
+        others = [c for c in tt if c != small]
+        if small in cents:
+            v = cents[small] / (np.linalg.norm(cents[small]) + 1e-9)
+
+            def sim(c):
+                if c not in cents:
+                    return -2.0
+                return float(v @ (cents[c] / (np.linalg.norm(cents[c]) + 1e-9)))
+
+            target = max(others, key=lambda c: (sim(c), -c))
+        else:
+            target = max(others, key=lambda c: (tt[c], -c))
+        for i in label:
+            if label[i] == small:
+                label[i] = target
+
+    order = sorted(range(len(turns)), key=lambda i: (turns[i].start, turns[i].end, i))
+    names: dict[int, int] = {}
+    for i in order:
+        names.setdefault(label[i], len(names))
+    return [Turn(t.start, t.end, names[label[i]]) for i, t in enumerate(turns)]
 
 
 class FakeDiarizer:

@@ -201,6 +201,134 @@ def test_label_speakers_by_overlap_and_first_appearance():
     assert w.label_speakers(segs, turns) == ["Speaker 1", "Speaker 2", "Speaker 2", None]
 
 
+# ---------------------------------------------------------------------------------------------------
+# re-clustering (synthetic embeddings, no model)
+
+
+def _voices(n_speakers: int = 3, dim: int = 192, seed: int = 1):
+    """Well-separated L2-normalised voice directions and a sampler that adds noise with sigma 0.05."""
+    import numpy as np
+
+    rng = np.random.default_rng(seed)
+    q, _ = np.linalg.qr(rng.normal(size=(dim, n_speakers)))
+    dirs = q.T
+
+    def sample(speaker: int):
+        v = dirs[speaker] + rng.normal(scale=0.05, size=dim)
+        return v / np.linalg.norm(v)
+
+    return sample
+
+
+def _embed(turns, truth, sample):
+    """The windows of `turns` and one synthetic embedding per window, from each turn's true speaker."""
+    import numpy as np
+
+    spans = w.window_spans(turns)
+    return spans, np.array([sample(truth[i]) for i, _, _ in spans])
+
+
+def _meeting(pattern, seconds: float = 20.0):
+    """Back-to-back turns with the given true speakers; sherpa's own labels are deliberately wrong (99)."""
+    turns = [w.Turn(i * seconds, (i + 1) * seconds, 99) for i in range(len(pattern))]
+    return turns, list(pattern)
+
+
+def test_window_spans_cover_turns():
+    turns = [w.Turn(0, 3.0, 0), w.Turn(3.0, 3.3, 1), w.Turn(4, 5, 0)]
+    spans = w.window_spans(turns)
+    # 3 s turn: windows at 0, 0.75, 1.5; the 0.3 s turn has none; the 1 s turn gives one whole-turn window
+    assert spans == [(0, 0.0, 1.5), (0, 0.75, 2.25), (0, 1.5, 3.0), (2, 4.0, 5.0)]
+
+
+def test_estimate_speakers_finds_three():
+    turns, truth = _meeting([0, 1, 2, 0, 1, 2, 2, 0, 1])
+    _, X = _embed(turns, truth, _voices())
+    assert w.estimate_speakers(X) == 3
+
+
+def test_recluster_matches_the_true_speakers():
+    turns, truth = _meeting([2, 0, 1, 0, 2, 1, 0])
+    spans, X = _embed(turns, truth, _voices())
+    out = w.recluster_turns(turns, spans, X)
+    assert [t.speaker for t in out] == [0, 1, 2, 1, 0, 2, 1]
+    assert [(t.start, t.end) for t in out] == [(t.start, t.end) for t in turns]
+
+
+def test_recluster_merges_tiny_cluster():
+    turns, truth = _meeting([0, 1, 0, 1, 0, 1])
+    # speaker 2 talks 6 s in total: two 3 s turns, so its cluster merges into a real one
+    turns[1:1] = [w.Turn(20, 23, 99)]
+    truth[1:1] = [2]
+    turns.append(w.Turn(200, 203, 99))
+    truth.append(2)
+    spans, X = _embed(turns, truth, _voices())
+    out = w.recluster_turns(turns, spans, X)
+    assert sorted({t.speaker for t in out}) == [0, 1]
+    assert out[0].speaker == 0
+    first_other = next(t.speaker for t, s in zip(out, truth) if s == 1)
+    assert first_other == 1
+
+
+def test_recluster_given_count():
+    turns, truth = _meeting([0, 1, 2, 0, 1, 2])
+    spans, X = _embed(turns, truth, _voices())
+    out = w.recluster_turns(turns, spans, X, num_speakers=2)
+    assert len({t.speaker for t in out}) == 2
+
+
+def test_recluster_edge_cases():
+    import numpy as np
+
+    sample = _voices()
+    assert w.recluster_turns([], [], np.zeros((0, 192))) == []
+    # one turn
+    turns = [w.Turn(0, 30, 5)]
+    spans, X = _embed(turns, [0], sample)
+    assert [t.speaker for t in w.recluster_turns(turns, spans, X)] == [0]
+    # a single window
+    turns = [w.Turn(0, 1.2, 4), w.Turn(2, 2.3, 9)]
+    spans, X = _embed(turns, [0, 1], sample)
+    assert len(X) == 1
+    assert [t.speaker for t in w.recluster_turns(turns, spans, X)] == [0, 0]
+    # only short turns: no windows at all
+    turns = [w.Turn(0, 0.3, 1), w.Turn(1, 1.2, 2)]
+    assert [t.speaker for t in w.recluster_turns(turns, [], np.zeros((0, 192)))] == [0, 0]
+    # more speakers asked for than there are windows: clipped, no crash; min_talk=0 keeps every cluster
+    turns = [w.Turn(0, 1, 0), w.Turn(1, 2, 0), w.Turn(2, 3, 0)]
+    spans, X = _embed(turns, [0, 1, 2], sample)
+    out = w.recluster_turns(turns, spans, X, num_speakers=8, min_talk=0)
+    assert len(X) == 3 and sorted(t.speaker for t in out) == [0, 1, 2]
+    # identical windows (silence-like): one speaker, no NaN
+    X = np.zeros((40, 192))
+    turns = [w.Turn(i, i + 1, 0) for i in range(40)]
+    spans = w.window_spans(turns)
+    assert {t.speaker for t in w.recluster_turns(turns, spans, X)} == {0}
+    assert w.estimate_speakers(X) >= 1
+
+
+def test_short_turn_takes_nearest_label():
+    turns = [w.Turn(0, 20, 99), w.Turn(20, 40, 99), w.Turn(40.2, 40.5, 99), w.Turn(60, 80, 99), w.Turn(80, 100, 99)]
+    # the 0.3 s turn is 0.2 s after the second turn (speaker 1) and 19.5 s before the fourth (speaker 0)
+    truth = [0, 1, 0, 0, 1]
+    spans, X = _embed(turns, truth, _voices())
+    assert all(i != 2 for i, _, _ in spans)
+    out = w.recluster_turns(turns, spans, X)
+    assert out[2].speaker == out[1].speaker == 1
+
+
+def test_large_n_subsamples():
+    import time
+
+    turns, truth = _meeting([0, 1, 2] * 30, seconds=30.0)
+    spans, X = _embed(turns, truth, _voices())
+    assert len(X) > 3000
+    t0 = time.time()
+    out = w.recluster_turns(turns, spans, X)
+    assert time.time() - t0 < 30
+    assert [t.speaker for t in out] == [0, 1, 2] * 30
+
+
 def test_merge_tracks_orders_by_time():
     me = [w.Segment(0, 1, "m1", "Me"), w.Segment(5, 6, "m2", "Me")]
     others = [w.Segment(2, 3, "o1", "Others"), w.Segment(5, 5.5, "o2", "Others")]
