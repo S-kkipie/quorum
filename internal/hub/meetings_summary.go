@@ -56,7 +56,9 @@ type meetingSettings struct {
 	BaseURL  string   `json:"baseUrl"`
 	Language string   `json:"language"`
 	Aliases  []string `json:"aliases"`
-	HasKey   bool     `json:"hasKey"`
+	// Correct runs the transcript correction pass before a ccapi summary (on unless the owner turned it off).
+	Correct bool `json:"correct"`
+	HasKey  bool `json:"hasKey"`
 }
 
 // stored is what the settings JSON keeps (HasKey is derived from the key, which is stored apart).
@@ -67,7 +69,8 @@ func (m meetingSettings) stored() any {
 		BaseURL  string   `json:"baseUrl"`
 		Language string   `json:"language"`
 		Aliases  []string `json:"aliases"`
-	}{m.Provider, m.Model, m.BaseURL, m.Language, m.Aliases}
+		Correct  bool     `json:"correct"`
+	}{m.Provider, m.Model, m.BaseURL, m.Language, m.Aliases, m.Correct}
 }
 
 // meetSummaries is the server's summary state.
@@ -151,7 +154,8 @@ func (s *Server) recoverSummaries() {
 
 // meetingSettings reads Settings → Meetings with its defaults.
 func (s *Server) meetingSettings() meetingSettings {
-	set := meetingSettings{Provider: providerLocal, Language: defaultLanguage, Aliases: []string{}}
+	// the defaults stay where the stored JSON has no such field (Correct: settings stored before it existed)
+	set := meetingSettings{Provider: providerLocal, Language: defaultLanguage, Aliases: []string{}, Correct: true}
 	if raw, err := s.st.Meta(metaMeetingSettings); err == nil && raw != "" {
 		_ = json.Unmarshal([]byte(raw), &set)
 	}
@@ -303,6 +307,13 @@ func (s *Server) runHubSummary(ctx context.Context, id string, gen int, c summar
 	progress := func(pct int, stage string) {
 		if s.currentSummaryRun(id, gen) {
 			s.setMeetingState(id, "summarising", "", pct, stage)
+		}
+	}
+	// the correction pass, once per transcript and only with ccapi (a failure keeps the raw transcript)
+	if m.CorrectedAt == 0 && m.Provider == providerCCAPI && s.meetingSettings().Correct {
+		segs = s.correctMeeting(ctx, id, gen, m, segs, names, chat, progress)
+		if !s.currentSummaryRun(id, gen) {
+			return
 		}
 	}
 	out, err := summarizeSegments(ctx, chat, segs, names, s.summaryLanguage(m), s.glossary(m, names), progress)
@@ -883,7 +894,7 @@ func (s *Server) handleGetMeetingSettings(w http.ResponseWriter, r *http.Request
 }
 
 // handlePutMeetingSettings: PUT /api/settings/meetings {provider?, model?, baseUrl?, key?, language?,
-// aliases?}; key is write-only ("" removes it). Changed aliases rewrite every meeting's "mine".
+// aliases?, correct?}; key is write-only ("" removes it). Changed aliases rewrite every meeting's "mine".
 func (s *Server) handlePutMeetingSettings(w http.ResponseWriter, r *http.Request) {
 	var b struct {
 		Provider *string   `json:"provider"`
@@ -892,6 +903,7 @@ func (s *Server) handlePutMeetingSettings(w http.ResponseWriter, r *http.Request
 		Key      *string   `json:"key"`
 		Language *string   `json:"language"`
 		Aliases  *[]string `json:"aliases"`
+		Correct  *bool     `json:"correct"`
 	}
 	if !decode(w, r, &b) {
 		return
@@ -929,6 +941,9 @@ func (s *Server) handlePutMeetingSettings(w http.ResponseWriter, r *http.Request
 			return
 		}
 		set.Language = *b.Language
+	}
+	if b.Correct != nil {
+		set.Correct = *b.Correct
 	}
 	aliasesChanged := false
 	if b.Aliases != nil {

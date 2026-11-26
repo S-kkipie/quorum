@@ -21,7 +21,7 @@ const machine = (name: string, o: Partial<Machine> = {}): Machine => ({
 const workspace = (id: string, name: string, color: string): Workspace => ({ id, name, color, whoasProfile: '' })
 const project = (id: string, workspaceId: string, name: string, o: Partial<Project> = {}): Project => ({
   id, workspaceId, name, repoUrl: 'https://example.com/acme/' + id + '.git', connector: { kind: 'none', settings: {}, hasToken: false, intervalMin: 5 },
-  summary: '', summaryAt: 0, progress: { done: 3, total: 9 }, syncError: '', syncedAt: NOW, ...o,
+  summary: '', summaryAt: 0, progress: { done: 3, total: 9 }, syncError: '', syncedAt: NOW, glossary: '', ...o,
 })
 const checkout = (id: string, projectId: string, m: string, root: string): Checkout => ({ id, projectId, machine: m, root, repoUrl: '', branch: 'main', updatedAt: NOW })
 const session = (id: string, o: Partial<SessionInfo> = {}): SessionInfo => ({
@@ -518,7 +518,7 @@ export function fixtureBriefing(mode: FixtureMode): (projectId: string) => Promi
 
 const mtg = (id: string, o: Partial<Meeting> = {}): Meeting => ({
   id, projectId: 'p1', title: 'Weekly sync', startedAt: NOW - DAY, durationS: 1800, language: 'en', status: 'ready', progress: 100, error: '',
-  provider: 'local', createdAt: NOW - DAY, updatedAt: NOW - DAY, hasAudio: true, audioBytes: 12_000_000, channels: '', speakerCount: 0, ...o,
+  provider: 'local', createdAt: NOW - DAY, updatedAt: NOW - DAY, hasAudio: true, audioBytes: 12_000_000, channels: '', speakerCount: 0, correctedAt: 0, ...o,
 })
 const LINES = [
   'Good morning, shall we start with the export?', 'The export is almost done; the CSV part works.', 'Then we ship it on Monday.',

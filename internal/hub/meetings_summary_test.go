@@ -89,7 +89,8 @@ func newSumFx(t *testing.T, answer func(n int, prompt string) (string, error)) *
 		}
 		return fmt.Sprintf("https://github.com/%s/issues/%d", cfg.Settings["repo"], len(f.issues)), nil
 	}
-	rr := f.do("PUT", "/api/settings/meetings", `{"provider":"ccapi"}`)
+	// the summary tests count the model's calls: the correction pass has its own tests (meetings_correct_test.go)
+	rr := f.do("PUT", "/api/settings/meetings", `{"provider":"ccapi","correct":false}`)
 	require.Equal(t, 200, rr.Code, rr.Body.String())
 	return f
 }
@@ -363,11 +364,11 @@ func TestMeetingSettingsKeyIsWriteOnly(t *testing.T) {
 	f := newMeetFx(t)
 	rr := f.do("GET", "/api/settings/meetings", "")
 	require.Equal(t, 200, rr.Code)
-	require.JSONEq(t, `{"provider":"local","model":"","baseUrl":"","language":"es","aliases":[],"hasKey":false}`, rr.Body.String())
+	require.JSONEq(t, `{"provider":"local","model":"","baseUrl":"","language":"es","aliases":[],"correct":true,"hasKey":false}`, rr.Body.String())
 	rr = f.do("PUT", "/api/settings/meetings", `{"provider":"openai-compatible","model":"m-1","baseUrl":"https://llm.example/v1","key":"sk-very-secret","language":"auto","aliases":["Zorv"]}`)
 	require.Equal(t, 200, rr.Code, rr.Body.String())
 	require.NotContains(t, rr.Body.String(), "sk-very-secret")
-	require.JSONEq(t, `{"provider":"openai-compatible","model":"m-1","baseUrl":"https://llm.example/v1","language":"auto","aliases":["Zorv"],"hasKey":true}`, rr.Body.String())
+	require.JSONEq(t, `{"provider":"openai-compatible","model":"m-1","baseUrl":"https://llm.example/v1","language":"auto","aliases":["Zorv"],"correct":true,"hasKey":true}`, rr.Body.String())
 	rr = f.do("GET", "/api/settings/meetings", "")
 	require.NotContains(t, rr.Body.String(), "sk-very-secret")
 	raw, err := f.st.Meta(metaMeetingSettings)

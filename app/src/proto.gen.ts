@@ -800,6 +800,10 @@ export interface Meeting {
    * diarization clusters to it.
    */
   speakerCount: number /* int */;
+  /**
+   * CorrectedAt is when the correction pass fixed the transcript (unix ms, 0 = not corrected).
+   */
+  correctedAt: number /* int64 */;
   summary?: MeetingSummary;
   segments?: MeetingSegment[];
   actions?: MeetingAction[];
@@ -819,6 +823,10 @@ export interface MeetingSegment {
   speaker: string;
   label?: string;
   text: string;
+  /**
+   * OrigText is the transcription's own text of a segment the correction pass changed ("" = unchanged).
+   */
+  origText?: string;
 }
 /**
  * MeetingPoint is a decision or an open point of a summary; TsMs cites the transcript (0 = none).

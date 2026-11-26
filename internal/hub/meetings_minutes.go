@@ -36,6 +36,8 @@ type minutesPrompts struct {
 	MergePart          string            `json:"mergePart"`
 	MergePartSeparator string            `json:"mergePartSeparator"`
 	Glossary           string            `json:"glossary"`
+	CorrectSystem      string            `json:"correctSystem"`
+	CorrectUser        string            `json:"correctUser"`
 	UnknownLanguage    string            `json:"unknownLanguage"`
 	Languages          map[string]string `json:"languages"`
 	UnknownOwners      []string          `json:"unknownOwners"`
@@ -59,6 +61,9 @@ func mustPrompts(b []byte) *minutesPrompts {
 		p.unknown[o] = true
 	}
 	p.generic = regexp.MustCompile(p.GenericSpeaker)
+	if p.CorrectSystem == "" || p.CorrectUser == "" {
+		panic("meetings: prompts.json: correctSystem and correctUser are required")
+	}
 	if p.SectionMinutes <= 0 || p.TitleMax <= 0 {
 		panic("meetings: prompts.json: sectionMinutes and titleMax must be positive")
 	}

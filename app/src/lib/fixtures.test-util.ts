@@ -7,7 +7,7 @@ export const sess = (id: string, o: Partial<SessionInfo> = {}): SessionInfo => (
 })
 export const proj = (id: string, o: Partial<Project> = {}): Project => ({
   id, workspaceId: 'w1', name: 'Project ' + id, repoUrl: '', connector: { kind: 'exec', settings: {}, hasToken: false, intervalMin: 5 },
-  summary: '', summaryAt: 0, progress: { done: 1, total: 4 }, syncError: '', syncedAt: 0, ...o,
+  summary: '', summaryAt: 0, progress: { done: 1, total: 4 }, syncError: '', syncedAt: 0, glossary: '', ...o,
 })
 export const tk = (id: string, o: Partial<Ticket> = {}): Ticket => ({
   id, projectId: 'p1', externalId: 'E-' + id, title: 'Ticket ' + id, status: 'todo', rawStatus: 'open', assignee: '', url: '', body: '', comments: [], updatedAt: 0, ...o,

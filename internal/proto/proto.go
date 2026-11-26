@@ -696,10 +696,12 @@ type Meeting struct {
 	Channels string `json:"channels"`
 	// SpeakerCount is the number of people the owner gave (PATCH speakers, 0 = unknown); the transcription's
 	// diarization clusters to it.
-	SpeakerCount int              `json:"speakerCount"`
-	Summary      *MeetingSummary  `json:"summary,omitempty"`
-	Segments     []MeetingSegment `json:"segments,omitempty"`
-	Actions      []MeetingAction  `json:"actions,omitempty"`
+	SpeakerCount int `json:"speakerCount"`
+	// CorrectedAt is when the correction pass fixed the transcript (unix ms, 0 = not corrected).
+	CorrectedAt int64            `json:"correctedAt"`
+	Summary     *MeetingSummary  `json:"summary,omitempty"`
+	Segments    []MeetingSegment `json:"segments,omitempty"`
+	Actions     []MeetingAction  `json:"actions,omitempty"`
 	// Speakers maps a speaker label of the segments ("Speaker 2") to the name the owner gave it.
 	Speakers map[string]string `json:"speakers,omitempty"`
 }
@@ -713,6 +715,8 @@ type MeetingSegment struct {
 	Speaker string `json:"speaker"`
 	Label   string `json:"label,omitempty"`
 	Text    string `json:"text"`
+	// OrigText is the transcription's own text of a segment the correction pass changed ("" = unchanged).
+	OrigText string `json:"origText,omitempty"`
 }
 
 // MeetingPoint is a decision or an open point of a summary; TsMs cites the transcript (0 = none).

@@ -18,7 +18,7 @@ import type { Envelope } from '../../proto.gen'
 
 export const meeting = (o: Partial<Meeting> = {}): Meeting => ({
   id: 'm1', projectId: 'p1', title: 'Weekly sync', startedAt: Date.UTC(2026, 10, 20, 10), durationS: 1800, language: 'en', status: 'ready', progress: 100, error: '',
-  provider: 'local', createdAt: 1, updatedAt: 1, hasAudio: true, audioBytes: 1000, channels: '', speakerCount: 0, ...o,
+  provider: 'local', createdAt: 1, updatedAt: 1, hasAudio: true, audioBytes: 1000, channels: '', speakerCount: 0, correctedAt: 0, ...o,
 })
 const ready = (): Meeting => meeting({
   summary: {

@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS meetings (
 	error TEXT NOT NULL DEFAULT '',
 	provider TEXT NOT NULL DEFAULT '',
 	ready_at INTEGER NOT NULL DEFAULT 0,
+	corrected_at INTEGER NOT NULL DEFAULT 0,
 	created_at INTEGER NOT NULL DEFAULT 0,
 	updated_at INTEGER NOT NULL DEFAULT 0
 );
@@ -66,6 +67,7 @@ CREATE TABLE IF NOT EXISTS meeting_segments (
 	end_ms INTEGER NOT NULL DEFAULT 0,
 	speaker TEXT NOT NULL DEFAULT '',
 	text TEXT NOT NULL DEFAULT '',
+	orig_text TEXT NOT NULL DEFAULT '',
 	PRIMARY KEY (meeting_id, idx)
 );
 CREATE TABLE IF NOT EXISTS meeting_summary (
@@ -140,6 +142,20 @@ func migrateMeetings(s *Store) error {
 	if n == 0 {
 		if _, err := s.db.Exec(`ALTER TABLE meetings ADD COLUMN speakers INTEGER NOT NULL DEFAULT 0`); err != nil {
 			return err
+		}
+	}
+	// Plan 15b: the correction pass (when the transcript was corrected, and each changed segment's raw text)
+	for _, c := range []struct{ table, col, ddl string }{
+		{"meetings", "corrected_at", `ALTER TABLE meetings ADD COLUMN corrected_at INTEGER NOT NULL DEFAULT 0`},
+		{"meeting_segments", "orig_text", `ALTER TABLE meeting_segments ADD COLUMN orig_text TEXT NOT NULL DEFAULT ''`},
+	} {
+		if err := s.db.QueryRow(`SELECT count(*) FROM pragma_table_info(?) WHERE name=?`, c.table, c.col).Scan(&n); err != nil {
+			return err
+		}
+		if n == 0 {
+			if _, err := s.db.Exec(c.ddl); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -315,13 +331,14 @@ func (s *Store) DeleteMeetingUpload(id string) error {
 }
 
 const meetingCols = `m.id,m.project_id,m.title,m.started_at,m.duration_s,m.language,m.status,m.progress,m.error,m.provider,
-	m.created_at,m.updated_at,a.meeting_id IS NOT NULL,COALESCE(a.bytes,0),COALESCE(a.channels_meta,''),m.speakers`
+	m.created_at,m.updated_at,a.meeting_id IS NOT NULL,COALESCE(a.bytes,0),COALESCE(a.channels_meta,''),m.speakers,
+	m.corrected_at`
 const meetingFrom = ` FROM meetings m LEFT JOIN meeting_audio a ON a.meeting_id=m.id`
 
 func scanMeeting(sc interface{ Scan(...any) error }) (proto.Meeting, error) {
 	var m proto.Meeting
 	err := sc.Scan(&m.ID, &m.ProjectID, &m.Title, &m.StartedAt, &m.DurationS, &m.Language, &m.Status, &m.Progress, &m.Error,
-		&m.Provider, &m.CreatedAt, &m.UpdatedAt, &m.HasAudio, &m.AudioBytes, &m.Channels, &m.SpeakerCount)
+		&m.Provider, &m.CreatedAt, &m.UpdatedAt, &m.HasAudio, &m.AudioBytes, &m.Channels, &m.SpeakerCount, &m.CorrectedAt)
 	return m, err
 }
 
@@ -395,7 +412,7 @@ func (s *Store) MeetingDetail(id string) (proto.Meeting, error) {
 
 // MeetingSegments returns the meeting's transcript in order.
 func (s *Store) MeetingSegments(id string) ([]proto.MeetingSegment, error) {
-	rows, err := s.db.Query(`SELECT start_ms,end_ms,speaker,text FROM meeting_segments WHERE meeting_id=? ORDER BY idx`, id)
+	rows, err := s.db.Query(`SELECT start_ms,end_ms,speaker,text,orig_text FROM meeting_segments WHERE meeting_id=? ORDER BY idx`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -403,7 +420,7 @@ func (s *Store) MeetingSegments(id string) ([]proto.MeetingSegment, error) {
 	var out []proto.MeetingSegment
 	for rows.Next() {
 		var sg proto.MeetingSegment
-		if err := rows.Scan(&sg.StartMs, &sg.EndMs, &sg.Speaker, &sg.Text); err != nil {
+		if err := rows.Scan(&sg.StartMs, &sg.EndMs, &sg.Speaker, &sg.Text, &sg.OrigText); err != nil {
 			return nil, err
 		}
 		out = append(out, sg)
@@ -432,7 +449,8 @@ func (s *Store) MeetingSpeakers(id string) (map[string]string, error) {
 	return out, rows.Err()
 }
 
-// ReplaceMeetingSegments makes the meeting's transcript equal to segs.
+// ReplaceMeetingSegments makes the meeting's transcript equal to segs: a new raw transcript, so its
+// correction is undone (corrected_at back to 0, no original texts).
 func (s *Store) ReplaceMeetingSegments(id string, segs []proto.MeetingSegment) (err error) {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -452,7 +470,50 @@ func (s *Store) ReplaceMeetingSegments(id string, segs []proto.MeetingSegment) (
 			return err
 		}
 	}
+	if _, err = tx.Exec(`UPDATE meetings SET corrected_at=0 WHERE id=?`, id); err != nil {
+		return err
+	}
 	return tx.Commit()
+}
+
+// ApplySegmentCorrections replaces the text of the meeting's segments by index (fixes: idx → new text).
+// orig_text keeps the first raw text: it is set only while empty, so a second correction never hides the
+// transcription's own words. An index with no segment is ignored.
+func (s *Store) ApplySegmentCorrections(meetingID string, fixes map[int]string, now int64) (err error) {
+	if len(fixes) == 0 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			tx.Rollback()
+		}
+	}()
+	for idx, text := range fixes {
+		if _, err = tx.Exec(`UPDATE meeting_segments SET orig_text=CASE WHEN orig_text='' THEN text ELSE orig_text END, text=?
+			WHERE meeting_id=? AND idx=?`, text, meetingID, idx); err != nil {
+			return err
+		}
+	}
+	if _, err = tx.Exec(`UPDATE meetings SET updated_at=? WHERE id=?`, now, meetingID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// SetMeetingCorrected records that the meeting's transcript went through the correction pass at now.
+func (s *Store) SetMeetingCorrected(meetingID string, now int64) error {
+	res, err := s.db.Exec(`UPDATE meetings SET corrected_at=? WHERE id=?`, now, meetingID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // SetMeetingSummary stores the meeting's summary.

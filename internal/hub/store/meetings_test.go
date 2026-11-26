@@ -250,3 +250,60 @@ func TestExpiredMeetingUploads(t *testing.T) {
 	_, err = s.MeetingUploadByID(u.ID)
 	require.ErrorIs(t, err, ErrNotFound)
 }
+
+func TestApplyCorrectionsKeepsFirstOriginal(t *testing.T) {
+	s := openMem(t)
+	m := mkMeeting(t, s, "", "/tmp/a.ogg")
+	require.NoError(t, s.ReplaceMeetingSegments(m.ID, []proto.MeetingSegment{
+		{StartMs: 0, Speaker: "Speaker 1", Text: "la guía de revisión"},
+		{StartMs: 4000, Speaker: "Speaker 2", Text: "the quilon labs demo"},
+	}))
+	require.NoError(t, s.ApplySegmentCorrections(m.ID, map[int]string{0: "la guía de remisión", 7: "no such segment"}, 1000))
+	require.NoError(t, s.ApplySegmentCorrections(m.ID, map[int]string{0: "la guía de emisión", 1: "the Quillon Labs demo"}, 2000))
+	segs, err := s.MeetingSegments(m.ID)
+	require.NoError(t, err)
+	require.Len(t, segs, 2)
+	require.Equal(t, "la guía de emisión", segs[0].Text)
+	require.Equal(t, "la guía de revisión", segs[0].OrigText) // the transcription's own words, not the first fix
+	require.Equal(t, "the Quillon Labs demo", segs[1].Text)
+	require.Equal(t, "the quilon labs demo", segs[1].OrigText)
+
+	require.NoError(t, s.SetMeetingCorrected(m.ID, 3000))
+	got, err := s.Meeting(m.ID)
+	require.NoError(t, err)
+	require.Equal(t, int64(3000), got.CorrectedAt)
+	require.ErrorIs(t, s.SetMeetingCorrected("nope", 1), ErrNotFound)
+
+	// a new transcript (retranscribed from the audio) is raw again: no originals, not corrected
+	require.NoError(t, s.ReplaceMeetingSegments(m.ID, []proto.MeetingSegment{{StartMs: 0, Text: "la guía de revisión otra vez"}}))
+	segs, err = s.MeetingSegments(m.ID)
+	require.NoError(t, err)
+	require.Equal(t, "", segs[0].OrigText)
+	got, _ = s.Meeting(m.ID)
+	require.Equal(t, int64(0), got.CorrectedAt)
+}
+
+func TestCorrectionColumnsMigrateOnExistingDB(t *testing.T) {
+	path := t.TempDir() + "/q.db"
+	s, err := Open(path)
+	require.NoError(t, err)
+	m := mkMeeting(t, s, "", "/tmp/a.ogg")
+	require.NoError(t, s.ReplaceMeetingSegments(m.ID, []proto.MeetingSegment{{Text: "hello zorvanite"}}))
+	for _, q := range []string{`ALTER TABLE meetings DROP COLUMN corrected_at`, `ALTER TABLE meeting_segments DROP COLUMN orig_text`} {
+		_, err = s.db.Exec(q) // a DB from before Plan 15b
+		require.NoError(t, err)
+	}
+	require.NoError(t, s.Close())
+	for range 2 { // idempotent
+		s, err = Open(path)
+		require.NoError(t, err)
+		got, err := s.Meeting(m.ID)
+		require.NoError(t, err)
+		require.Equal(t, int64(0), got.CorrectedAt)
+		segs, err := s.MeetingSegments(m.ID)
+		require.NoError(t, err)
+		require.Equal(t, "hello zorvanite", segs[0].Text)
+		require.Equal(t, "", segs[0].OrigText)
+		require.NoError(t, s.Close())
+	}
+}
