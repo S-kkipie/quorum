@@ -86,7 +86,7 @@ export default function Transcript({ segments, onSeek, onRename, onResummarise }
               <button type="button" onClick={() => onSeek(s.startMs)} aria-label={`Play from ${clock(s.startMs)}`}
                 className="inline-flex min-h-11 min-w-11 shrink-0 items-center tabular-nums text-accent hover:underline">{clock(s.startMs)}</button>
               {s.speaker && <span className="min-w-0 truncate font-medium text-ink">{s.speaker}</span>}
-              {s.origText && !orig && <span title="Corrected by Claude" aria-label="Corrected by Claude" className="shrink-0 text-accent">✎</span>}
+              {s.origText && !orig && <span role="img" title="Corrected by Claude" aria-label="Corrected by Claude" className="shrink-0 text-accent">✎</span>}
             </div>
             <p className={`-mt-2 text-sm text-ink ${wrap}`}>
               {splitMatches(textOf(s), needle).map((part, j) => (j % 2 ? <mark key={j} className="rounded-sm bg-accent-soft text-ink">{part}</mark> : part))}

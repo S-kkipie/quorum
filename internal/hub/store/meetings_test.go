@@ -255,11 +255,11 @@ func TestApplyCorrectionsKeepsFirstOriginal(t *testing.T) {
 	s := openMem(t)
 	m := mkMeeting(t, s, "", "/tmp/a.ogg")
 	require.NoError(t, s.ReplaceMeetingSegments(m.ID, []proto.MeetingSegment{
-		{StartMs: 0, Speaker: "Speaker 1", Text: "la guía de revisión"},
+		{StartMs: 0, Speaker: "Speaker 1", Text: "la nota de sorvan"},
 		{StartMs: 4000, Speaker: "Speaker 2", Text: "the quilon labs demo"},
 	}))
 	ok, err := s.ApplySegmentCorrections(m.ID, []SegmentFix{
-		{Idx: 0, Expect: "la guía de revisión", Text: "la guía de remisión"},
+		{Idx: 0, Expect: "la nota de sorvan", Text: "la nota de zorvan"},
 		{Idx: 1, Expect: "the quilon labs demo", Text: "the quilon labs demo"}, // a check only
 	}, 1000)
 	require.NoError(t, err)
@@ -268,7 +268,7 @@ func TestApplyCorrectionsKeepsFirstOriginal(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(1000), got.CorrectedAt)
 	ok, err = s.ApplySegmentCorrections(m.ID, []SegmentFix{
-		{Idx: 0, Expect: "la guía de remisión", Text: "la guía de emisión"},
+		{Idx: 0, Expect: "la nota de zorvan", Text: "la nota de zorvin"},
 		{Idx: 1, Expect: "the quilon labs demo", Text: "the Quillon Labs demo"},
 	}, 2000)
 	require.NoError(t, err)
@@ -276,19 +276,35 @@ func TestApplyCorrectionsKeepsFirstOriginal(t *testing.T) {
 	segs, err := s.MeetingSegments(m.ID)
 	require.NoError(t, err)
 	require.Len(t, segs, 2)
-	require.Equal(t, "la guía de emisión", segs[0].Text)
-	require.Equal(t, "la guía de revisión", segs[0].OrigText) // the transcription's own words, not the first fix
+	require.Equal(t, "la nota de zorvin", segs[0].Text)
+	require.Equal(t, "la nota de sorvan", segs[0].OrigText) // the transcription's own words, not the first fix
 	require.Equal(t, "the Quillon Labs demo", segs[1].Text)
 	require.Equal(t, "the quilon labs demo", segs[1].OrigText)
 	got, _ = s.Meeting(m.ID)
 	require.Equal(t, int64(2000), got.CorrectedAt)
+
+	// a segment the correction never saw: nothing applies
+	require.NoError(t, s.ReplaceMeetingSegments(m.ID, []proto.MeetingSegment{
+		{StartMs: 0, Text: "a"}, {StartMs: 1000, Text: "b"}, {StartMs: 2000, Text: "extra"},
+	}))
+	ok, err = s.ApplySegmentCorrections(m.ID, []SegmentFix{
+		{Idx: 0, Expect: "a", Text: "A"}, {Idx: 1, Expect: "b", Text: "b"},
+	}, 3000)
+	require.NoError(t, err)
+	require.False(t, ok)
+	segs, err = s.MeetingSegments(m.ID)
+	require.NoError(t, err)
+	require.Equal(t, "a", segs[0].Text)
+	require.NoError(t, s.ReplaceMeetingSegments(m.ID, []proto.MeetingSegment{
+		{StartMs: 0, Speaker: "Speaker 1", Text: "nota de sorvan"}, {StartMs: 4000, Speaker: "Speaker 2", Text: "the quilon labs demo"},
+	}))
 
 	ok, err = s.ApplySegmentCorrections("nope", nil, 1)
 	require.NoError(t, err)
 	require.False(t, ok)
 
 	// a new transcript (retranscribed from the audio) is raw again: no originals, not corrected
-	require.NoError(t, s.ReplaceMeetingSegments(m.ID, []proto.MeetingSegment{{StartMs: 0, Text: "la guía de revisión otra vez"}}))
+	require.NoError(t, s.ReplaceMeetingSegments(m.ID, []proto.MeetingSegment{{StartMs: 0, Text: "la nota de sorvan otra vez"}}))
 	segs, err = s.MeetingSegments(m.ID)
 	require.NoError(t, err)
 	require.Equal(t, "", segs[0].OrigText)

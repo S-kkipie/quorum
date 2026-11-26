@@ -54,5 +54,5 @@ func whisperPrompt(terms []string) string {
 		b = append(b, tr...)
 		room -= need
 	}
-	return string(b) + "."
+	return strings.TrimRight(string(b), " ") + "."
 }

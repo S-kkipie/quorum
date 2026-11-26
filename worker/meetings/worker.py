@@ -245,6 +245,9 @@ class FasterWhisperEngine:
                 vad_parameters=dict(threshold=0.25, min_silence_duration_ms=1500, speech_pad_ms=500),
                 condition_on_previous_text=False,
                 initial_prompt=prompt or None,
+                # initial_prompt only reaches the first window when condition_on_previous_text is off;
+                # hotwords is applied to every window
+                hotwords=prompt or None,
             )
             out = []
             for s in segs:
@@ -265,6 +268,8 @@ def describe_model_error(model: str, e: Exception) -> str:
     low = msg.lower()
     if "cuda" in low or "cublas" in low or "cudnn" in low or "gpu" in low:
         return f"The GPU failed while transcribing ({msg}). Check `nvidia-smi` on the machine, then Retry."
+    if "cached snapshot" in low or "outgoing traffic" in low or e.__class__.__name__ == "LocalEntryNotFoundError":
+        return f"The Whisper model {model or 'large-v3'} is not downloaded on this machine; run `quorumd meetings setup`."
     if model and ("not found" in low or "no such file" in low or "repository" in low or "connect" in low):
         return f"The Whisper model {model} is not available on this machine; run `quorumd meetings setup`. ({msg})"
     return f"Transcription failed: {msg}"

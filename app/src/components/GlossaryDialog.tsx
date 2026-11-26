@@ -22,7 +22,7 @@ export default function GlossaryDialog({ projectId, initial, onClose }: { projec
       <DialogContent className="max-w-[calc(100vw-1rem)] sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Glossary</DialogTitle>
-          <DialogDescription>Names, products and terms of this project, one per line or comma-separated. Meetings spell them as written here.</DialogDescription>
+          <DialogDescription>Names, products and terms of this project, one per line or comma-separated. Meetings spell them as written here. Transcription only uses roughly the first 600 characters; put the most important terms first.</DialogDescription>
         </DialogHeader>
         <textarea aria-label="Glossary terms" value={text} onChange={(e) => setText(e.target.value)} rows={8}
           className="min-h-11 w-full rounded-lg border border-line bg-surface p-2 text-sm" />

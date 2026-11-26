@@ -154,9 +154,10 @@ def test_engine_uses_soft_vad_and_no_previous_text(monkeypatch):
         vad_parameters=dict(threshold=0.25, min_silence_duration_ms=1500, speech_pad_ms=500),
         condition_on_previous_text=False,
         initial_prompt="Vocabulary: zorvanite.",
+        hotwords="Vocabulary: zorvanite.",
     )
     eng.transcribe([0.0] * 16000, "en", lambda p: None)
-    assert seen["initial_prompt"] is None
+    assert seen["initial_prompt"] is None and seen["hotwords"] is None
 
 
 @needs_ffmpeg
@@ -207,10 +208,15 @@ def test_merge_tracks_orders_by_time():
 
 
 def test_model_errors_are_readable():
-    msg = w.describe_model_error("large-v3-turbo", RuntimeError("CUDA failed with error out of memory"))
+    msg = w.describe_model_error("large-v3", RuntimeError("CUDA failed with error out of memory"))
     assert "GPU" in msg and "Retry" in msg
-    msg = w.describe_model_error("large-v3-turbo", RuntimeError("Repository Not Found"))
+    msg = w.describe_model_error("large-v3", RuntimeError("Repository Not Found"))
     assert "quorumd meetings setup" in msg
+    expect = "The Whisper model large-v3 is not downloaded on this machine; run `quorumd meetings setup`."
+    assert w.describe_model_error("large-v3", RuntimeError("Cannot find an appropriate cached snapshot folder")) == expect
+    assert w.describe_model_error("large-v3", RuntimeError("outgoing traffic has been disabled")) == expect
+    LocalEntryNotFoundError = type("LocalEntryNotFoundError", (Exception,), {})
+    assert w.describe_model_error("large-v3", LocalEntryNotFoundError("x")) == expect
 
 
 # ---------------------------------------------------------------------------------------------------

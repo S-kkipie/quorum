@@ -233,6 +233,7 @@ describe('Project: glossary', () => {
     openMenu()
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Glossary' }))
     const box = await screen.findByLabelText('Glossary terms') as HTMLTextAreaElement
+    expect(screen.getByText(/first 600 characters/)).toBeTruthy()
     fireEvent.change(box, { target: { value: 'zorvanite, Quillon Labs' } })
     expect(screen.getByText('23 / 2000')).toBeTruthy()
     fireEvent.change(box, { target: { value: '😀'.repeat(2001) } })

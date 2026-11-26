@@ -498,6 +498,13 @@ func (s *Store) ApplySegmentCorrections(meetingID string, fixes []SegmentFix, no
 			tx.Rollback()
 		}
 	}()
+	var total int
+	if err = tx.QueryRow(`SELECT count(*) FROM meeting_segments WHERE meeting_id=?`, meetingID).Scan(&total); err != nil {
+		return false, err
+	}
+	if total != len(fixes) {
+		return false, nil // the transcript has more or fewer segments than the correction saw
+	}
 	for _, f := range fixes {
 		var res sql.Result
 		if f.Text == f.Expect {

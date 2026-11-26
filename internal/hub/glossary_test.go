@@ -11,8 +11,8 @@ import (
 )
 
 func TestGlossaryTerms(t *testing.T) {
-	require.Equal(t, []string{"zorvanite", "Quillon Labs", "guía de remisión"},
-		glossaryTerms("zorvanite, Quillon Labs\n\nzorvanite ,guía de remisión"))
+	require.Equal(t, []string{"zorvanite", "Quillon Labs", "nota de zorvan"},
+		glossaryTerms("zorvanite, Quillon Labs\n\nzorvanite ,nota de zorvan"))
 	require.Empty(t, glossaryTerms(" , \n"))
 }
 
@@ -27,6 +27,8 @@ func TestWhisperPromptCap(t *testing.T) {
 	require.LessOrEqual(t, len([]rune(p)), 600)
 	require.True(t, strings.HasSuffix(p, "."))
 	require.False(t, strings.HasSuffix(p, ", ."), p)
+	spaced := whisperPrompt([]string{strings.Repeat("a", 5) + strings.Repeat(" ", 700) + "b"})
+	require.False(t, strings.HasSuffix(spaced, " ."), spaced)
 	long := whisperPrompt([]string{strings.Repeat("é", 700)})
 	require.NotEmpty(t, long)
 	require.LessOrEqual(t, len([]rune(long)), 600)

@@ -38,7 +38,7 @@ func segsOf(texts ...string) []proto.MeetingSegment {
 
 func TestWordEditDistance(t *testing.T) {
 	require.Equal(t, 0, wordEditDistance("La Guía", "la guía"))
-	require.Equal(t, 1, wordEditDistance("la guía de revisión", "la guía de remisión"))
+	require.Equal(t, 1, wordEditDistance("la nota de sorvan", "la nota de zorvan"))
 	require.Equal(t, 2, wordEditDistance("a b c", "a"))
 	require.Equal(t, 3, wordEditDistance("", "x y z"))
 	require.Equal(t, 0, wordEditDistance("Hola, ¿qué tal?", "hola qué tal")) // punctuation is not a word change
@@ -89,18 +89,18 @@ func TestCorrectDropsAChunkThatChangedMost(t *testing.T) {
 
 func TestCorrectAcceptsSurgicalFix(t *testing.T) {
 	fc := &fakeChat{answer: func(int, string) (string, error) {
-		return "```json\n[{\"i\": 1, \"text\": \"la guía de remisión\"}]\n```", nil
+		return "```json\n[{\"i\": 1, \"text\": \"la nota de zorvan\"}]\n```", nil
 	}}
-	segs := segsOf("buenos días", "la guía de revisión")
-	fixes, err := correctTranscript(context.Background(), fc.chat, segs, "Quillon Labs", []string{"zorvanite", "remisión"}, map[string]string{"Speaker 1": "Ana"}, nil)
+	segs := segsOf("buenos días", "la nota de sorvan")
+	fixes, err := correctTranscript(context.Background(), fc.chat, segs, "Quillon Labs", []string{"zorvanite", "zorvan"}, map[string]string{"Speaker 1": "Ana"}, nil)
 	require.NoError(t, err)
-	require.Equal(t, map[int]string{1: "la guía de remisión"}, fixes)
+	require.Equal(t, map[int]string{1: "la nota de zorvan"}, fixes)
 	require.Len(t, fc.users, 1)
 	u := fc.users[0]
 	require.Contains(t, u, "Project: Quillon Labs")
-	require.Contains(t, u, "zorvanite, remisión")
+	require.Contains(t, u, "zorvanite, zorvan")
 	require.Contains(t, u, "Speakers: Ana")
-	require.Contains(t, u, "0\tAna\tbuenos días\n1\tAna\tla guía de revisión")
+	require.Contains(t, u, "0\tAna\tbuenos días\n1\tAna\tla nota de sorvan")
 }
 
 func TestCorrectRejectsRewrite(t *testing.T) {
@@ -299,4 +299,37 @@ func TestCorrectionOfAReplacedTranscriptIsDropped(t *testing.T) {
 	require.Len(t, m.Segments, 1)
 	require.Equal(t, "a different transcript", m.Segments[0].Text)
 	require.Equal(t, "", m.Segments[0].OrigText)
+}
+
+func TestCorrectSmallChunkKeepsItsOnlyFix(t *testing.T) {
+	fc := &fakeChat{answer: func(int, string) (string, error) { return `[{"i":0,"text":"the zorvanite beta"}]`, nil }}
+	fixes, err := correctTranscript(context.Background(), fc.chat, segsOf("the zorvanit beta"), "", nil, nil, nil)
+	require.NoError(t, err)
+	require.Equal(t, map[int]string{0: "the zorvanite beta"}, fixes)
+}
+
+func TestCorrectCaseFixesDoNotCountTowardTheShare(t *testing.T) {
+	segs := make([]proto.MeetingSegment, 20)
+	var items []string
+	for i := range segs {
+		segs[i] = seg(int64(i), "Speaker 1", fmt.Sprintf("line %d about zorvanit", i))
+		text := fmt.Sprintf("Line %d about zorvanit.", i) // punctuation and case only
+		if i < 5 {
+			text = fmt.Sprintf("line %d about zorvanite", i)
+		}
+		items = append(items, fmt.Sprintf(`{"i":%d,"text":%q}`, i, text))
+	}
+	fc := &fakeChat{answer: func(int, string) (string, error) { return "[" + strings.Join(items, ",") + "]", nil }}
+	fixes, err := correctTranscript(context.Background(), fc.chat, segs, "", nil, nil, nil)
+	require.NoError(t, err)
+	require.Len(t, fixes, 20) // 5 real changes of 20: kept, with the 15 case-only fixes
+	require.Equal(t, "Line 7 about zorvanit.", fixes[7])
+}
+
+func TestCorrectionGuardDropsALongerText(t *testing.T) {
+	_, ok := acceptCorrection("zorvanit", "zorvanite "+strings.Repeat("x", 40))
+	require.False(t, ok)
+	long := strings.Repeat("a ", 2100)
+	_, ok = acceptCorrection(long, long+"b")
+	require.False(t, ok) // over maxSegText runes
 }

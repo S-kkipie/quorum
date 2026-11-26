@@ -28,6 +28,9 @@ const (
 	correctMaxEditPct = 40
 	// correctMaxChunkPct is the largest share of a chunk's spoken segments that may change, in percent.
 	correctMaxChunkPct = 50
+	// correctMinShareSegs is the spoken-segment count below which the share rule is relaxed (a chunk of
+	// one segment with one fix is not a rewrite).
+	correctMinShareSegs = 10
 )
 
 var errCorrectionFailed = errors.New("every correction call failed")
@@ -66,6 +69,7 @@ func correctTranscript(ctx context.Context, chat chatFunc, segs []proto.MeetingS
 			continue
 		}
 		chunk := map[int]string{}
+		changed := 0
 		for _, it := range items {
 			if it.i < lo || it.i >= hi {
 				continue // not a segment of this chunk
@@ -75,6 +79,9 @@ func correctTranscript(ctx context.Context, chat chatFunc, segs []proto.MeetingS
 			}
 			if t, ok := acceptCorrection(segs[it.i].Text, it.text); ok {
 				chunk[it.i] = t
+				if wordEditDistance(segs[it.i].Text, t) > 0 {
+					changed++ // punctuation and case fixes do not count as rewriting
+				}
 			}
 		}
 		// a proofread changes a few segments: a chunk that changed most of them was rewritten
@@ -84,8 +91,9 @@ func correctTranscript(ctx context.Context, chat chatFunc, segs []proto.MeetingS
 				spoken++
 			}
 		}
-		if len(chunk)*100 > correctMaxChunkPct*spoken {
-			log.Printf("hub: meetings: correction: %d of %d segments changed in segments %d–%d, the chunk's fixes are dropped", len(chunk), spoken, lo, hi-1)
+		// (a chunk of fewer than correctMinShareSegs spoken segments is judged as if it had that many)
+		if changed*100 > correctMaxChunkPct*max(spoken, correctMinShareSegs) {
+			log.Printf("hub: meetings: correction: %d of %d segments changed in segments %d–%d, the chunk's fixes are dropped", changed, spoken, lo, hi-1)
 			continue
 		}
 		for i, t := range chunk {
@@ -202,13 +210,16 @@ func parseCorrections(ans string) ([]correction, bool) {
 }
 
 // acceptCorrection is the guard against rewrites: the corrected text is kept only when it is not empty,
-// differs from the original, and is a small edit of it: a word edit distance of at most 1 (one misheard
+// differs from the original, is not much longer than it, and is a small edit of it: a word edit distance of at most 1 (one misheard
 // word or name, even in a short segment), or else of at most correctMaxEditPct of the original's words.
 func acceptCorrection(orig, fixed string) (string, bool) {
 	fixed = oneLine(fixed)
 	orig = oneLine(orig)
 	if fixed == "" || orig == "" || fixed == orig {
 		return "", false
+	}
+	if len([]rune(fixed)) > maxSegText || len([]rune(fixed)) > 2*len([]rune(orig))+20 {
+		return "", false // far longer than the segment: a rewrite or an insertion
 	}
 	d := wordEditDistance(orig, fixed)
 	if d <= 1 {

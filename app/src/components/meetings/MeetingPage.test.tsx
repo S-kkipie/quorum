@@ -371,6 +371,6 @@ describe('MeetingPage: corrected transcript', () => {
     let s = state()
     s = reduce(s, { type: 'meeting_changed', payload: { id: 'm1', projectId: 'p1', status: 'summarising', progress: 0, stage: 'correcting' } } as unknown as Envelope)
     render(<MeetingPage state={s} id="m1" />)
-    expect(await screen.findByText(/Correcting transcript/)).toBeTruthy()
+    expect(await screen.findByText(/correcting the transcript/)).toBeTruthy()
   })
 })

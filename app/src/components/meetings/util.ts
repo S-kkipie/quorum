@@ -50,7 +50,7 @@ export function statusText(status: string, progress = 0): string {
 
 const STAGES: Record<string, string> = {
   starting: 'starting', downloading: 'downloading the audio', converting: 'converting the audio', diarizing: 'telling the voices apart',
-  finishing: 'finishing', merging: 'merging the sections', correcting: 'Correcting transcript',
+  finishing: 'finishing', merging: 'merging the sections', correcting: 'correcting the transcript',
 }
 /** The worker's stage as a note next to the status ("" when the status already says it). */
 export const stageText = (stage: string) => STAGES[stage] ?? ''
