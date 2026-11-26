@@ -319,9 +319,16 @@ export class Link {
   private async flushNow(): Promise<void> {
     if (!this.queue.length || !this.conn || !this.info) return
     const id = this.info.id
-    const batch = this.queue.map(e => ({ ...e, session: id }))
+    const sent = this.queue
     this.queue = []
-    await this.post(`/v1/sessions/${id}/events`, batch)
+    const status = await this.post(`/v1/sessions/${id}/events`, sent.map(e => ({ ...e, session: id })))
+    // not delivered (the daemon restarting, not reachable, or not knowing the session yet): the batch goes
+    // back in front and the next flush retries it, so a tool_end is never lost. A rejected batch (400, 413)
+    // would fail forever and is dropped.
+    if ((status < 200 || status >= 300) && status !== 400 && status !== 413) {
+      this.queue = [...sent, ...this.queue]
+      if (this.queue.length > MAX_QUEUE) this.queue.splice(0, this.queue.length - MAX_QUEUE)
+    }
   }
 
   /**

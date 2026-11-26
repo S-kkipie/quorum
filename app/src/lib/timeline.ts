@@ -334,6 +334,9 @@ export function buildTimeline(events: Event[], base: string, worktrees: readonly
       return false
     }
     for (const it of flat) {
+      // a tool call of the main turn (or of a foreground subagent) cannot outlive the turn either: its
+      // tool_end was lost (e.g. the machine's daemon restarted under it), so it no longer shows running
+      if (it.t === 'tool' && it.state === 'running' && !inBackground(it.agent ? agents.get(it.agent) : undefined)) { it.state = 'ok'; continue }
       if (it.t !== 'agent' || it.status !== 'running' || inBackground(it)) continue
       it.status = 'completed'
       if (ts && !it.endedAt) it.endedAt = ts

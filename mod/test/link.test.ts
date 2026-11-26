@@ -448,3 +448,35 @@ test('setCommands resolves true only when the daemon took the list (2xx); false 
   expect(await link.setCommands({ ...cmds, hash: 'h3' })).toBe(false)
   link.stop()
 })
+
+test('a batch the daemon did not take goes back to the queue and is delivered on the next flush', async () => {
+  const f = fake()
+  const link = new Link(f.io)
+  await link.start(INFO)
+  f.posts.length = 0
+  let down = true
+  f.setFetch(async url => (url.endsWith('/events') && down ? Promise.reject(new Error('ECONNREFUSED')) : { status: 204 }))
+  link.emit({ kind: 'tool_end', data: { id: 't1', ok: true } })
+  await f.advance(400)
+  expect(f.posts.filter(p => p.url.endsWith('/events')).length).toBeGreaterThan(0)
+  down = false
+  f.posts.length = 0
+  await f.advance(400)
+  const ok = f.posts.filter(p => p.url.endsWith('/events'))
+  expect(ok.length).toBe(1)
+  expect(ok[0].body.map((e: any) => e.data.id)).toEqual(['t1'])
+  link.stop()
+})
+
+test('a batch the daemon rejects as bad (400) is not retried', async () => {
+  const f = fake()
+  const link = new Link(f.io)
+  await link.start(INFO)
+  f.setFetch(async url => (url.endsWith('/events') ? { status: 400 } : { status: 204 }))
+  link.emit({ kind: 'info', data: { text: 'x' } })
+  await f.advance(400)
+  f.posts.length = 0
+  await f.advance(400)
+  expect(f.posts.filter(p => p.url.endsWith('/events')).length).toBe(0)
+  link.stop()
+})

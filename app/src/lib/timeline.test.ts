@@ -377,3 +377,14 @@ describe('background tool rows and task ends', () => {
     expect(done.find((x) => x.t === 'agent')).toMatchObject({ bg: { taskId: 'ag', status: 'completed' } })
   })
 })
+
+describe('a tool call whose tool_end was lost', () => {
+  it('stops showing running once the main turn ends', () => {
+    const items = buildTimeline([start('x1', 'Bash', { command: 'make deploy' }), ev('turn_end', { reason: 'end' })], BASE)
+    expect(items.find((i) => i.t === 'tool')).toMatchObject({ state: 'ok' })
+  })
+  it('keeps running before the turn ends', () => {
+    const items = buildTimeline([start('x2', 'Bash', { command: 'make deploy' })], BASE)
+    expect(items.find((i) => i.t === 'tool')).toMatchObject({ state: 'running' })
+  })
+})
