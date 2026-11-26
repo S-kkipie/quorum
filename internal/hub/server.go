@@ -32,6 +32,7 @@ type Server struct {
 	audioDir    string
 	diskFree    func(path string) (uint64, error)
 	meetUploads uploadBusy
+	liveLk      liveLocks
 	jobs        meetingJobs
 	meet        meetSummaries
 }

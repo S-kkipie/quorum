@@ -144,6 +144,7 @@ func (s *Server) startMeetingJobs(ctx context.Context) {
 				return
 			case <-t.C:
 				s.checkMeetingJobs(s.hub.now())
+				s.checkLiveMeetings(s.hub.now())
 				s.kickJobs()
 			}
 		}

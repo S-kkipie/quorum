@@ -25,6 +25,9 @@ func (s *Server) meetingRoutes(dev func(string, http.HandlerFunc)) {
 	dev("POST /api/meetings/uploads", s.handleMeetingUploadBegin)
 	dev("PUT /api/meetings/uploads/{id}", s.handleMeetingUploadChunk)
 	dev("POST /api/meetings/uploads/{id}/complete", s.handleMeetingUploadComplete)
+	dev("POST /api/meetings/live", s.handleLiveStart)
+	dev("PUT /api/meetings/{id}/live/{seq}", s.handleLiveSlice)
+	dev("POST /api/meetings/{id}/live/stop", s.handleLiveStop)
 	dev("GET /api/meetings", s.handleMeetings)
 	dev("GET /api/meetings/disk", s.handleMeetingDisk)
 	dev("GET /api/meetings/{id}", s.handleMeeting)
@@ -178,6 +181,9 @@ func (s *Server) handleDeleteMeeting(w http.ResponseWriter, r *http.Request) {
 		if err := os.Remove(gone.AudioPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 			log.Printf("hub: meetings: delete audio of %s: %v", id, err)
 		}
+	}
+	if err := os.RemoveAll(s.liveDir(id)); err != nil {
+		log.Printf("hub: meetings: delete live parts of %s: %v", id, err)
 	}
 	s.publishMeeting(id, gone.ProjectID, "deleted")
 	s.hub.briefingChanged(gone.ProjectID)
