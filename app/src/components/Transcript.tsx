@@ -88,7 +88,9 @@ export const hhmm = (ms: number) => { const d = new Date(ms); return `${pad2(d.g
  */
 const answer = 'w-full max-w-[70ch] break-words font-serif text-[15.5px] leading-[1.6] text-ink'
 
-export default function Transcript({ events, base = '', worktrees, machine = '', sessionId = '', live, liveAgent, working, bgEnded, asks, onAskDone, hasMore, autoLoad = true, loading, notice, onLoadMore, onAtBottom, onOpenFile, focus }: {
+export default function Transcript({ events, base = '', worktrees, machine = '', sessionId = '', live, liveAgent, working, bgEnded, asks, onAskDone, hasMore, autoLoad = true, loading, notice, onLoadMore, onAtBottom, onOpenFile, focus, openAgent: wanted }: {
+  /** opens a subagent's screen by its agent, call or task id; a new `n` asks again */
+  openAgent?: { id: string; n: number }
   /** scrolls to a row (the inspector's changed files) */
   focus?: Focus
   /** the session's open asks: also answerable on a subagent's screen, and shown on its card */
@@ -130,7 +132,13 @@ export default function Transcript({ events, base = '', worktrees, machine = '',
   // a screen whose subagent left the timeline (history trimmed, session replaced) closes
   const agentStack = openStack.filter((k) => tl.agents.has(k))
   const asking = useMemo(() => askingAgents(tl, asks ?? [], (a) => isLive(agentPhase(a, bgEnded))), [tl, asks, bgEnded])
-  const openAgent = useCallback((id: string) => setAgentStack((s) => (s[s.length - 1] === id ? s : [...s, id])), [])
+  const pushAgent = useCallback((id: string) => setAgentStack((s) => (s[s.length - 1] === id ? s : [...s, id])), [])
+  // an outside request (the inspector's background list) opens a subagent's screen like its card does
+  const [askedN, setAskedN] = useState(0)
+  if (wanted && wanted.n !== askedN) {
+    const a = tl.agents.get(wanted.id)
+    if (a) { setAskedN(wanted.n); pushAgent(a.key) }
+  }
   const last = events[events.length - 1]
   // a subagent thinking shows on its own screen, not as the session's indicator
   const thinking = last?.kind === 'thinking' && !last.data?.agent
@@ -192,7 +200,7 @@ export default function Transcript({ events, base = '', worktrees, machine = '',
 
   const renderItem = (r: Shown): ReactNode => {
     switch (r.t) {
-      case 'agents': return <AgentCard agents={r.agents} bgEnded={bgEnded} asking={asking} onOpen={openAgent} />
+      case 'agents': return <AgentCard agents={r.agents} bgEnded={bgEnded} asking={asking} onOpen={pushAgent} />
       case 'user': {
         // files attached from a device are mentioned as @<path> of the machine's uploads folder: shown as chips
         const cmdText = r.command ? (r.command.args ? `/${r.command.name} ${r.command.args}` : `/${r.command.name}`) : ''
@@ -228,7 +236,7 @@ export default function Transcript({ events, base = '', worktrees, machine = '',
       )
       case 'info': return <Message from="system" role="note" className="my-2 max-w-full text-center text-xs text-muted-foreground">{r.text}</Message>
       case 'tool': case 'reads': return <ToolItem item={r} base={base} worktrees={wts} machine={machine} sessionId={sessionId} onOpenFile={onOpenFile} bgEnded={bgEnded} />
-      case 'agent': return <AgentCard agents={[r]} bgEnded={bgEnded} asking={asking} onOpen={openAgent} />
+      case 'agent': return <AgentCard agents={[r]} bgEnded={bgEnded} asking={asking} onOpen={pushAgent} />
       case 'artifact': return <ArtifactCard item={r} machine={machine} base={base} onOpen={onOpenFile} />
       case 'command': return <CommandCard item={r} />
       case 'compact': {

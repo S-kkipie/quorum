@@ -19,7 +19,7 @@ export const INSPECTOR_WIDTH = 280
  * 280 px column; as an overlay it covers the right of the transcript (Esc or a click outside closes it);
  * on a phone it is a bottom sheet. `ignore` is the toggle button, whose click must not count as outside.
  */
-export default function Inspector({ placement, open, onClose, session, usage, events, hasMore, onOpenArtifact, ignore }: {
+export default function Inspector({ placement, open, onClose, session, usage, events, hasMore, onOpenArtifact, onOpenAgent, ignore }: {
   placement: InspectorMode
   open: boolean
   onClose: () => void
@@ -28,6 +28,8 @@ export default function Inspector({ placement, open, onClose, session, usage, ev
   events: Event[]
   hasMore?: boolean
   onOpenArtifact?: (l: ArtifactLink) => void
+  /** opens a background subagent's screen (by its agent id) */
+  onOpenAgent?: (id: string) => void
   ignore?: React.RefObject<HTMLElement | null>
 }) {
   // one timeline pass, and only while the inspector is shown; only HTML pages count as artifacts
@@ -45,7 +47,8 @@ export default function Inspector({ placement, open, onClose, session, usage, ev
     const key = (e: KeyboardEvent) => { if (e.key === 'Escape' && !shortcutBlocked(e)) close.current() }
     const down = (e: PointerEvent) => {
       const t = e.target as Node
-      if (!root.current?.contains(t) && !ignore?.current?.contains(t)) close.current()
+      // a dialog opened from the inspector (the output view) lives in a portal
+      if (!root.current?.contains(t) && !ignore?.current?.contains(t) && !(t as Element).closest?.('[role="dialog"]')) close.current()
     }
     document.addEventListener('keydown', key)
     document.addEventListener('pointerdown', down)
@@ -55,9 +58,9 @@ export default function Inspector({ placement, open, onClose, session, usage, ev
   const cards = (
     <div className="flex flex-col gap-2.5 p-3">
       <UsageCard session={session} usage={usage} />
-      <BackgroundCard background={session.background} />
+      <BackgroundCard background={session.background} sessionId={session.id} sessionState={session.state} events={events} onOpenAgent={onOpenAgent} phone={placement === 'sheet'} />
       <ArtifactsCard links={links} partial={hasMore} onOpen={onOpenArtifact} />
-      {!hasBackground(session.background) && !session.account && !session.accountKey && links.length === 0 && (
+      {!hasBackground(session.background) && !events.some((e) => e.kind === 'task_end') && !session.account && !session.accountKey && links.length === 0 && (
         <p className="px-1 py-4 text-center text-sm text-muted-foreground">Nothing to show yet.</p>
       )}
     </div>

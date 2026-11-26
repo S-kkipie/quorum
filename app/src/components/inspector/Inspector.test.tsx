@@ -201,3 +201,93 @@ describe('Session inspector', () => {
     expect(box().value).toBe('half a thought')
   })
 })
+
+describe('Background card', () => {
+  const items = [
+    { id: 'c1', kind: 'command', label: 'npm run watch', startedAt: Date.now() - 60_000 },
+    { id: 'ag1', kind: 'subagent', label: 'Audit the docs', startedAt: Date.now() - 60_000 },
+    { id: 'lp1', kind: 'loop', label: 'check the build', startedAt: Date.now() - 60_000, nextWake: Date.now() + 60_000 },
+  ]
+  const live = (o = {}) => st({ background: { tasks: 3, wakeAt: 0, items }, ...o })
+  const facts = (o = {}) => ({ found: true, size: 5, mtime: Date.now() - 3 * 60_000, tail: 'watching files\nready', procsKnown: true, procs: [{ pid: 9, state: 'S', cpuMs: 2100 }], ...o })
+  const stubFacts = (f: object | (() => object) = facts) => {
+    const fn = vi.fn(async (u: string) => (String(u).includes('/output') ? new Response(JSON.stringify(typeof f === 'function' ? f() : f)) : new Response('[]')))
+    vi.stubGlobal('fetch', fn)
+    return fn
+  }
+  const card = () => screen.getByRole('region', { name: 'Background' })
+
+  it('lists live items in a scroll region with a max height, with facts for commands', async () => {
+    stubFacts()
+    show(live())
+    expect(within(card()).getAllByRole('listitem')).toHaveLength(3)
+    expect(card().querySelector('[class*="max-h-80"]')).toBeTruthy()
+    expect(await within(card()).findByText('last output 3 min ago · sleeping · 2.1 s CPU')).toBeTruthy()
+    expect(within(card()).queryByText('Dead')).toBeNull()
+  })
+  it('marks an item Dead in the danger tone when its processes are gone', async () => {
+    stubFacts(() => facts({ procs: [] }))
+    show(live())
+    const dead = await within(card()).findByText('Dead')
+    expect(dead.className).toContain('text-danger')
+    expect(card().textContent).not.toMatch(/hung/i)
+  })
+  it('marks every live item Dead when the session is closed', () => {
+    stubFacts()
+    show(live({ state: 'closed' }))
+    expect(within(card()).getAllByText('Dead')).toHaveLength(3)
+  })
+  it('opens a subagent through onOpenAgent and does not make loops clickable', () => {
+    stubFacts()
+    const onOpenAgent = vi.fn()
+    render(<BackgroundCard background={{ tasks: 3, wakeAt: 0, items }} sessionId="a" sessionState="idle" events={[]} onOpenAgent={onOpenAgent} />)
+    fireEvent.click(screen.getByRole('button', { name: /Audit the docs/ }))
+    expect(onOpenAgent).toHaveBeenCalledWith('ag1')
+    expect(screen.queryByRole('button', { name: /check the build/ })).toBeNull()
+  })
+  it('a command opens the output view with the fetched tail', async () => {
+    stubFacts()
+    show(live())
+    fireEvent.click(within(card()).getByRole('button', { name: /npm run watch/ }))
+    const d = await screen.findByRole('dialog')
+    expect((await within(d).findByText(/watching files/)).tagName).toBe('PRE')
+    expect(within(d).getByText('last output 3 min ago · sleeping · 2.1 s CPU')).toBeTruthy()
+  })
+  it('stops fetching when the inspector closes', async () => {
+    vi.useFakeTimers()
+    try {
+      const fn = stubFacts()
+      show(live())
+      await act(async () => { await vi.advanceTimersByTimeAsync(10_500) })
+      const calls = () => fn.mock.calls.filter((c) => String(c[0]).includes('/output')).length
+      expect(calls()).toBeGreaterThanOrEqual(2)
+      fireEvent.click(screen.getByRole('button', { name: 'Inspector' }))
+      const n = calls()
+      await act(async () => { await vi.advanceTimersByTimeAsync(30_000) })
+      expect(calls()).toBe(n)
+    } finally { vi.useRealTimers() }
+  })
+  it('a background subagent row opens its screen, and a floating inspector closes', () => {
+    stubFacts()
+    const evs = [
+      ev(1, 'tool_start', { id: 'call1', name: 'Agent', input: { description: 'Audit the docs', subagent_type: 'general-purpose', prompt: 'Audit everything' } }),
+      ev(2, 'tool_end', { id: 'call1', ok: true, output: 'started', background: { taskId: 'ag1' } }),
+    ]
+    width = 1100
+    show(st({ background: { tasks: 1, wakeAt: 0, items: [items[1]] } }, evs))
+    fireEvent.click(screen.getByRole('button', { name: 'Inspector' }))
+    fireEvent.click(within(card()).getByRole('button', { name: /Audit the docs/ }))
+    expect(screen.getByRole('dialog', { name: 'Audit the docs' })).toBeTruthy()
+    expect(screen.queryByRole('complementary', { name: 'Inspector' })).toBeNull()
+  })
+  it('lists ended tasks with status and exit code, and shows the tail on click', async () => {
+    stubFacts()
+    const evs = [ev(5, 'task_end', { taskId: 'e1', kind: 'command', summary: 'npm test', status: 'failed', exitCode: 2, outputTail: 'boom: 3 failed' })]
+    show(st({}, evs))
+    const row = within(card()).getByRole('button', { name: /npm test/ })
+    expect(row.textContent).toMatch(/failed/)
+    expect(row.textContent).toMatch(/exit 2/)
+    fireEvent.click(row)
+    expect(await within(await screen.findByRole('dialog')).findByText(/boom: 3 failed/)).toBeTruthy()
+  })
+})

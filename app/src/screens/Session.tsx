@@ -108,6 +108,7 @@ export default function Session({ state, id, onBack, onEvents, onTrim, onSeen, o
   }, [])
   const [sheet, setSheet] = useState(false)
   const [bgSheet, setBgSheet] = useState(false)
+  const [wantAgent, setWantAgent] = useState<{ id: string; n: number }>()
   // a background row whose task left the live items (or whose session is closed) stopped without a task_end;
   // older mods (no items) and working sessions (the list may lag) keep rows running
   const bgItems = s?.background?.items
@@ -269,6 +270,7 @@ export default function Session({ state, id, onBack, onEvents, onTrim, onSeen, o
         autoLoad={!failed}
         onLoadMore={loadOlder}
         onAtBottom={setAtBottom}
+        openAgent={wantAgent}
         onOpenFile={onOpenFile ? (path, o) => (o ? onOpenFile(s.machine, path, o) : onOpenFile(s.machine, path)) : undefined}
       />
       {asks.map((a) => <AskCard key={a.askId} session={id} ask={a} onDone={() => dismissAsk(a.askId)} />)}
@@ -276,6 +278,8 @@ export default function Session({ state, id, onBack, onEvents, onTrim, onSeen, o
       </div>
       <Inspector placement={layout.inspector} open={layout.inspectorOpen} onClose={layout.toggleInspector} ignore={toggleRef}
         session={s} usage={usage} events={events} hasMore={hasMore}
+        // a floating inspector would cover the subagent's screen: it closes, a docked one stays
+        onOpenAgent={(aid) => { setWantAgent((w) => ({ id: aid, n: (w?.n ?? 0) + 1 })); if (layout.inspector !== 'docked' && layout.inspectorOpen) layout.toggleInspector() }}
         // the old /v/ token may be gone (hub restart, expiry): open the file in the Viewer, which mints a fresh link
         onOpenArtifact={(l) => {
           const file = artifactPath(l.url, s.root || s.cwd)
