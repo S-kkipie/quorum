@@ -2,11 +2,9 @@ import { useEffect, useMemo, useRef } from 'react'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import ArtifactsCard from './ArtifactsCard'
 import BackgroundCard from './BackgroundCard'
-import ChangedFilesCard from './ChangedFilesCard'
 import UsageCard from './UsageCard'
 import { hubUrl } from '../../lib/api'
-import { artifactLinksOf, type ArtifactLink } from '../../lib/artifacts'
-import { changedFilesOf } from '../../lib/changedFiles'
+import { artifactLinksOf, isHtmlArtifact, type ArtifactLink } from '../../lib/artifacts'
 import { buildTimeline } from '../../lib/timeline'
 import { hasBackground } from '../BackgroundSheet'
 import { shortcutBlocked } from '../../lib/shortcuts'
@@ -17,11 +15,11 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 export const INSPECTOR_WIDTH = 280
 
 /**
- * The session inspector: Background, Usage, Changed files and Artifacts, empty cards hidden. Docked it is a
+ * The session inspector: Usage, Background and HTML artifacts, empty cards hidden. Docked it is a
  * 280 px column; as an overlay it covers the right of the transcript (Esc or a click outside closes it);
  * on a phone it is a bottom sheet. `ignore` is the toggle button, whose click must not count as outside.
  */
-export default function Inspector({ placement, open, onClose, session, usage, events, hasMore, onJump, onOpenArtifact, ignore }: {
+export default function Inspector({ placement, open, onClose, session, usage, events, hasMore, onOpenArtifact, ignore }: {
   placement: InspectorMode
   open: boolean
   onClose: () => void
@@ -29,18 +27,14 @@ export default function Inspector({ placement, open, onClose, session, usage, ev
   usage?: AccountUsage
   events: Event[]
   hasMore?: boolean
-  onJump?: (eventKey: string) => void
   onOpenArtifact?: (l: ArtifactLink) => void
   ignore?: React.RefObject<HTMLElement | null>
 }) {
-  // one timeline pass for both cards, and only while the inspector is shown
-  const { files, links } = useMemo(() => {
-    if (!open) return { files: [], links: [] }
-    const items = buildTimeline(events, '')
-    return { files: changedFilesOf(items), links: artifactLinksOf(items, hubUrl()) }
+  // one timeline pass, and only while the inspector is shown; only HTML pages count as artifacts
+  const links = useMemo(() => {
+    if (!open) return []
+    return artifactLinksOf(buildTimeline(events, ''), hubUrl()).filter(isHtmlArtifact)
   }, [events, open])
-  // a jump closes an overlay or sheet so the row is visible; a docked inspector stays
-  const jump = (key: string) => { onJump?.(key); if (placement !== 'docked') onClose() }
   const root = useRef<HTMLElement>(null)
   const close = useRef(onClose)
   close.current = onClose
@@ -62,9 +56,8 @@ export default function Inspector({ placement, open, onClose, session, usage, ev
     <div className="flex flex-col gap-2.5 p-3">
       <UsageCard session={session} usage={usage} />
       <BackgroundCard background={session.background} />
-      <ChangedFilesCard files={files} partial={hasMore} onJump={jump} />
       <ArtifactsCard links={links} partial={hasMore} onOpen={onOpenArtifact} />
-      {!hasBackground(session.background) && !session.account && !session.accountKey && files.length === 0 && links.length === 0 && (
+      {!hasBackground(session.background) && !session.account && !session.accountKey && links.length === 0 && (
         <p className="px-1 py-4 text-center text-sm text-muted-foreground">Nothing to show yet.</p>
       )}
     </div>
@@ -78,7 +71,7 @@ export default function Inspector({ placement, open, onClose, session, usage, ev
           <div aria-hidden className="mx-auto mt-2.5 h-1 w-9 rounded-full bg-line" />
           <SheetHeader className="px-4 pt-2 pb-0">
             <SheetTitle className="text-sm text-ink">Inspector</SheetTitle>
-            <SheetDescription className="sr-only">Background work, usage, changed files and artifacts of this session.</SheetDescription>
+            <SheetDescription className="sr-only">Usage, background work and HTML artifacts of this session.</SheetDescription>
           </SheetHeader>
           {cards}
         </div></ScrollArea>

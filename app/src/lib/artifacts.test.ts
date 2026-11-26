@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { artifactLinks } from './artifacts'
+import { artifactLinks, artifactPath } from './artifacts'
 import type { Event } from '../proto.gen'
 
 const ev = (seq: number, kind: string, data: unknown): Event => ({ seq, session: 's', ts: 1, kind, data })
@@ -48,5 +48,20 @@ describe('artifactLinks', () => {
       ev(4, 'tool_end', { id: 'tu', ok: true, output: 'Wrote /v/bb22/out.html' }),
     ])
     expect(out.map((l) => [l.url, l.eventKey])).toEqual([['/v/aa11/brief.md', 'agent:1'], ['/v/bb22/out.html', 'agent:1']])
+  })
+})
+
+describe('artifactPath', () => {
+  it('maps a /v/ link to the file under the session base', () => {
+    expect(artifactPath('/v/ab12/.claude/quorum/artifacts/q3%20plan.html', '/home/u/proj')).toBe('/home/u/proj/.claude/quorum/artifacts/q3 plan.html')
+    expect(artifactPath('https://hub.example/v/ab12/r.html?x=1', '/home/u/proj/')).toBe('/home/u/proj/r.html')
+    expect(artifactPath('/v/ab12/a/r.html', 'C:\\Users\\u\\proj')).toBe('C:\\Users\\u\\proj\\a\\r.html')
+  })
+  it('refuses links it cannot map', () => {
+    expect(artifactPath('/v/ab12/r.html', '')).toBe('')
+    expect(artifactPath('/x/ab12/r.html', '/p')).toBe('')
+    expect(artifactPath('/v/ab12/../etc/passwd', '/p')).toBe('')
+    // a dot segment is resolved first, so the result stays under the base
+    expect(artifactPath('/v/ab12/a/%2e%2e/b.html', '/p')).toBe('/p/b.html')
   })
 })

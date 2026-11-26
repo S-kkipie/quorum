@@ -6,8 +6,9 @@ import ModelEffortSheet from '../components/ModelEffortSheet'
 import BackgroundSheet from '../components/BackgroundSheet'
 import StatePill from '../components/StatePill'
 import Inspector from '../components/inspector/Inspector'
-import Transcript, { type Focus } from '../components/Transcript'
+import Transcript from '../components/Transcript'
 import { UsageInline } from '../components/UsageStrip'
+import { artifactPath } from '../lib/artifacts'
 import { abortSession, hubUrl, closeSession, listCommands, setModel } from '../lib/api'
 import { accountUsageOf, contextTone, formatTokens, toneClass } from '../lib/meters'
 import { launchIn, loadPrefs } from '../lib/launch'
@@ -95,8 +96,6 @@ export default function Session({ state, id, onBack, onEvents, onTrim, onSeen, o
 
   const layout = useLayout()
   const toggleRef = useRef<HTMLButtonElement>(null)
-  const [focus, setFocus] = useState<Focus>()
-  const jump = useCallback((key: string) => setFocus((f) => ({ key, n: (f?.n ?? 0) + 1 })), [])
   // Ctrl/Cmd+. toggles the inspector (not while a modal dialog is open)
   const toggle = useRef(layout.toggleInspector)
   toggle.current = layout.toggleInspector
@@ -271,15 +270,18 @@ export default function Session({ state, id, onBack, onEvents, onTrim, onSeen, o
         onLoadMore={loadOlder}
         onAtBottom={setAtBottom}
         onOpenFile={onOpenFile ? (path, o) => (o ? onOpenFile(s.machine, path, o) : onOpenFile(s.machine, path)) : undefined}
-        focus={focus}
       />
       {asks.map((a) => <AskCard key={a.askId} session={id} ask={a} onDone={() => dismissAsk(a.askId)} />)}
       <Composer session={s} commands={state.commands[id]} />
       </div>
       <Inspector placement={layout.inspector} open={layout.inspectorOpen} onClose={layout.toggleInspector} ignore={toggleRef}
-        session={s} usage={usage} events={events} hasMore={hasMore} onJump={jump}
-        // a hub /v/ link opens in a tab, like markdown /v/ links elsewhere (the Viewer takes machine, session and path)
-        onOpenArtifact={(l) => window.open(/^https?:/.test(l.url) ? l.url : hubUrl() + l.url, '_blank', 'noopener')} />
+        session={s} usage={usage} events={events} hasMore={hasMore}
+        // the old /v/ token may be gone (hub restart, expiry): open the file in the Viewer, which mints a fresh link
+        onOpenArtifact={(l) => {
+          const file = artifactPath(l.url, s.root || s.cwd)
+          if (file && onOpenFile) onOpenFile(s.machine, file)
+          else window.open(/^https?:/.test(l.url) ? l.url : hubUrl() + l.url, '_blank', 'noopener')
+        }} />
       </div>
       <BackgroundSheet open={bgSheet} onOpenChange={setBgSheet} background={s.background} />
       {(showModel || showEffort) && (

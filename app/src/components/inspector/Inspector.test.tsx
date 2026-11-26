@@ -5,8 +5,8 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 import Session from '../../screens/Session'
 import ArtifactsCard from './ArtifactsCard'
 import BackgroundCard from './BackgroundCard'
-import ChangedFilesCard from './ChangedFilesCard'
 import UsageCard from './UsageCard'
+import { isHtmlArtifact } from '../../lib/artifacts'
 import { initialState } from '../../lib/store'
 import { sess } from '../../lib/fixtures.test-util'
 import { LAYOUT_KEY, resetLayout } from '../../lib/useLayout'
@@ -44,14 +44,14 @@ const ev = (seq: number, kind: string, data: unknown): Event => ({ seq, session:
 const edits = [
   ev(1, 'tool_start', { id: 't1', name: 'Edit', input: { file_path: '/r/src/a.ts', old_string: 'a', new_string: 'b\nc' } }),
   ev(2, 'tool_end', { id: 't1', ok: true, output: '' }),
-  ev(3, 'assistant', { text: 'Report at [Q3](/v/ab12/q3.html)' }),
+  ev(3, 'assistant', { text: 'Report at [Q3](/v/ab12/q3.html), notes at [Notes](/v/ab12/notes.md)' }),
 ]
 const st = (o = {}, evs: Event[] = []) => ({ ...initialState(), sessions: { a: sess('a', o) }, order: ['a'], events: { a: evs } })
 const show = (s = st()) => render(<Session state={s} id="a" onEvents={vi.fn()} />)
 
 describe('cards', () => {
   it('are hidden when empty', () => {
-    const { container } = render(<><BackgroundCard background={{ tasks: 0, wakeAt: 0 }} /><ChangedFilesCard files={[]} /><ArtifactsCard links={[]} /></>)
+    const { container } = render(<><BackgroundCard background={{ tasks: 0, wakeAt: 0 }} /><ArtifactsCard links={[]} /></>)
     expect(container.innerHTML).toBe('')
   })
   it('the usage card is hidden without an account and shows the account meters with one', () => {
@@ -77,38 +77,20 @@ describe('cards', () => {
     expect(INSPECTOR_SOURCE.indexOf('<UsageCard')).toBeLessThan(INSPECTOR_SOURCE.indexOf('<BackgroundCard'))
   })
   it('card headings are sentence case with no caps or tracking', () => {
-    render(<ChangedFilesCard files={[{ path: '/r/a.ts', add: 1, del: 0, eventKey: 'tool:1' }]} />)
-    const h = screen.getByRole('heading', { name: 'Changed files' })
+    render(<ArtifactsCard links={[{ title: 'Q3', url: '/v/ab12/q3.html', eventKey: 'a:1' }]} />)
+    const h = screen.getByRole('heading', { name: 'Artifacts' })
     expect(h.className).not.toMatch(/uppercase|tracking/)
   })
-  it('changed files show +/- and a note for partial history; a click reports the row', () => {
-    const onJump = vi.fn()
-    render(<ChangedFilesCard files={[{ path: '/r/a.ts', add: 2, del: 1, eventKey: 'tool:1' }]} partial onJump={onJump} />)
-    expect(screen.getByText('From loaded history')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: /a\.ts/ }))
-    expect(onJump).toHaveBeenCalledWith('tool:1')
+  it('only HTML pages count as artifacts', () => {
+    const is = (url: string) => isHtmlArtifact({ title: '', url, eventKey: '' })
+    expect(is('/v/ab12/q3.html')).toBe(true)
+    expect(is('https://hub.example/v/ab12/Report.HTM?x=1#top')).toBe(true)
+    expect(is('/v/ab12/notes.md')).toBe(false)
+    expect(is('/v/ab12/data.html.json')).toBe(false)
   })
 })
 
 describe('Session inspector', () => {
-  it('a Changed files click closes the overlay and the sheet but keeps a docked inspector open', () => {
-    const jumpFrom = (w: number, find: () => HTMLElement) => {
-      width = w
-      resetLayout()
-      const { unmount } = show(st({}, edits))
-      if (w < 1280) fireEvent.click(screen.getByRole('button', { name: 'Inspector' }))
-      fireEvent.click(within(find()).getByRole('button', { name: /a\.ts/ }))
-      return unmount
-    }
-    let un = jumpFrom(1100, () => screen.getByRole('complementary', { name: 'Inspector' }))
-    expect(screen.queryByRole('complementary', { name: 'Inspector' })).toBeNull()
-    un(); store.clear()
-    un = jumpFrom(800, () => screen.getByRole('dialog'))
-    expect(screen.queryByRole('dialog')).toBeNull()
-    un(); store.clear()
-    jumpFrom(1300, () => screen.getByRole('complementary', { name: 'Inspector' }))
-    expect(screen.getByRole('complementary', { name: 'Inspector' })).toBeTruthy()
-  })
   it('builds nothing for the cards while the inspector is closed', () => {
     width = 1100
     show(st({}, edits))
@@ -122,9 +104,9 @@ describe('Session inspector', () => {
   it('is docked and open at 1300 px, with cards built from the loaded events', () => {
     show(st({}, edits))
     const aside = screen.getByRole('complementary', { name: 'Inspector' })
-    expect(within(aside).getByText('Changed files')).toBeTruthy()
-    expect(within(aside).getByText('+2')).toBeTruthy()
+    expect(within(aside).queryByText('Changed files')).toBeNull()
     expect(within(aside).getByRole('button', { name: 'Q3' })).toBeTruthy()
+    expect(within(aside).queryByRole('button', { name: 'Notes' })).toBeNull()
     expect(within(aside).queryByText('Usage')).toBeNull()
     expect(within(aside).queryByText('Background')).toBeNull()
   })
@@ -204,7 +186,7 @@ describe('Session inspector', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Inspector' }))
     const d = screen.getByRole('dialog')
-    expect(within(d).getByText('Changed files')).toBeTruthy()
+    expect(within(d).getByText('Artifacts')).toBeTruthy()
   })
   it('crossing breakpoints keeps the open session and the draft', () => {
     show(st({}, edits))
