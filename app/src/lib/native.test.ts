@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const local = { checkPermissions: vi.fn(async () => ({ display: 'granted' })), requestPermissions: vi.fn(async () => ({ display: 'granted' })), schedule: vi.fn(async () => ({})) }
 vi.mock('@capacitor/local-notifications', () => ({ LocalNotifications: local }))
-import { isNative, notify, openExternal, openExternalAsync } from './native'
+import { isNative, notify, openExternalAsync } from './native'
 
 afterEach(() => { delete (window as any).Capacitor; vi.unstubAllGlobals(); vi.clearAllMocks() })
 
@@ -87,10 +87,21 @@ describe('openExternal', () => {
   })
 
   it('refuses a javascript: url without opening anything', async () => {
-    const open = vi.fn(() => ({ location: { href: '' }, close: vi.fn() }))
+    const tab: any = { location: { href: '' }, close: vi.fn() }
+    const open = vi.fn(() => tab)
     vi.stubGlobal('open', open)
+    const q = vi.fn(async () => {})
     await expect(openExternalAsync(async () => 'javascript:alert(1)')).rejects.toThrow()
-    expect(() => openExternal('javascript:alert(1)')).toThrow()
+    expect(tab.close).toHaveBeenCalled()
+    expect(tab.location.href).toBe('')
+    expect(open).toHaveBeenCalledTimes(1)
     expect(open).not.toHaveBeenCalledWith('javascript:alert(1)', expect.anything(), expect.anything())
+    ;(window as any).quorumOpenExternal = q
+    ;(window as any).Capacitor = { isNativePlatform: () => true, nativePromise: vi.fn(async () => ({})) }
+    try {
+      await expect(openExternalAsync(async () => 'javascript:alert(1)')).rejects.toThrow()
+      expect(q).not.toHaveBeenCalled()
+      expect((window as any).Capacitor.nativePromise).not.toHaveBeenCalled()
+    } finally { delete (window as any).quorumOpenExternal }
   })
 })

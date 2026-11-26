@@ -43,12 +43,6 @@ async function openDevice(url: string): Promise<boolean> {
   return false
 }
 
-/** Opens an http(s) URL outside Quorum. Call it straight from a click. */
-export function openExternal(url: string): void {
-  if (!httpUrl(url)) throw new Error('Only http(s) links can be opened')
-  void openDevice(url).then((done) => { if (!done) window.open(url, '_blank', 'noopener') }).catch(() => {})
-}
-
 /**
  * Opens the URL `get` resolves to outside Quorum. On the web the tab is opened synchronously (before the await,
  * so popup blockers see the click), then pointed at the URL; it closes if `get` fails.

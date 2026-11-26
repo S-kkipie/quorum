@@ -27,12 +27,17 @@ export function isDead(_item: BackgroundItem, facts: TaskFacts | undefined, sess
 
 const STATES: Record<string, string> = { R: 'running', S: 'sleeping', D: 'disk wait', Z: 'zombie', T: 'stopped' }
 
+/** Most active first: the line shows the busiest process's state. */
+const ACTIVITY = ['R', 'D', 'S', 'T', 'Z']
+
 /** "last output 3 min ago · sleeping · 2.1 s CPU"; the process part only when processes are known and alive. */
 export function factLine(f: TaskFacts, now = Date.now()): string {
   if (!f.found) return 'no output yet'
   const parts = [`last output ${ago(f.mtime, now)}`]
   if (f.procsKnown && f.procs.length) {
-    parts.push(STATES[f.procs[0].state] ?? f.procs[0].state)
+    const rank = (s: string) => { const i = ACTIVITY.indexOf(s); return i < 0 ? ACTIVITY.length : i }
+    const top = f.procs.reduce((a, p) => (rank(p.state) < rank(a.state) ? p : a)).state
+    parts.push(STATES[top] ?? top)
     parts.push(`${(f.procs.reduce((s, p) => s + p.cpuMs, 0) / 1000).toFixed(1)} s CPU`)
   }
   return parts.join(' · ')

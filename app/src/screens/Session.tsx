@@ -283,7 +283,7 @@ export default function Session({ state, id, onBack, onEvents, onTrim, onSeen, o
         onOpenAgent={(aid) => { setWantAgent((w) => ({ id: aid, n: (w?.n ?? 0) + 1 })); if (layout.inspector !== 'docked' && layout.inspectorOpen) layout.toggleInspector() }}
         // the old /v/ token may be gone (hub restart, expiry): mint a fresh link and open it in the device browser
         onOpenArtifact={(l) => {
-          const full = (u: string) => (/^https?:/.test(u) ? u : hubUrl() + u)
+          const full = (u: string) => (/^https?:/.test(u) ? u : (hubUrl() || location.origin) + u)
           const file = artifactPath(l.url, s.root || s.cwd)
           void act(() => openExternalAsync(async () => (file ? full((await createView(s.machine, s.id, file)).url) : full(l.url))))
         }} />

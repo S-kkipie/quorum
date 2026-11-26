@@ -253,6 +253,24 @@ describe('Background card', () => {
     expect((await within(d).findByText(/watching files/)).tagName).toBe('PRE')
     expect(within(d).getByText('last output 3 min ago · sleeping · 2.1 s CPU')).toBeTruthy()
   })
+  it('drops the old facts when a refresh fails', async () => {
+    vi.useFakeTimers()
+    try {
+      let n = 0
+      vi.stubGlobal('fetch', vi.fn(async (u: string) => {
+        if (!String(u).includes('/output')) return new Response('[]')
+        if (n++ > 0) throw new Error('offline')
+        return new Response(JSON.stringify(facts()))
+      }))
+      show(live())
+      await act(async () => { await vi.advanceTimersByTimeAsync(100) })
+      expect(within(card()).getByText('last output 3 min ago · sleeping · 2.1 s CPU')).toBeTruthy()
+      await act(async () => { await vi.advanceTimersByTimeAsync(10_500) })
+      expect(within(card()).queryByText(/last output/)).toBeNull()
+      expect(within(card()).getAllByText(/started 1 min ago/)).toHaveLength(3)
+      expect(within(card()).queryByText('Dead')).toBeNull()
+    } finally { vi.useRealTimers() }
+  })
   it('stops fetching when the inspector closes', async () => {
     vi.useFakeTimers()
     try {

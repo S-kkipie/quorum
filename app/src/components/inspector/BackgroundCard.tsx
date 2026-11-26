@@ -53,7 +53,10 @@ export default function BackgroundCard({ background, sessionId = '', sessionStat
     let stop = false
     const poll = () => {
       for (const id of ids) {
-        getTaskOutput(sessionId, id).then((f) => { if (!stop) { setFacts((m) => ({ ...m, [id]: f })); setNow(Date.now()) } }, () => {})
+        getTaskOutput(sessionId, id).then((f) => { if (!stop) { setFacts((m) => ({ ...m, [id]: f })); setNow(Date.now()) } }, () => {
+          // never show an old reading as current
+          if (!stop) setFacts((m) => { const { [id]: _gone, ...rest } = m; return rest })
+        })
       }
     }
     poll()

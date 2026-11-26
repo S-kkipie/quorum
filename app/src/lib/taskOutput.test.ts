@@ -24,6 +24,13 @@ describe('factLine', () => {
     expect(st('T')).toContain('stopped')
     expect(st('X')).toContain(' X ')
   })
+  it('shows the most active state across processes', () => {
+    const procs = (...s: string[]) => s.map((state, i) => ({ pid: i + 1, state, cpuMs: 1000 }))
+    expect(factLine(facts({ procs: procs('S', 'R', 'Z') }), now)).toContain('running')
+    expect(factLine(facts({ procs: procs('Z', 'S') }), now)).toContain('sleeping')
+    expect(factLine(facts({ procs: procs('X', 'Z') }), now)).toContain('zombie')
+    expect(factLine(facts({ procs: procs('S', 'R') }), now)).toContain('2.0 s CPU')
+  })
   it('omits the process part when processes are unknown or gone', () => {
     expect(factLine(facts({ procsKnown: false, procs: [] }), now)).toBe('last output 3 min ago')
     expect(factLine(facts({ procs: [] }), now)).toBe('last output 3 min ago')
