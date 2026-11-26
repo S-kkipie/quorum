@@ -476,44 +476,59 @@ func (s *Store) ReplaceMeetingSegments(id string, segs []proto.MeetingSegment) (
 	return tx.Commit()
 }
 
-// ApplySegmentCorrections replaces the text of the meeting's segments by index (fixes: idx → new text).
-// orig_text keeps the first raw text: it is set only while empty, so a second correction never hides the
-// transcription's own words. An index with no segment is ignored.
-func (s *Store) ApplySegmentCorrections(meetingID string, fixes map[int]string, now int64) (err error) {
-	if len(fixes) == 0 {
-		return nil
-	}
+// SegmentFix is one correction of a segment: Text replaces the segment's text only while the segment still
+// reads Expect (the text the correction was made from). A fix whose Text equals Expect only checks it.
+type SegmentFix struct {
+	Idx    int
+	Expect string
+	Text   string
+}
+
+// ApplySegmentCorrections applies the fixes and marks the meeting corrected at now, in one transaction,
+// only when every fix's segment still reads its Expect text: otherwise (a transcript replaced since the
+// correction was made) nothing changes and applied is false. orig_text keeps the first raw text: it is set
+// only while empty, so a second correction never hides the transcription's own words.
+func (s *Store) ApplySegmentCorrections(meetingID string, fixes []SegmentFix, now int64) (applied bool, err error) {
 	tx, err := s.db.Begin()
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer func() {
-		if err != nil {
+		if err != nil || !applied {
 			tx.Rollback()
 		}
 	}()
-	for idx, text := range fixes {
-		if _, err = tx.Exec(`UPDATE meeting_segments SET orig_text=CASE WHEN orig_text='' THEN text ELSE orig_text END, text=?
-			WHERE meeting_id=? AND idx=?`, text, meetingID, idx); err != nil {
-			return err
+	for _, f := range fixes {
+		var res sql.Result
+		if f.Text == f.Expect {
+			var n int
+			if err = tx.QueryRow(`SELECT count(*) FROM meeting_segments WHERE meeting_id=? AND idx=? AND text=?`, meetingID, f.Idx, f.Expect).Scan(&n); err != nil {
+				return false, err
+			}
+			if n != 1 {
+				return false, nil
+			}
+			continue
+		}
+		if res, err = tx.Exec(`UPDATE meeting_segments SET orig_text=CASE WHEN orig_text='' THEN text ELSE orig_text END, text=?
+			WHERE meeting_id=? AND idx=? AND text=?`, f.Text, meetingID, f.Idx, f.Expect); err != nil {
+			return false, err
+		}
+		if n, _ := res.RowsAffected(); n != 1 {
+			return false, nil
 		}
 	}
-	if _, err = tx.Exec(`UPDATE meetings SET updated_at=? WHERE id=?`, now, meetingID); err != nil {
-		return err
-	}
-	return tx.Commit()
-}
-
-// SetMeetingCorrected records that the meeting's transcript went through the correction pass at now.
-func (s *Store) SetMeetingCorrected(meetingID string, now int64) error {
-	res, err := s.db.Exec(`UPDATE meetings SET corrected_at=? WHERE id=?`, now, meetingID)
+	res, err := tx.Exec(`UPDATE meetings SET corrected_at=?, updated_at=? WHERE id=?`, now, now, meetingID)
 	if err != nil {
-		return err
+		return false, err
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return ErrNotFound
+	if n, _ := res.RowsAffected(); n != 1 {
+		return false, nil
 	}
-	return nil
+	if err = tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // SetMeetingSummary stores the meeting's summary.

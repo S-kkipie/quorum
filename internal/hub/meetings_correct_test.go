@@ -41,6 +41,50 @@ func TestWordEditDistance(t *testing.T) {
 	require.Equal(t, 1, wordEditDistance("la guía de revisión", "la guía de remisión"))
 	require.Equal(t, 2, wordEditDistance("a b c", "a"))
 	require.Equal(t, 3, wordEditDistance("", "x y z"))
+	require.Equal(t, 0, wordEditDistance("Hola, ¿qué tal?", "hola qué tal")) // punctuation is not a word change
+}
+
+func TestCorrectionGuard(t *testing.T) {
+	for _, c := range []struct {
+		orig, fixed string
+		ok          bool
+	}{
+		{"Zorvanit.", "Zorvanite.", true},                                              // a one-word name fix
+		{"Quilon Labs", "Quillon Labs", true},                                          // 2 words, one changed
+		{"hola, ¿qué tal", "Hola. ¿Qué tal?", true},                                    // punctuation only: distance 0
+		{"we ship the zorvanit beta", "we ship the zorvanite build", true},             // 2 of 5
+		{"we will ship the new beta soon", "we will launch a fresh build soon", false}, // 3 of 7
+		{"we should release it tomorrow", "we must launch it today", false},            // a paraphrase, 3 of 5
+		{"ok", "", false},
+		{"same text", "same  text", false},
+	} {
+		_, ok := acceptCorrection(c.orig, c.fixed)
+		require.Equal(t, c.ok, ok, "%q → %q", c.orig, c.fixed)
+	}
+}
+
+func TestCorrectDropsAChunkThatChangedMost(t *testing.T) {
+	segs := make([]proto.MeetingSegment, 124)
+	for i := range segs {
+		segs[i] = seg(int64(i), "Speaker 1", fmt.Sprintf("line %d about zorvanit", i))
+	}
+	segs[3].Text = "  " // not spoken: left out of the share
+	fc := &fakeChat{answer: func(n int, _ string) (string, error) {
+		var items []string
+		if n == 1 { // 60 of the chunk's 119 spoken segments: more than half
+			for i := 0; i < 61; i++ {
+				if i != 3 {
+					items = append(items, fmt.Sprintf(`{"i":%d,"text":"line %d about zorvanite"}`, i, i))
+				}
+			}
+		} else { // 2 of 4: exactly half is kept
+			items = []string{`{"i":120,"text":"line 120 about zorvanite"}`, `{"i":121,"text":"line 121 about zorvanite"}`}
+		}
+		return "[" + strings.Join(items, ",") + "]", nil
+	}}
+	fixes, err := correctTranscript(context.Background(), fc.chat, segs, "", nil, nil, nil)
+	require.NoError(t, err)
+	require.Equal(t, map[int]string{120: "line 120 about zorvanite", 121: "line 121 about zorvanite"}, fixes)
 }
 
 func TestCorrectAcceptsSurgicalFix(t *testing.T) {

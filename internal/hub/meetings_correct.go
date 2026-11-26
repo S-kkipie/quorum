@@ -9,7 +9,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
+	"github.com/S-kkipie/quorum/internal/hub/store"
 	"github.com/S-kkipie/quorum/internal/proto"
 )
 
@@ -24,6 +26,8 @@ const (
 	correctChunk = 120
 	// correctMaxEditPct is the largest accepted word edit distance, in percent of the segment's words.
 	correctMaxEditPct = 40
+	// correctMaxChunkPct is the largest share of a chunk's spoken segments that may change, in percent.
+	correctMaxChunkPct = 50
 )
 
 var errCorrectionFailed = errors.New("every correction call failed")
@@ -61,16 +65,31 @@ func correctTranscript(ctx context.Context, chat chatFunc, segs []proto.MeetingS
 			lastErr = errors.New("the correction answer is not a JSON array")
 			continue
 		}
+		chunk := map[int]string{}
 		for _, it := range items {
 			if it.i < lo || it.i >= hi {
 				continue // not a segment of this chunk
 			}
-			if _, dup := fixes[it.i]; dup {
+			if _, dup := chunk[it.i]; dup {
 				continue // the first answer for a segment wins
 			}
 			if t, ok := acceptCorrection(segs[it.i].Text, it.text); ok {
-				fixes[it.i] = t
+				chunk[it.i] = t
 			}
+		}
+		// a proofread changes a few segments: a chunk that changed most of them was rewritten
+		spoken := 0
+		for i := lo; i < hi; i++ {
+			if oneLine(segs[i].Text) != "" {
+				spoken++
+			}
+		}
+		if len(chunk)*100 > correctMaxChunkPct*spoken {
+			log.Printf("hub: meetings: correction: %d of %d segments changed in segments %d–%d, the chunk's fixes are dropped", len(chunk), spoken, lo, hi-1)
+			continue
+		}
+		for i, t := range chunk {
+			fixes[i] = t
 		}
 	}
 	progress(100)
@@ -183,24 +202,45 @@ func parseCorrections(ans string) ([]correction, bool) {
 }
 
 // acceptCorrection is the guard against rewrites: the corrected text is kept only when it is not empty,
-// differs from the original, and is a small edit of it (word edit distance at most correctMaxEditPct of
-// the original's words).
+// differs from the original, and is a small edit of it: a word edit distance of at most 1 (one misheard
+// word or name, even in a short segment), or else of at most correctMaxEditPct of the original's words.
 func acceptCorrection(orig, fixed string) (string, bool) {
 	fixed = oneLine(fixed)
 	orig = oneLine(orig)
 	if fixed == "" || orig == "" || fixed == orig {
 		return "", false
 	}
-	words := len(strings.Fields(orig))
-	if wordEditDistance(orig, fixed)*100 > correctMaxEditPct*words {
+	d := wordEditDistance(orig, fixed)
+	if d <= 1 {
+		return fixed, true
+	}
+	if d*100 > correctMaxEditPct*len(wordTokens(orig)) {
 		return "", false
 	}
 	return fixed, true
 }
 
-// wordEditDistance is the Levenshtein distance between a and b over lowercased word tokens.
+// wordTokens is the text's lowercased words with their punctuation stripped (a token of only punctuation
+// is dropped).
+func wordTokens(s string) []string {
+	var out []string
+	for _, w := range strings.Fields(strings.ToLower(s)) {
+		w = strings.Map(func(r rune) rune {
+			if unicode.IsPunct(r) {
+				return -1
+			}
+			return r
+		}, w)
+		if w != "" {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
+// wordEditDistance is the Levenshtein distance between a and b over wordTokens.
 func wordEditDistance(a, b string) int {
-	x, y := strings.Fields(strings.ToLower(a)), strings.Fields(strings.ToLower(b))
+	x, y := wordTokens(a), wordTokens(b)
 	prev := make([]int, len(y)+1)
 	cur := make([]int, len(y)+1)
 	for j := range prev {
@@ -238,43 +278,34 @@ func (s *Server) correctMeeting(ctx context.Context, id string, gen int, m proto
 		log.Printf("hub: meetings: correction of %s: %v (the raw transcript is summarised)", id, err)
 		return segs
 	}
-	// the fixes belong to the transcript they were made for: a transcript replaced since is left alone (and
-	// stays uncorrected, so its own summary corrects it)
-	cur, err := s.st.MeetingSegments(id)
-	if err != nil {
-		log.Printf("hub: meetings: correction of %s: %v", id, err)
+	// the fixes belong to the transcript they were made for: every segment is checked against the text the
+	// correction saw, in the same transaction, so a transcript replaced since is left alone (and stays
+	// uncorrected, so its own summary corrects it)
+	all := make([]store.SegmentFix, len(segs))
+	for i, sg := range segs {
+		all[i] = store.SegmentFix{Idx: i, Expect: sg.Text, Text: sg.Text}
+		if t, ok := fixes[i]; ok {
+			all[i].Text = t
+		}
+	}
+	applied, err := s.st.ApplySegmentCorrections(id, all, time.Now().UnixMilli())
+	if err != nil || !applied {
+		if err != nil {
+			log.Printf("hub: meetings: store the correction of %s: %v", id, err)
+		} else {
+			log.Printf("hub: meetings: correction of %s: the transcript changed meanwhile, nothing applied", id)
+		}
+		if cur, err := s.st.MeetingSegments(id); err == nil {
+			return cur
+		}
 		return segs
-	}
-	if !sameTranscript(cur, segs) {
-		log.Printf("hub: meetings: correction of %s: the transcript changed meanwhile, nothing applied", id)
-		return cur
-	}
-	now := time.Now().UnixMilli()
-	if err := s.st.ApplySegmentCorrections(id, fixes, now); err != nil {
-		log.Printf("hub: meetings: store the correction of %s: %v", id, err)
-		return cur
-	}
-	if err := s.st.SetMeetingCorrected(id, now); err != nil {
-		log.Printf("hub: meetings: mark %s corrected: %v", id, err)
 	}
 	if len(fixes) > 0 {
 		log.Printf("hub: meetings: corrected %d of %d segments of %s", len(fixes), len(segs), id)
 	}
 	out, err := s.st.MeetingSegments(id)
 	if err != nil {
-		return cur
+		return segs
 	}
 	return out
-}
-
-func sameTranscript(a, b []proto.MeetingSegment) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i].Text != b[i].Text || a[i].Speaker != b[i].Speaker || a[i].StartMs != b[i].StartMs {
-			return false
-		}
-	}
-	return true
 }

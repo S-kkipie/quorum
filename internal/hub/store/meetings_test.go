@@ -258,8 +258,21 @@ func TestApplyCorrectionsKeepsFirstOriginal(t *testing.T) {
 		{StartMs: 0, Speaker: "Speaker 1", Text: "la guía de revisión"},
 		{StartMs: 4000, Speaker: "Speaker 2", Text: "the quilon labs demo"},
 	}))
-	require.NoError(t, s.ApplySegmentCorrections(m.ID, map[int]string{0: "la guía de remisión", 7: "no such segment"}, 1000))
-	require.NoError(t, s.ApplySegmentCorrections(m.ID, map[int]string{0: "la guía de emisión", 1: "the Quillon Labs demo"}, 2000))
+	ok, err := s.ApplySegmentCorrections(m.ID, []SegmentFix{
+		{Idx: 0, Expect: "la guía de revisión", Text: "la guía de remisión"},
+		{Idx: 1, Expect: "the quilon labs demo", Text: "the quilon labs demo"}, // a check only
+	}, 1000)
+	require.NoError(t, err)
+	require.True(t, ok)
+	got, err := s.Meeting(m.ID)
+	require.NoError(t, err)
+	require.Equal(t, int64(1000), got.CorrectedAt)
+	ok, err = s.ApplySegmentCorrections(m.ID, []SegmentFix{
+		{Idx: 0, Expect: "la guía de remisión", Text: "la guía de emisión"},
+		{Idx: 1, Expect: "the quilon labs demo", Text: "the Quillon Labs demo"},
+	}, 2000)
+	require.NoError(t, err)
+	require.True(t, ok)
 	segs, err := s.MeetingSegments(m.ID)
 	require.NoError(t, err)
 	require.Len(t, segs, 2)
@@ -267,12 +280,12 @@ func TestApplyCorrectionsKeepsFirstOriginal(t *testing.T) {
 	require.Equal(t, "la guía de revisión", segs[0].OrigText) // the transcription's own words, not the first fix
 	require.Equal(t, "the Quillon Labs demo", segs[1].Text)
 	require.Equal(t, "the quilon labs demo", segs[1].OrigText)
+	got, _ = s.Meeting(m.ID)
+	require.Equal(t, int64(2000), got.CorrectedAt)
 
-	require.NoError(t, s.SetMeetingCorrected(m.ID, 3000))
-	got, err := s.Meeting(m.ID)
+	ok, err = s.ApplySegmentCorrections("nope", nil, 1)
 	require.NoError(t, err)
-	require.Equal(t, int64(3000), got.CorrectedAt)
-	require.ErrorIs(t, s.SetMeetingCorrected("nope", 1), ErrNotFound)
+	require.False(t, ok)
 
 	// a new transcript (retranscribed from the audio) is raw again: no originals, not corrected
 	require.NoError(t, s.ReplaceMeetingSegments(m.ID, []proto.MeetingSegment{{StartMs: 0, Text: "la guía de revisión otra vez"}}))
@@ -281,6 +294,35 @@ func TestApplyCorrectionsKeepsFirstOriginal(t *testing.T) {
 	require.Equal(t, "", segs[0].OrigText)
 	got, _ = s.Meeting(m.ID)
 	require.Equal(t, int64(0), got.CorrectedAt)
+}
+
+func TestApplyCorrectionsToAReplacedTranscriptChangesNothing(t *testing.T) {
+	s := openMem(t)
+	m := mkMeeting(t, s, "", "/tmp/a.ogg")
+	require.NoError(t, s.ReplaceMeetingSegments(m.ID, []proto.MeetingSegment{{Text: "hello zorvanit"}, {Text: "the quilon call"}}))
+	// the correction was made from that transcript; a retranscription lands before it is applied
+	fixes := []SegmentFix{
+		{Idx: 0, Expect: "hello zorvanit", Text: "hello zorvanite"},
+		{Idx: 1, Expect: "the quilon call", Text: "the Quillon call"},
+	}
+	require.NoError(t, s.ReplaceMeetingSegments(m.ID, []proto.MeetingSegment{{Text: "hello zorvanit"}, {Text: "a quite different call"}}))
+	ok, err := s.ApplySegmentCorrections(m.ID, fixes, 1000)
+	require.NoError(t, err)
+	require.False(t, ok)
+	segs, err := s.MeetingSegments(m.ID)
+	require.NoError(t, err)
+	require.Equal(t, "hello zorvanit", segs[0].Text) // the matching row was rolled back too
+	require.Equal(t, "", segs[0].OrigText)
+	require.Equal(t, "a quite different call", segs[1].Text)
+	got, err := s.Meeting(m.ID)
+	require.NoError(t, err)
+	require.Equal(t, int64(0), got.CorrectedAt)
+	// a check-only fix that no longer matches fails the same way
+	ok, err = s.ApplySegmentCorrections(m.ID, []SegmentFix{{Idx: 0, Expect: "hello zorvanit", Text: "hello zorvanite"}, {Idx: 1, Expect: "the quilon call", Text: "the quilon call"}}, 1000)
+	require.NoError(t, err)
+	require.False(t, ok)
+	segs, _ = s.MeetingSegments(m.ID)
+	require.Equal(t, "hello zorvanit", segs[0].Text)
 }
 
 func TestCorrectionColumnsMigrateOnExistingDB(t *testing.T) {
