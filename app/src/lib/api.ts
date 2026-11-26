@@ -154,6 +154,9 @@ export const seen = (id: string, seq: number) =>
   apiFetch<void>(`/api/sessions/${encodeURIComponent(id)}/seen`, { method: 'POST', body: JSON.stringify({ seq }) })
 export const decide = (id: string, body: { askId: string; decision: 'allow' | 'deny'; answers?: Record<string, string>; reason?: string }) =>
   apiFetch(`/api/sessions/${encodeURIComponent(id)}/decide`, { method: 'POST', body: JSON.stringify(body) })
+/** Asks Claude Code to stop one background command, monitor or subagent of the session (its TaskStop). */
+export const stopBackgroundTask = (sessionId: string, task: string) =>
+  apiFetch(`/api/sessions/${encodeURIComponent(sessionId)}/tasks/${encodeURIComponent(task)}/stop`, { method: 'POST' })
 export const abortSession = (id: string) => apiFetch(`/api/sessions/${encodeURIComponent(id)}/abort`, { method: 'POST' })
 export const closeSession = (id: string) => apiFetch(`/api/sessions/${encodeURIComponent(id)}/close`, { method: 'POST' })
 /** prompt: an optional first message (at most 8,000 characters). */

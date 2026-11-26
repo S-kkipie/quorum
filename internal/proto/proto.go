@@ -340,7 +340,7 @@ type Command struct {
 	// not terminal-only); plugin: the Plan 6 alias, limited to after|before|timeline; set_model: switch
 	// the session's model to Value (one of its ModelOptions) through the /config Model row, which asks
 	// no question (/model may open a confirm dialog). Effort has no such path: it is read-only from devices.
-	Type     string            `json:"type"` // prompt|decide|abort|close|command|plugin|set_model
+	Type     string            `json:"type"` // prompt|decide|abort|close|command|plugin|set_model|stop_task
 	Text     string            `json:"text"`
 	Mode     string            `json:"mode"` // now|queue|interrupt
 	AskID    string            `json:"askId"`
@@ -350,6 +350,7 @@ type Command struct {
 	Command  string            `json:"command"` // command/plugin: the name without the slash
 	Args     string            `json:"args"`    // command/plugin: everything after the command name
 	Value    string            `json:"value"`   // set_model: the model option's value
+	TaskID   string            `json:"taskId,omitempty"` // stop_task: the background task or subagent to stop (Claude Code's TaskStop)
 }
 
 // Envelope is the WS wrapper daemon<->hub and hub<->app.

@@ -472,3 +472,10 @@ test('a device command settled long ago no longer claims a typed one', async () 
   t += 10 * 60_000
   expect(control.takeCommand('reload-plugins', '')).toBe(false)
 })
+
+test('stop_task → TaskStop of that task; no id does nothing', async () => {
+  const f = fake()
+  await f.control.handle(cmd({ type: 'stop_task', taskId: 'b1x' }))
+  await f.control.handle(cmd({ type: 'stop_task' }))
+  expect(f.calls).toEqual(['stop:b1x'])
+})

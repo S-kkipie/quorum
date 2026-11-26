@@ -232,6 +232,7 @@ func (s *Server) routes() {
 	dev("POST /api/sessions/{id}/model", s.handleSetModel)
 	dev("POST /api/sessions/{id}/decide", s.handleDecide)
 	dev("POST /api/sessions/{id}/abort", s.handleSimple("abort"))
+	dev("POST /api/sessions/{id}/tasks/{task}/stop", s.handleStopTask)
 	dev("POST /api/sessions/{id}/close", s.handleSimple("close"))
 	dev("POST /api/sessions/{id}/ticket", s.handleLinkTicket)
 	dev("DELETE /api/sessions/{id}/ticket", s.handleUnlinkTicket)

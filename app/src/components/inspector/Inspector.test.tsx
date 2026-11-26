@@ -215,13 +215,17 @@ describe('Background card', () => {
     vi.stubGlobal('fetch', fn)
     return fn
   }
-  const card = () => screen.getByRole('region', { name: 'Background' })
+  const card = () => screen.getByRole('region', { name: 'Background tasks' })
+  const agentsCard = () => screen.getByRole('region', { name: 'Background agents' })
 
   it('lists live items in a scroll region with a max height, with facts for commands', async () => {
     stubFacts()
     show(live())
-    expect(within(card()).getAllByRole('listitem')).toHaveLength(3)
-    expect(card().querySelector('[class*="max-h-80"]')).toBeTruthy()
+    expect(within(card()).getAllByRole('listitem')).toHaveLength(2)
+    expect(within(agentsCard()).getAllByRole('listitem')).toHaveLength(1)
+    expect(within(agentsCard()).getByText('Audit the docs')).toBeTruthy()
+    expect(card().querySelector('[class*="max-h-64"]')).toBeTruthy()
+    expect(agentsCard().querySelector('[class*="max-h-64"]')).toBeTruthy()
     expect(await within(card()).findByText('last output 3 min ago · sleeping · 2.1 s CPU')).toBeTruthy()
     expect(within(card()).queryByText('Dead')).toBeNull()
   })
@@ -235,7 +239,8 @@ describe('Background card', () => {
   it('marks every live item Dead when the session is closed', () => {
     stubFacts()
     show(live({ state: 'closed' }))
-    expect(within(card()).getAllByText('Dead')).toHaveLength(3)
+    expect(within(card()).getAllByText('Dead')).toHaveLength(2)
+    expect(within(agentsCard()).getAllByText('Dead')).toHaveLength(1)
   })
   it('opens a subagent through onOpenAgent and does not make loops clickable', () => {
     stubFacts()
@@ -267,7 +272,7 @@ describe('Background card', () => {
       expect(within(card()).getByText('last output 3 min ago · sleeping · 2.1 s CPU')).toBeTruthy()
       await act(async () => { await vi.advanceTimersByTimeAsync(10_500) })
       expect(within(card()).queryByText(/last output/)).toBeNull()
-      expect(within(card()).getAllByText(/started 1 min ago/)).toHaveLength(3)
+      expect(within(card()).getAllByText(/started 1 min ago/)).toHaveLength(2)
       expect(within(card()).queryByText('Dead')).toBeNull()
     } finally { vi.useRealTimers() }
   })
@@ -294,7 +299,7 @@ describe('Background card', () => {
     width = 1100
     show(st({ background: { tasks: 1, wakeAt: 0, items: [items[1]] } }, evs))
     fireEvent.click(screen.getByRole('button', { name: 'Inspector' }))
-    fireEvent.click(within(card()).getByRole('button', { name: /Audit the docs/ }))
+    fireEvent.click(within(agentsCard()).getByRole('button', { name: /Audit the docs/ }))
     expect(screen.getByRole('dialog', { name: 'Audit the docs' })).toBeTruthy()
     expect(screen.queryByRole('complementary', { name: 'Inspector' })).toBeNull()
   })
@@ -310,13 +315,14 @@ describe('Background card', () => {
     // aria-hidden while the modal is open
     expect(screen.getByRole('complementary', { name: 'Inspector', hidden: true })).toBeTruthy()
   })
-  it('a task already ended is not listed as running and gets no Dead badge', () => {
+  it('a task already ended is not listed and gets no Dead badge', () => {
     stubFacts()
     const evs = [ev(5, 'task_end', { taskId: 'c1', kind: 'command', summary: 'npm run watch', status: 'completed', exitCode: 0 })]
-    show(st({ background: { tasks: 1, wakeAt: 0, items: [items[0]] } }, evs))
+    show(st({ background: { tasks: 1, wakeAt: 0, items: [items[0], items[2]] } }, evs))
     expect(within(card()).getAllByRole('listitem')).toHaveLength(1)
-    expect(within(card()).queryByText('Dead')).toBeNull()
-    expect(within(card()).getByText('Ended')).toBeTruthy()
+    expect(within(card()).queryByText('npm run watch')).toBeNull()
+    expect(screen.queryByText('Dead')).toBeNull()
+    expect(screen.queryByText('Ended')).toBeNull()
   })
   it('found:false reads "no output yet" with no Dead badge', async () => {
     stubFacts(() => facts({ found: false, procs: [] }))
@@ -339,14 +345,33 @@ describe('Background card', () => {
       expect(calls()).toBe(n)
     } finally { vi.useRealTimers() }
   })
-  it('lists ended tasks with status and exit code, and shows the tail on click', async () => {
+  it('ended tasks are not listed at all', () => {
     stubFacts()
-    const evs = [ev(5, 'task_end', { taskId: 'e1', kind: 'command', summary: 'npm test', status: 'failed', exitCode: 2, outputTail: 'boom: 3 failed' })]
+    const evs = [ev(5, 'task_end', { taskId: 'e1', kind: 'command', summary: 'npm test', status: 'failed', exitCode: 2, outputTail: 'boom' })]
     show(st({}, evs))
-    const row = within(card()).getByRole('button', { name: /npm test/ })
-    expect(row.textContent).toMatch(/failed/)
-    expect(row.textContent).toMatch(/exit 2/)
-    fireEvent.click(row)
-    expect(await within(await screen.findByRole('dialog')).findByText(/boom: 3 failed/)).toBeTruthy()
+    expect(screen.queryByRole('region', { name: 'Background tasks' })).toBeNull()
+    expect(within(screen.getByRole('complementary', { name: 'Inspector' })).queryByText('npm test')).toBeNull()
+  })
+  it('Stop needs a second tap, then asks the hub to stop that task; loops have no Stop', async () => {
+    const fn = stubFacts()
+    show(live())
+    const rowOf = (name: RegExp) => within(card()).getByText(name).closest('li')!
+    expect(within(rowOf(/check the build/)).queryByRole('button', { name: 'Stop' })).toBeNull()
+    fireEvent.click(within(rowOf(/npm run watch/)).getByRole('button', { name: 'Stop' }))
+    const stops = () => fn.mock.calls.filter((c) => String(c[0]).includes('/stop'))
+    expect(stops()).toHaveLength(0)
+    fireEvent.click(within(rowOf(/npm run watch/)).getByRole('button', { name: 'Tap again to stop' }))
+    expect(stops()).toHaveLength(1)
+    expect(String(stops()[0][0])).toContain('/api/sessions/a/tasks/c1/stop')
+    expect(((stops()[0] as unknown[])[1] as RequestInit).method).toBe('POST')
+    expect(await within(card()).findByText('stopping…')).toBeTruthy()
+  })
+  it('a subagent has its own Stop too', () => {
+    const fn = stubFacts()
+    show(live())
+    const row = within(agentsCard()).getByRole('listitem')
+    fireEvent.click(within(row).getByRole('button', { name: 'Stop' }))
+    fireEvent.click(within(row).getByRole('button', { name: 'Tap again to stop' }))
+    expect(fn.mock.calls.some((c) => String(c[0]).includes('/tasks/ag1/stop'))).toBe(true)
   })
 })

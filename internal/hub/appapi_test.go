@@ -534,3 +534,13 @@ func TestLiveSnapshotCarriesOpenAsks(t *testing.T) {
 	case <-time.After(300 * time.Millisecond):
 	}
 }
+
+func TestStopTaskRoutedAsCommand(t *testing.T) {
+	f := newAppFx(t, "s1")
+	require.Equal(t, 202, f.post("/api/sessions/s1/tasks/b1x/stop", ``).StatusCode)
+	require.Equal(t, proto.Command{Type: "stop_task", TaskID: "b1x"}, f.nextCmd(t))
+	code, _ := f.postBody("/api/sessions/s1/tasks/a.b/stop", ``)
+	require.Equal(t, 400, code)
+	code, _ = f.postBody("/api/sessions/nope/tasks/b1x/stop", ``)
+	require.Equal(t, 404, code)
+}

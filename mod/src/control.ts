@@ -668,6 +668,13 @@ export function makeControl(deps: ControlDeps) {
         case 'set_model':
           await setModel(c.value ?? '')
           return
+        case 'stop_task': {
+          // Claude Code's TaskStop; the end arrives as its task notification (the item leaves then)
+          const id = c.taskId ?? ''
+          if (!id) return
+          try { await deps.stopTask(id) } catch { info('Could not stop that background task') }
+          return
+        }
         case 'plugin': {
           // Plan 6 alias of `command`: limited to after/before/timeline, no list needed
           const command = c.command ?? ''

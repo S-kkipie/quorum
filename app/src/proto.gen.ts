@@ -405,7 +405,7 @@ export interface Command {
    * the session's model to Value (one of its ModelOptions) through the /config Model row, which asks
    * no question (/model may open a confirm dialog). Effort has no such path: it is read-only from devices.
    */
-  type: string; // prompt|decide|abort|close|command|plugin|set_model
+  type: string; // prompt|decide|abort|close|command|plugin|set_model|stop_task
   text: string;
   mode: string; // now|queue|interrupt
   askId: string;
@@ -415,6 +415,7 @@ export interface Command {
   command: string; // command/plugin: the name without the slash
   args: string; // command/plugin: everything after the command name
   value: string; // set_model: the model option's value
+  taskId?: string; // stop_task: the background task or subagent to stop (Claude Code's TaskStop)
 }
 /**
  * Envelope is the WS wrapper daemon<->hub and hub<->app.

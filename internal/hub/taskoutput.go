@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/S-kkipie/quorum/internal/hub/store"
+	"github.com/S-kkipie/quorum/internal/proto"
 )
 
 var taskIDRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
@@ -40,4 +41,19 @@ func (s *Server) handleTaskOutput(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, out)
+}
+
+// handleStopTask asks the session's Claude Code to stop one background task or subagent
+// (a stop_task command; the mod runs TaskStop). Its end then arrives as a task notification.
+func (s *Server) handleStopTask(w http.ResponseWriter, r *http.Request) {
+	task := r.PathValue("task")
+	if !taskIDRe.MatchString(task) {
+		apiErr(w, 400, "invalid id")
+		return
+	}
+	si, ok := s.target(w, r)
+	if !ok || !s.dispatch(w, si, proto.Command{Type: "stop_task", TaskID: task}) {
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
 }
