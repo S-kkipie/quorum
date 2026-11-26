@@ -446,6 +446,7 @@ export interface Command {
  * meeting_progress (daemon->hub): Payload MeetingProgress; a running meeting job's progress, re-sent as a heartbeat
  * while the job runs. The hub keeps it to itself and publishes meeting_changed.
  * meeting_changed (hub->app): Payload {id, projectId, status, progress, stage}; status "deleted" when it was removed.
+ * meeting_live (hub->app): Payload MeetingLivePush; new live segments of a recording meeting and its live state.
  */
 export interface Envelope {
   type: string;
@@ -773,7 +774,7 @@ export interface Proposal {
 }
 /**
  * Meeting is an uploaded recording, transcribed on a machine with the transcribe capability and
- * summarised. Status = uploaded|queued|transcribing|summarising|ready|failed; ProjectID "" = unassigned.
+ * summarised. Status = live|uploaded|queued|transcribing|summarising|ready|failed; ProjectID "" = unassigned.
  * HasAudio is false once the audio was deleted (30 days after the meeting became ready). The detail
  * (GET /api/meetings/{id}) also fills Summary, Segments, Actions and Speakers.
  */
@@ -812,6 +813,30 @@ export interface Meeting {
    * Speakers maps a speaker label of the segments ("Speaker 2") to the name the owner gave it.
    */
   speakers?: { [key: string]: string};
+  /**
+   * Live is the recording's state while Status is "live" (the detail only).
+   */
+  live?: MeetingLiveState;
+}
+/**
+ * MeetingLiveState is a live meeting's progress: slices received in order, assembled bytes, the time the
+ * transcript covers, when the last slice arrived (unix ms) and whether the transcription is waiting for a machine.
+ */
+export interface MeetingLiveState {
+  slices: number /* int */;
+  bytes: number /* int64 */;
+  throughMs: number /* int64 */;
+  lastSliceAt: number /* int64 */;
+  waiting: boolean;
+}
+/**
+ * MeetingLivePush is the payload of meeting_live: the segments added since the last push and the live state.
+ */
+export interface MeetingLivePush {
+  id: string;
+  projectId: string;
+  segments: MeetingSegment[];
+  live: MeetingLiveState;
 }
 /**
  * MeetingSegment is one transcript segment; Speaker is a stable label per meeting ("Me", "Others",
@@ -871,6 +896,33 @@ export const MeetingStepTranscribe = "transcribe";
  * the machine's Ollama).
  */
 export const MeetingStepSummarizeLocal = "summarize_local";
+/**
+ * MeetingStepTranscribeChunk transcribes the new part of a live meeting's audio (MeetingChunkSettings in,
+ * MeetingChunkResult out).
+ */
+export const MeetingStepTranscribeChunk = "transcribe_chunk";
+/**
+ * MeetingChunkSettings are the settings of a transcribe_chunk job, built when the job is handed out. FromMs is
+ * the time already transcribed, ContextMs the audio before it that is decoded again for context, and LiveBytes
+ * the size of the assembled audio file now (0 = warm-up: only load the model).
+ */
+export interface MeetingChunkSettings {
+  language: string;
+  model: string;
+  prompt?: string;
+  fromMs: number /* int64 */;
+  contextMs: number /* int64 */;
+  liveBytes: number /* int64 */;
+}
+/**
+ * MeetingChunkResult is the result of a transcribe_chunk job: new segments (absolute times) and the time the
+ * audio was transcribed through.
+ */
+export interface MeetingChunkResult {
+  segments: MeetingWorkerSegment[];
+  through_ms: number /* int64 */;
+  language: string;
+}
 /**
  * MeetingJobStart is the params of the rpc meeting_job_start (hub->daemon). It returns at once (the daemon
  * only starts the worker); progress comes back as meeting_progress envelopes and the result is POSTed to

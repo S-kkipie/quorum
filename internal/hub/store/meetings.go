@@ -31,7 +31,7 @@ var (
 )
 
 // MeetingStatuses are the states of a meeting, in pipeline order.
-var MeetingStatuses = []string{"uploaded", "queued", "transcribing", "summarising", "ready", "failed"}
+var MeetingStatuses = []string{"live", "uploaded", "queued", "transcribing", "summarising", "ready", "failed"}
 
 const schemaMeetings = `
 CREATE TABLE IF NOT EXISTS meetings (
@@ -118,6 +118,13 @@ CREATE TABLE IF NOT EXISTS meeting_tokens (
 	expires_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS meeting_tokens_meeting ON meeting_tokens(meeting_id);
+CREATE TABLE IF NOT EXISTS meeting_live (
+	meeting_id TEXT PRIMARY KEY,
+	next_seq INTEGER NOT NULL DEFAULT 0,
+	bytes INTEGER NOT NULL DEFAULT 0,
+	through_ms INTEGER NOT NULL DEFAULT 0,
+	last_slice_at INTEGER NOT NULL DEFAULT 0
+);
 `
 
 // migrateMeetings (Plan 14): the meetings tables and the source of meeting_notes (connector rows come
@@ -723,6 +730,7 @@ func (s *Store) DeleteMeeting(id string) (out DeletedMeeting, err error) {
 	}
 	err = nil
 	for _, q := range []string{
+		`DELETE FROM meeting_live WHERE meeting_id=?`,
 		`DELETE FROM meeting_audio WHERE meeting_id=?`,
 		`DELETE FROM meeting_segments WHERE meeting_id=?`,
 		`DELETE FROM meeting_summary WHERE meeting_id=?`,

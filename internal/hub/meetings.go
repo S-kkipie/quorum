@@ -97,6 +97,11 @@ func (s *Server) handleMeeting(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	applySpeakerNames(&m)
+	if m.Status == "live" {
+		if ls, err := s.liveState(m.ID); err == nil {
+			m.Live = &ls
+		}
+	}
 	writeJSON(w, 200, m)
 }
 

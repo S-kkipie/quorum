@@ -381,6 +381,7 @@ type Command struct {
 // meeting_progress (daemon->hub): Payload MeetingProgress; a running meeting job's progress, re-sent as a heartbeat
 // while the job runs. The hub keeps it to itself and publishes meeting_changed.
 // meeting_changed (hub->app): Payload {id, projectId, status, progress, stage}; status "deleted" when it was removed.
+// meeting_live (hub->app): Payload MeetingLivePush; new live segments of a recording meeting and its live state.
 type Envelope struct {
 	Type    string          `json:"type"`
 	Machine string          `json:"machine"`
@@ -675,7 +676,7 @@ type Proposal struct {
 }
 
 // Meeting is an uploaded recording, transcribed on a machine with the transcribe capability and
-// summarised. Status = uploaded|queued|transcribing|summarising|ready|failed; ProjectID "" = unassigned.
+// summarised. Status = live|uploaded|queued|transcribing|summarising|ready|failed; ProjectID "" = unassigned.
 // HasAudio is false once the audio was deleted (30 days after the meeting became ready). The detail
 // (GET /api/meetings/{id}) also fills Summary, Segments, Actions and Speakers.
 type Meeting struct {
@@ -705,6 +706,26 @@ type Meeting struct {
 	Actions     []MeetingAction  `json:"actions,omitempty"`
 	// Speakers maps a speaker label of the segments ("Speaker 2") to the name the owner gave it.
 	Speakers map[string]string `json:"speakers,omitempty"`
+	// Live is the recording's state while Status is "live" (the detail only).
+	Live *MeetingLiveState `json:"live,omitempty"`
+}
+
+// MeetingLiveState is a live meeting's progress: slices received in order, assembled bytes, the time the
+// transcript covers, when the last slice arrived (unix ms) and whether the transcription is waiting for a machine.
+type MeetingLiveState struct {
+	Slices      int   `json:"slices"`
+	Bytes       int64 `json:"bytes"`
+	ThroughMs   int64 `json:"throughMs"`
+	LastSliceAt int64 `json:"lastSliceAt"`
+	Waiting     bool  `json:"waiting"`
+}
+
+// MeetingLivePush is the payload of meeting_live: the segments added since the last push and the live state.
+type MeetingLivePush struct {
+	ID        string           `json:"id"`
+	ProjectID string           `json:"projectId"`
+	Segments  []MeetingSegment `json:"segments"`
+	Live      MeetingLiveState `json:"live"`
 }
 
 // MeetingSegment is one transcript segment; Speaker is a stable label per meeting ("Me", "Others",
@@ -754,7 +775,30 @@ type MeetingAction struct {
 const (
 	MeetingStepTranscribe     = "transcribe"
 	MeetingStepSummarizeLocal = "summarize_local"
+	// MeetingStepTranscribeChunk transcribes the new part of a live meeting's audio (MeetingChunkSettings in,
+	// MeetingChunkResult out).
+	MeetingStepTranscribeChunk = "transcribe_chunk"
 )
+
+// MeetingChunkSettings are the settings of a transcribe_chunk job, built when the job is handed out. FromMs is
+// the time already transcribed, ContextMs the audio before it that is decoded again for context, and LiveBytes
+// the size of the assembled audio file now (0 = warm-up: only load the model).
+type MeetingChunkSettings struct {
+	Language  string `json:"language"`
+	Model     string `json:"model"`
+	Prompt    string `json:"prompt,omitempty"`
+	FromMs    int64  `json:"fromMs"`
+	ContextMs int64  `json:"contextMs"`
+	LiveBytes int64  `json:"liveBytes"`
+}
+
+// MeetingChunkResult is the result of a transcribe_chunk job: new segments (absolute times) and the time the
+// audio was transcribed through.
+type MeetingChunkResult struct {
+	Segments  []MeetingWorkerSegment `json:"segments"`
+	ThroughMs int64                  `json:"through_ms"`
+	Language  string                 `json:"language"`
+}
 
 // MeetingJobStart is the params of the rpc meeting_job_start (hub->daemon). It returns at once (the daemon
 // only starts the worker); progress comes back as meeting_progress envelopes and the result is POSTed to

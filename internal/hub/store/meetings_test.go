@@ -365,3 +365,57 @@ func TestCorrectionColumnsMigrateOnExistingDB(t *testing.T) {
 		require.NoError(t, s.Close())
 	}
 }
+
+func TestLiveMeetingLifecycle(t *testing.T) {
+	s, p := briefingStore(t)
+	_, err := s.CreateLiveMeeting(MeetingUpload{ProjectID: "nope"}, func(id string) string { return "/x/" + id + ".webm" })
+	require.ErrorIs(t, err, ErrNoProject)
+
+	m, err := s.CreateLiveMeeting(MeetingUpload{ProjectID: p.ID, Title: "Standup", Language: "es", StartedAt: 1700000000000},
+		func(id string) string { return "/x/" + id + ".webm" })
+	require.NoError(t, err)
+	require.Equal(t, "live", m.Status)
+	require.True(t, m.HasAudio)
+	require.Equal(t, p.ID, m.ProjectID)
+	path, mime, size, ok, err := s.MeetingAudio(m.ID)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, "/x/"+m.ID+".webm", path)
+	require.Equal(t, "audio/webm", mime)
+	require.Equal(t, int64(0), size)
+
+	ls, err := s.MeetingLiveState(m.ID)
+	require.NoError(t, err)
+	require.Equal(t, LiveState{MeetingID: m.ID, CreatedAt: ls.CreatedAt}, ls)
+	all, err := s.LiveMeetings()
+	require.NoError(t, err)
+	require.Len(t, all, 1)
+
+	require.NoError(t, s.AdvanceLive(m.ID, 2, 300, 1234))
+	ls, err = s.MeetingLiveState(m.ID)
+	require.NoError(t, err)
+	require.Equal(t, 2, ls.NextSeq)
+	require.Equal(t, int64(300), ls.Bytes)
+	require.Equal(t, int64(1234), ls.LastSliceAt)
+	got, err := s.Meeting(m.ID)
+	require.NoError(t, err)
+	require.Equal(t, int64(300), got.AudioBytes)
+
+	require.NoError(t, s.SetLiveThrough(m.ID, 5000))
+	require.NoError(t, s.SetLiveThrough(m.ID, 3000))
+	ls, _ = s.MeetingLiveState(m.ID)
+	require.Equal(t, int64(5000), ls.ThroughMs)
+
+	require.NoError(t, s.AppendMeetingSegments(m.ID, []proto.MeetingSegment{{StartMs: 0, EndMs: 1000, Text: "a"}, {StartMs: 1000, EndMs: 2000, Text: "b"}}))
+	require.NoError(t, s.AppendMeetingSegments(m.ID, []proto.MeetingSegment{{StartMs: 2000, EndMs: 3000, Text: "c"}}))
+	segs, err := s.MeetingSegments(m.ID)
+	require.NoError(t, err)
+	require.Equal(t, []string{"a", "b", "c"}, []string{segs[0].Text, segs[1].Text, segs[2].Text})
+
+	require.NoError(t, s.SetMeetingStatus(m.ID, "live", "", 0))
+	require.NoError(t, s.EndLive(m.ID))
+	_, err = s.MeetingLiveState(m.ID)
+	require.ErrorIs(t, err, ErrNotFound)
+	all, _ = s.LiveMeetings()
+	require.Empty(t, all)
+}

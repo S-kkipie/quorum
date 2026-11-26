@@ -47,6 +47,9 @@ type jobStep struct {
 	needsAudio    bool
 	// needsTranscript: the worker fetches the transcript from the job's transcript URL
 	needsTranscript bool
+	// live marks a step of a recording meeting (meetings_live_jobs.go): it never changes the meeting's
+	// status or error, only its job row, so a failing chunk cannot fail the meeting.
+	live bool
 	// settings builds the step's settings at dispatch time ("" keeps the job's stored settings).
 	settings func(s *Server, job store.MeetingJob, m proto.Meeting) (string, error)
 	// parse checks a result before it is claimed (an invalid result changes nothing: 400).
@@ -57,9 +60,10 @@ type jobStep struct {
 
 // meetingJobs is the server's job state.
 type meetingJobs struct {
-	mu    sync.Mutex  // serializes dispatching
-	kick  atomic.Bool // a dispatch is pending
-	steps map[string]jobStep
+	mu     sync.Mutex  // serializes dispatching
+	liveMu sync.Mutex  // serializes queueing live chunk jobs
+	kick   atomic.Bool // a dispatch is pending
+	steps  map[string]jobStep
 	// onTranscribed runs after a transcript is stored (the summary, meetings_summary.go); nil makes the
 	// meeting ready.
 	onTranscribed func(meetingID string)
@@ -72,6 +76,10 @@ func (s *Server) initMeetingJobs() {
 		proto.MeetingStepTranscribe: {
 			queuedStatus: "queued", runningStatus: "transcribing", needsAudio: true,
 			settings: transcribeSettings, parse: parseTranscript, apply: applyTranscript,
+		},
+		proto.MeetingStepTranscribeChunk: {
+			needsAudio: true, live: true,
+			settings: chunkSettings, parse: parseChunk, apply: applyChunk,
 		},
 		proto.MeetingStepSummarizeLocal: {
 			queuedStatus: "summarising", runningStatus: "summarising",
@@ -173,9 +181,22 @@ func (s *Server) dispatchMeetingJobs() {
 		return
 	}
 	idle := s.idleTranscribers()
+	// a recording meeting comes first: its chunk jobs go before any other job, and while one is live the
+	// other jobs wait (they would keep its chunks behind a long transcription)
+	live, err := s.st.LiveMeetings()
+	if err != nil {
+		log.Printf("hub: meetings: live meetings: %v", err)
+		return
+	}
+	sort.SliceStable(queued, func(a, b int) bool {
+		return queued[a].Step == proto.MeetingStepTranscribeChunk && queued[b].Step != proto.MeetingStepTranscribeChunk
+	})
 	for _, j := range queued {
 		if len(idle) == 0 {
 			return
+		}
+		if len(live) > 0 && j.Step != proto.MeetingStepTranscribeChunk {
+			continue
 		}
 		switch s.startMeetingJob(j, idle[0]) {
 		case jobStarted, jobRefused:
@@ -277,7 +298,9 @@ func (s *Server) startMeetingJob(j store.MeetingJob, machine string) startOutcom
 	if step.needsTranscript {
 		req.TranscriptURL = "/api/meeting-jobs/" + tok + "/transcript"
 	}
-	s.setMeetingState(m.ID, step.runningStatus, "", 0, "starting")
+	if !step.live {
+		s.setMeetingState(m.ID, step.runningStatus, "", 0, "starting")
+	}
 	err = s.hub.call(context.Background(), machine, "meeting_job_start", req, nil)
 	switch {
 	case err == nil:
@@ -290,7 +313,9 @@ func (s *Server) startMeetingJob(j store.MeetingJob, machine string) startOutcom
 		log.Printf("hub: meetings: %s did not take job %s: %v", machine, j.ID, err)
 		if ok, _ := s.st.UnstartMeetingJob(j.ID, j.Attempt); ok {
 			s.st.DeleteMeetingTokensRef("job", ref)
-			s.setMeetingState(m.ID, step.queuedStatus, "", 0, "")
+			if !step.live {
+				s.setMeetingState(m.ID, step.queuedStatus, "", 0, "")
+			}
 		}
 		return jobRefused
 	}
@@ -334,7 +359,7 @@ func (s *Server) checkMeetingJobs(now time.Time) {
 		}
 		log.Printf("hub: meetings: %s went silent on job %s; queued again as attempt %d", j.Machine, j.ID, j.Attempt+1)
 		s.cancelOnMachine(j)
-		if step, ok := s.jobs.steps[j.Step]; ok {
+		if step, ok := s.jobs.steps[j.Step]; ok && !step.live {
 			s.setMeetingState(j.MeetingID, step.queuedStatus, "", 0, "")
 		}
 	}
@@ -363,6 +388,10 @@ func (s *Server) failJob(j store.MeetingJob, msg string) {
 	}
 	if ok, err := s.st.FailMeetingJob(j.ID, msg); err != nil || !ok {
 		return
+	}
+	if step, ok := s.jobs.steps[j.Step]; ok && step.live {
+		log.Printf("hub: meetings: live job %s of %s failed: %s", j.ID, j.MeetingID, msg)
+		return // the meeting keeps recording; the next slice queues another chunk
 	}
 	s.setMeetingState(j.MeetingID, "failed", msg, 0, "")
 }
@@ -420,7 +449,7 @@ func (s *Server) onMeetingProgress(machine string, p proto.MeetingProgress) {
 		return // a heartbeat: nothing new to show
 	}
 	step, ok := s.jobs.steps[j.Step]
-	if !ok {
+	if !ok || step.live {
 		return
 	}
 	s.setMeetingState(j.MeetingID, step.runningStatus, "", pct, stage)
@@ -489,7 +518,11 @@ func (s *Server) handleMeetingJobResult(w http.ResponseWriter, r *http.Request) 
 			apiErr(w, 409, "this job attempt is no longer current; the result was discarded")
 			return
 		}
-		s.setMeetingState(j.MeetingID, "failed", msg, 0, "")
+		if step.live {
+			log.Printf("hub: meetings: live job %s of %s: worker error: %s", j.ID, j.MeetingID, msg)
+		} else {
+			s.setMeetingState(j.MeetingID, "failed", msg, 0, "")
+		}
 		s.kickJobs()
 		writeJSON(w, 200, map[string]bool{"ok": true})
 		return
@@ -509,6 +542,10 @@ func (s *Server) handleMeetingJobResult(w http.ResponseWriter, r *http.Request) 
 	s.kickJobs() // the machine is free
 	if err := step.apply(s, j, v); err != nil {
 		log.Printf("hub: meetings: result of job %s: %v", j.ID, err)
+		if step.live {
+			writeJSON(w, 200, map[string]bool{"ok": true})
+			return
+		}
 		s.setMeetingState(j.MeetingID, "failed", trimRunes("The result could not be stored: "+err.Error(), maxJobError), 0, "")
 	}
 	writeJSON(w, 200, map[string]bool{"ok": true})
