@@ -8,7 +8,7 @@ const stubStorage = () => vi.stubGlobal('localStorage', {
 })
 stubStorage()
 import { setHub, ApiError } from './api'
-import { createSliceUploader, startLiveRecording, currentRecording, keepScreenOn } from './liveRecorder'
+import { createSliceUploader, startLiveRecording, currentRecording, recordingFor, dismissRecording, keepScreenOn } from './liveRecorder'
 
 const res = (status: number, body: unknown) => new Response(JSON.stringify(body), { status })
 const blob = (s: string) => new Blob([s])
@@ -200,6 +200,30 @@ describe('recorder failures', () => {
     expect(r.state).toBe('failed')
     expect(r.error).toBe('Recording was interrupted.')
     expect(t.stop).toHaveBeenCalled()
+  })
+
+  it('keeps a failed recording reachable, and the page-close warning while slices are uploading', async () => {
+    const add = vi.fn(); const remove = vi.fn()
+    vi.stubGlobal('window', { addEventListener: add, removeEventListener: remove })
+    const fast = fetch as unknown as (u: string, i?: RequestInit) => Promise<Response>
+    let release!: () => void
+    const gate = new Promise<void>(r => { release = r })
+    vi.stubGlobal('fetch', vi.fn(async (u: string, i?: RequestInit) => { if (/\/live\/\d+$/.test(u)) await gate; return fast(u, i) }))
+    const r = await startLiveRecording({})
+    expect(add).toHaveBeenCalledWith('beforeunload', expect.any(Function))
+    FakeRecorder.last.emit(blob('a'))
+    FakeRecorder.last.stop()
+    expect(r.state).toBe('failed')
+    expect(currentRecording()).toBeNull()
+    expect(recordingFor('m1')).toBe(r)
+    expect(r.error).toBe('Recording was interrupted.')
+    expect(r.pending).toBe(1)
+    expect(remove).not.toHaveBeenCalled() // still uploading: closing the page would lose a slice
+    release()
+    await vi.waitFor(() => expect(remove).toHaveBeenCalledWith('beforeunload', expect.any(Function)))
+    expect(r.pending).toBe(0)
+    dismissRecording('m1')
+    expect(recordingFor('m1')).toBeNull()
   })
 
   it('exposes the transient upload error until a slice is stored', async () => {

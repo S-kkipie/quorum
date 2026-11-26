@@ -82,7 +82,7 @@ function BeforeTranscript({ m, onPatch }: { m: Meeting; onPatch: (b: { speakers?
 }
 
 /** The meeting page: header, processing status, summary, decisions, open points, actions, attendees and transcript. */
-export default function MeetingPage({ state, id, onBack }: { state: AppState; id: string; onBack?: () => void }) {
+export default function MeetingPage({ state, id, onBack, reconnects = 0 }: { state: AppState; id: string; onBack?: () => void; reconnects?: number }) {
   const [m, setM] = useState<Meeting | null>(null)
   const [error, setError] = useState('')
   const [loadError, setLoadError] = useState('')
@@ -103,7 +103,7 @@ export default function MeetingPage({ state, id, onBack }: { state: AppState; id
     getMeeting(id)
       .then((x) => { if (n === seq.current) { setM(x); setLoadError('') } })
       .catch((e) => { if (n === seq.current) setLoadError(e instanceof Error ? e.message : 'error') })
-  }, [id, rev])
+  }, [id, rev, reconnects]) // a reconnect of the live feed backfills the pushes missed while it was down
   useEffect(() => () => { seq.current++ }, [])
 
   const hasSegments = !!m?.segments?.length

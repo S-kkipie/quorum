@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { currentRecording } from '../../lib/liveRecorder'
+import { dismissRecording, recordingFor } from '../../lib/liveRecorder'
 import { stopLiveMeeting } from '../../lib/meetingsApi'
 import type { AppState } from '../../lib/store'
 import type { Meeting, MeetingSegment } from '../../proto.gen'
@@ -26,10 +26,11 @@ export default function LiveView({ state, m, onStopped }: { state: AppState; m: 
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t) }, [])
 
   const [, bump] = useState(0)
-  const rec = currentRecording()
-  const mine = rec?.meetingId === m.id ? rec : null
+  const mine = recordingFor(m.id)
   useEffect(() => (mine ? mine.subscribe(() => bump((n) => n + 1)) : undefined), [mine])
   const recording = !!mine && (mine.state === 'recording' || mine.state === 'stopping')
+  // an interrupted recording still sends what it captured: stopping now would cut those slices off
+  const uploading = mine?.state === 'failed' && !mine.uploadStopped ? mine.pending : 0
 
   const box = useRef<HTMLDivElement>(null)
   const atBottom = useRef(true)
@@ -43,7 +44,7 @@ export default function LiveView({ state, m, onStopped }: { state: AppState; m: 
   async function stop(fn: () => Promise<Meeting>) {
     setError('')
     setBusy(true)
-    try { onStopped(await fn()) } catch (e) { setError(e instanceof Error ? e.message : 'Stopping failed.') } finally { setBusy(false) }
+    try { const r = await fn(); dismissRecording(m.id); onStopped(r) } catch (e) { setError(e instanceof Error ? e.message : 'Stopping failed.') } finally { setBusy(false) }
   }
 
   return (
@@ -69,7 +70,9 @@ export default function LiveView({ state, m, onStopped }: { state: AppState; m: 
       {!recording && (
         <>
           <p className="text-xs text-muted-foreground">Recording on another device, or interrupted. Stop it to process what arrived.</p>
-          <Button disabled={busy} onClick={() => void stop(() => stopLiveMeeting(m.id, { slices: 0, force: true }))} className="min-h-11">Stop and process</Button>
+          {uploading > 0
+            ? <p role="status" className="text-sm text-muted-foreground">Uploading {uploading} {uploading === 1 ? 'slice' : 'slices'}…</p>
+            : <Button disabled={busy} onClick={() => void stop(() => stopLiveMeeting(m.id, { slices: 0, force: true }))} className="min-h-11">Stop and process</Button>}
         </>
       )}
       {error && <p role="alert" className={`text-xs text-danger ${wrap}`}>{error}</p>}

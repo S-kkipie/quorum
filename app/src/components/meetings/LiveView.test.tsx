@@ -6,7 +6,7 @@ import type { Meeting, MeetingLiveState, MeetingSegment } from '../../proto.gen'
 const api = vi.hoisted(() => ({ stopLiveMeeting: vi.fn() }))
 const rec = vi.hoisted(() => ({ current: null as unknown }))
 vi.mock('../../lib/meetingsApi', async (orig) => ({ ...(await orig<typeof import('../../lib/meetingsApi')>()), ...api }))
-vi.mock('../../lib/liveRecorder', () => ({ currentRecording: () => rec.current }))
+vi.mock('../../lib/liveRecorder', () => ({ recordingFor: () => rec.current, dismissRecording: vi.fn() }))
 import LiveView from './LiveView'
 import { initialState, type AppState } from '../../lib/store'
 
@@ -48,6 +48,23 @@ describe('LiveView', () => {
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Stop' })) })
     expect(stop).toHaveBeenCalled()
     expect(api.stopLiveMeeting).not.toHaveBeenCalled()
+  })
+  it('shows why a recording failed and holds Stop and process while its slices upload', () => {
+    rec.current = { meetingId: 'm1', startedAt: 1, state: 'failed', error: 'Recording was interrupted.', pending: 2, lastError: '', uploadStopped: false, subscribe: () => () => {}, stop: vi.fn() }
+    render(<LiveView state={withText([], live())} m={m} onStopped={() => {}} />)
+    expect(screen.getByText('Recording was interrupted.')).toBeTruthy()
+    expect(screen.getByText('Uploading 2 slices…')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Stop and process' })).toBeNull()
+  })
+  it('offers Stop and process once the failed recording has nothing left to upload, or gave up', () => {
+    rec.current = { meetingId: 'm1', startedAt: 1, state: 'failed', error: 'the recording is larger than 400 MB', pending: 0, lastError: '', uploadStopped: false, subscribe: () => () => {}, stop: vi.fn() }
+    const { unmount } = render(<LiveView state={withText([], live())} m={m} onStopped={() => {}} />)
+    expect(screen.getByText('the recording is larger than 400 MB')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Stop and process' })).toBeTruthy()
+    unmount()
+    rec.current = { meetingId: 'm1', startedAt: 1, state: 'failed', error: 'x', pending: 3, lastError: '', uploadStopped: true, subscribe: () => () => {}, stop: vi.fn() }
+    render(<LiveView state={withText([], live())} m={m} onStopped={() => {}} />)
+    expect(screen.getByRole('button', { name: 'Stop and process' })).toBeTruthy()
   })
   it('shows the pending uploads while stopping', () => {
     rec.current = { meetingId: 'm1', startedAt: 1, state: 'stopping', error: '', pending: 3, lastError: '', subscribe: () => () => {}, stop: vi.fn() }

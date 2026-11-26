@@ -57,9 +57,17 @@ func (s *Server) publishMeeting(id, projectID, status string) {
 // queueMeeting moves an uploaded meeting to queued with a transcribe job, announces it and starts a
 // dispatch.
 func (s *Server) queueMeeting(id string) (proto.Meeting, error) {
-	if act, err := s.st.ActiveMeetingJobs(id); err != nil {
+	act, err := s.st.ActiveMeetingJobs(id)
+	if err != nil {
 		return proto.Meeting{}, err
-	} else if len(act) == 0 {
+	}
+	busy := false
+	for _, j := range act { // a live chunk job is not the full pipeline
+		if j.Step != proto.MeetingStepTranscribeChunk {
+			busy = true
+		}
+	}
+	if !busy {
 		if _, err := s.st.CreateMeetingJob(id, proto.MeetingStepTranscribe, ""); err != nil {
 			return proto.Meeting{}, err
 		}

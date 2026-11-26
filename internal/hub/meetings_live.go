@@ -181,6 +181,12 @@ func (s *Server) handleLiveSlice(w http.ResponseWriter, r *http.Request) {
 	}
 	unlock := s.liveLk.lock(id)
 	ls, err = s.assembleLive(id)
+	if err == nil {
+		// under the meeting's lock, so a stop cannot slip in between the live check and the queueing
+		if qerr := s.queueLiveChunk(id); qerr != nil {
+			log.Printf("hub: meetings: chunk of %s: %v", id, qerr)
+		}
+	}
 	unlock()
 	if errors.Is(err, store.ErrNotFound) { // stopped or deleted meanwhile
 		_ = os.RemoveAll(dir)
@@ -191,9 +197,6 @@ func (s *Server) handleLiveSlice(w http.ResponseWriter, r *http.Request) {
 		log.Printf("hub: meetings: assemble %s: %v", id, err)
 		apiErr(w, 500, "internal error")
 		return
-	}
-	if err := s.queueLiveChunk(id); err != nil {
-		log.Printf("hub: meetings: chunk of %s: %v", id, err)
 	}
 	s.publishLive(id, m.ProjectID, nil)
 	writeJSON(w, 200, map[string]any{"nextSeq": ls.NextSeq, "bytes": ls.Bytes})
@@ -332,7 +335,14 @@ func (s *Server) stopLive(id string, slices int, force bool) (proto.Meeting, []i
 	ls, err := s.st.MeetingLiveState(id)
 	if errors.Is(err, store.ErrNotFound) {
 		m, merr := s.st.Meeting(id)
-		return m, nil, merr
+		if merr != nil || m.Status != "live" {
+			return m, nil, merr
+		}
+		// the live state ended but queueing failed: finish the hand-off now, so a retried stop recovers
+		_ = os.RemoveAll(s.liveDir(id))
+		s.cancelMeetingJobs(id)
+		m, err = s.queueMeeting(id)
+		return m, nil, err
 	}
 	if err != nil {
 		return proto.Meeting{}, nil, err

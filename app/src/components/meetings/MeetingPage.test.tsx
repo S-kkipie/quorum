@@ -384,4 +384,12 @@ describe('a live meeting', () => {
     expect(screen.getByRole('button', { name: 'Stop and process' })).toBeTruthy()
     expect(api.meetingAudioURL).not.toHaveBeenCalled()
   })
+  it('refetches the open live meeting when the live feed reconnects', async () => {
+    api.getMeeting.mockResolvedValue(meeting({ status: 'live', segments: [] }))
+    const { rerender } = render(<MeetingPage state={state()} id="m1" reconnects={0} />)
+    await screen.findByText('Recording')
+    expect(api.getMeeting).toHaveBeenCalledTimes(1)
+    rerender(<MeetingPage state={state()} id="m1" reconnects={1} />)
+    await waitFor(() => expect(api.getMeeting).toHaveBeenCalledTimes(2))
+  })
 })

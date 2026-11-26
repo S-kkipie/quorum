@@ -149,6 +149,8 @@ export interface LiveRecording {
   pending: number
   /** The uploader's last transient error while it retries ("" when none); cleared on the next stored slice. */
   lastError: string
+  /** True once the uploader gave up on a permanent error: what is pending will not be sent. */
+  uploadStopped: boolean
   subscribe(fn: () => void): () => void
   stop(): Promise<Meeting>
 }
@@ -156,6 +158,17 @@ export interface LiveRecording {
 let current: LiveRecording | null = null
 
 export const currentRecording = (): LiveRecording | null => current
+
+// A recording that failed is no longer `current`, but the meeting screen still needs its message and its
+// pending count until the meeting is stopped or the failure is dismissed.
+const failed = new Map<string, LiveRecording>()
+
+/** The recording of this meeting on this device: the active one, or the failed one kept for the screen. */
+export const recordingFor = (meetingId: string): LiveRecording | null =>
+  current?.meetingId === meetingId ? current : failed.get(meetingId) ?? null
+
+/** Forgets a failed recording (the meeting was stopped, or the person dismissed the message). */
+export const dismissRecording = (meetingId: string) => { failed.delete(meetingId) }
 
 const MIME = 'audio/webm;codecs=opus'
 
@@ -206,15 +219,26 @@ export async function startLiveRecording(opts: { projectId?: string; title?: str
   let stopping: Promise<Meeting> | null = null
 
   const r: LiveRecording = {
-    meetingId: id, startedAt, state: 'recording', error: '', pending: 0, lastError: '',
+    meetingId: id, startedAt, state: 'recording', error: '', pending: 0, lastError: '', uploadStopped: false,
     subscribe(fn) { subs.add(fn); return () => { subs.delete(fn) } },
     stop() { return stopping ??= doStop() },
   }
   const cleanup = () => {
     releaseTracks()
     void keepScreenOn(false)
-    if (typeof window !== 'undefined') window.removeEventListener('beforeunload', onUnload)
+    if (r.state === 'failed') failed.set(id, r)
+    else failed.delete(id)
+    updateUnload()
     if (current === r) current = null
+  }
+  // the page-close warning stays while the recording runs or a failed one still has slices to upload
+  let warning = false
+  const updateUnload = () => {
+    if (typeof window === 'undefined') return
+    const want = r.state === 'recording' || r.state === 'stopping' || (r.state === 'failed' && r.pending > 0 && !r.uploadStopped)
+    if (want && !warning) window.addEventListener('beforeunload', onUnload)
+    else if (!want && warning) window.removeEventListener('beforeunload', onUnload)
+    warning = want
   }
   const onUnload = (e: Event) => { e.preventDefault(); (e as unknown as { returnValue: string }).returnValue = '' }
   const fail = (msg: string) => {
@@ -262,8 +286,9 @@ export async function startLiveRecording(opts: { projectId?: string; title?: str
   uploader.subscribe(() => {
     r.pending = uploader.pending()
     r.lastError = uploader.lastError()
-    if (uploader.error()) fail(uploader.error())
-    else emit()
+    r.uploadStopped = !!uploader.error()
+    if (uploader.error() && r.state !== 'failed') fail(uploader.error())
+    else { updateUnload(); emit() }
   })
   // the recorder or the microphone ended by itself (call, unplugged, permission revoked): release everything and
   // let what was captured finish uploading; the meeting stays live on the hub for "Stop and process"
@@ -279,7 +304,8 @@ export async function startLiveRecording(opts: { projectId?: string; title?: str
     throw e
   }
   current = r
-  if (typeof window !== 'undefined') window.addEventListener('beforeunload', onUnload)
+  failed.delete(id)
+  updateUnload()
   void keepScreenOn(true)
   return r
 }

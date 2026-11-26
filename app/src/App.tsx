@@ -364,7 +364,7 @@ function Main() {
     <LazyBoundary><ProjectTickets key={projectTickets} state={shown} id={projectTickets} selectedTicket={ticket} onBack={back}
       onOpenTicket={(id) => go({ ticket: id })} onTickets={onTickets} /></LazyBoundary>
   )
-  const meetingView = meeting && <LazyBoundary><MeetingPage key={meeting} state={shown} id={meeting} onBack={back} /></LazyBoundary>
+  const meetingView = meeting && <LazyBoundary><MeetingPage key={meeting} state={shown} id={meeting} onBack={back} reconnects={reconnects} /></LazyBoundary>
   const ticketView = ticket && (
     <LazyBoundary><TicketDetail key={ticket} state={shown} ticketId={ticket} onBack={back} onOpenSession={openSession} onLoaded={onTicket} onCheckouts={onCheckouts} onLaunched={onLaunched} /></LazyBoundary>
   )

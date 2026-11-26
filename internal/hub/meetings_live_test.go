@@ -263,3 +263,53 @@ func (f *meetFx) status(id string) string {
 	}
 	return m.Status
 }
+
+func TestLiveStopRetryRecoversAfterQueueFailure(t *testing.T) {
+	f := newJobFx(t)
+	m := f.startLive(t)
+	f.slice(t, m.ID, 0, "a")
+	// the state a failed queueing leaves: the live state is gone, the meeting is still live
+	require.NoError(t, f.st.EndLive(m.ID))
+	require.Equal(t, "live", f.status(m.ID))
+	rr := f.do("POST", "/api/meetings/"+m.ID+"/live/stop", `{"slices":1}`)
+	require.Equal(t, 200, rr.Code, rr.Body.String())
+	require.Equal(t, "queued", f.status(m.ID))
+	act, err := f.st.ActiveMeetingJobs(m.ID)
+	require.NoError(t, err)
+	require.Len(t, act, 1)
+	require.Equal(t, proto.MeetingStepTranscribe, act[0].Step)
+}
+
+func TestQueueMeetingIgnoresChunkJobs(t *testing.T) {
+	f := newJobFx(t)
+	m := f.startLive(t)
+	f.slice(t, m.ID, 0, "a") // queues a chunk job
+	require.Equal(t, 1, f.chunkJobs(t, m.ID))
+	_, err := f.s.queueMeeting(m.ID) // a chunk job landed before the "any active job?" check
+	require.NoError(t, err)
+	act, err := f.st.ActiveMeetingJobs(m.ID)
+	require.NoError(t, err)
+	n := 0
+	for _, j := range act {
+		if j.Step == proto.MeetingStepTranscribe {
+			n++
+		}
+	}
+	require.Equal(t, 1, n)
+}
+
+func TestLiveSliceAfterStopQueuesNoChunk(t *testing.T) {
+	f := newJobFx(t)
+	m := f.startLive(t)
+	f.s.cancelMeetingJobs(m.ID) // drop the warm-up chunk job, so a new one would be visible
+	before := f.chunkJobs(t, m.ID)
+	require.Equal(t, 0, before)
+	unlock := f.s.liveLk.lock(m.ID)
+	done := make(chan int)
+	go func() { done <- f.do("PUT", "/api/meetings/"+m.ID+"/live/0", "a").Code }()
+	time.Sleep(50 * time.Millisecond) // the handler waits for the lock
+	require.NoError(t, f.st.EndLive(m.ID))
+	unlock()
+	require.Equal(t, 409, <-done)
+	require.Equal(t, before, f.chunkJobs(t, m.ID))
+}
