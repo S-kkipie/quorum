@@ -1,8 +1,10 @@
 package dev.quorum.app;
 
+import android.app.Activity;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.net.Uri;
+import android.view.WindowManager;
 
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
@@ -69,5 +71,24 @@ public class HubShellPlugin extends Plugin {
         } catch (ActivityNotFoundException e) {
             call.reject("No app can open this link");
         }
+    }
+
+    /** {on}: adds or clears FLAG_KEEP_SCREEN_ON on the window, so the screen stays awake while recording. */
+    @PluginMethod
+    public void keepScreenOn(PluginCall call) {
+        final boolean on = Boolean.TRUE.equals(call.getBoolean("on", false));
+        final Activity activity = getActivity();
+        if (activity == null) {
+            call.reject("No activity");
+            return;
+        }
+        activity.runOnUiThread(() -> {
+            if (on) {
+                activity.getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            } else {
+                activity.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            }
+            call.resolve();
+        });
     }
 }

@@ -10,4 +10,10 @@ describe('Android manifest', () => {
     expect(xml).toContain('android:allowBackup="false"')
     expect(xml).not.toContain('android:allowBackup="true"')
   })
+
+  it('declares the microphone permissions for live recording', () => {
+    const xml = readFileSync(resolve(import.meta.dirname, '../../../android-app/android/app/src/main/AndroidManifest.xml'), 'utf8')
+    expect(xml).toContain('android.permission.RECORD_AUDIO')
+    expect(xml).toContain('android.permission.MODIFY_AUDIO_SETTINGS')
+  })
 })

@@ -179,3 +179,19 @@ export interface MeetingSettings { provider: MeetingProvider | ''; model: string
 export const getMeetingSettings = () => getDevApi()?.meetings?.settings() ?? apiFetch<MeetingSettings>('/api/settings/meetings')
 /** Saves the given fields; key "" removes the stored key, a missing key keeps it. */
 export const putMeetingSettings = (b: Partial<Omit<MeetingSettings, 'hasKey'>> & { key?: string }) => apiFetch<MeetingSettings>('/api/settings/meetings', json('PUT', b))
+
+// --- Live meetings ---
+
+/** Creates a meeting in the `live` state; slices follow with putLiveSlice. */
+export const startLiveMeeting = (b: { projectId?: string; title?: string; language?: string; startedAt?: number }) =>
+  apiFetch<Meeting>('/api/meetings/live', json('POST', b))
+
+/** Stores slice `seq` (0-based) of a live recording; resending a stored slice is a no-op (`duplicate`). */
+export const putLiveSlice = (id: string, seq: number, blob: Blob, signal?: AbortSignal) =>
+  apiFetch<{ nextSeq: number; bytes: number; duplicate?: boolean }>(`/api/meetings/${enc(id)}/live/${seq}`, {
+    method: 'PUT', body: blob, signal, headers: { 'Content-Type': 'application/octet-stream' },
+  })
+
+/** Ends a live recording of `slices` slices. A 409 carries `missing` (slice numbers) unless `force` is set. */
+export const stopLiveMeeting = (id: string, b: { slices: number; force?: boolean }) =>
+  apiFetch<Meeting>(`/api/meetings/${enc(id)}/live/stop`, json('POST', b))
