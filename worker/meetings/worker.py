@@ -51,7 +51,7 @@ import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterable
 
@@ -223,6 +223,7 @@ class Segment:
     end: float
     text: str
     speaker: str = ""
+    words: list[tuple[float, float, str]] = field(default_factory=list)  # (start, end, word)
 
 
 class FasterWhisperEngine:
@@ -252,10 +253,12 @@ class FasterWhisperEngine:
                 # initial_prompt only reaches the first window when condition_on_previous_text is off;
                 # hotwords is applied to every window
                 hotwords=prompt or None,
+                word_timestamps=True,
             )
             out = []
             for s in segs:
-                out.append(Segment(float(s.start), float(s.end), s.text.strip()))
+                ws = [(float(x.start), float(x.end), str(x.word).strip()) for x in (getattr(s, "words", None) or [])]
+                out.append(Segment(float(s.start), float(s.end), s.text.strip(), words=[x for x in ws if x[2]]))
                 on_progress(s.end / duration)
         except Exception as e:  # noqa: BLE001
             raise WorkerError(describe_model_error("", e)) from e
@@ -291,7 +294,7 @@ class FakeEngine:
         self.prompts.append(prompt)
         out = []
         for i, (a, b) in enumerate(voiced_spans(audio)):
-            out.append(Segment(a, b, f"words {i + 1}"))
+            out.append(Segment(a, b, f"words {i + 1}", words=[(a, b, f"words {i + 1}")]))
             on_progress(b / max(len(audio) / SAMPLE_RATE, 0.001))
         on_progress(1)
         return out, language or "es"
@@ -367,6 +370,7 @@ class SherpaDiarizer:
         res = self.sd.process(audio, callback=cb).sort_by_start_time()
         turns = [Turn(float(r.start), float(r.end), int(r.speaker)) for r in res]
         spans = window_spans(turns)
+        spans = usable_spans(spans, len(audio))
         X = np.zeros((len(spans), self.ex.dim), dtype=np.float32)
         for j, (_, a, b) in enumerate(spans):
             s = self.ex.create_stream()
@@ -407,6 +411,13 @@ def window_spans(turns: list[Turn], win: float = 1.5, hop: float = 0.75,
             s = t.start + j * hop
             out.append((i, s, min(t.end, s + win)))
     return out
+
+
+def usable_spans(spans, n_samples: int, min_samples: int = SAMPLE_RATE // 10):
+    """The spans whose audio slice is at least min_samples long once clipped to the audio (a rounding edge at
+    the end can leave an empty slice); the others are dropped, so spans and embeddings stay in step."""
+    return [(i, a, b) for i, a, b in spans
+            if min(int(b * SAMPLE_RATE), n_samples) - int(a * SAMPLE_RATE) >= min_samples]
 
 
 def _unit_rows(X):
@@ -535,7 +546,7 @@ def recluster_turns(turns: list[Turn], spans, X, num_speakers: int = 0, min_talk
         sub = _subsample(n)
         p, k = _nme_sc(X[sub])
         if num_speakers > 0:
-            k = num_speakers
+            k = min(num_speakers, n)
         win_lab = cluster_embeddings(X, k, p)
 
     label: dict[int, int] = {}
@@ -558,7 +569,8 @@ def recluster_turns(turns: list[Turn], spans, X, num_speakers: int = 0, min_talk
             out[label[i]] = out.get(label[i], 0.0) + (t.end - t.start)
         return out
 
-    while True:
+    # the owner's count is respected as given: no merging of small clusters
+    while num_speakers <= 0:
         tt = talk()
         if len(tt) < 2:
             break
@@ -610,20 +622,31 @@ class FakeDiarizer:
 def label_speakers(segs: list[Segment], turns: list[Turn], max_gap: float = 2.0) -> list[str | None]:
     """The diarization speaker of each segment: the turn with the largest time overlap, else the nearest
     turn within max_gap seconds, else None. Speakers are renamed "Speaker N" (1-based) by first appearance."""
-    raw: list[int | None] = []
-    for s in segs:
-        best, overlap = None, 0.0
+    return _name_speakers([_turn_speaker(s.start, s.end, turns, max_gap) for s in segs])
+
+
+def _turn_speaker(start: float, end: float, turns: list[Turn], max_gap: float) -> int | None:
+    """The speaker of the turn with the largest overlap with [start, end]; for an empty or unmatched interval
+    the turn containing it, else the nearest turn within max_gap seconds, else None."""
+    best, overlap = None, 0.0
+    for t in turns:
+        o = min(end, t.end) - max(start, t.start)
+        if o > overlap:
+            best, overlap = t.speaker, o
+    if best is None:
+        mid = (start + end) / 2
         for t in turns:
-            o = min(s.end, t.end) - max(s.start, t.start)
-            if o > overlap:
-                best, overlap = t.speaker, o
-        if best is None:
-            gap = max_gap
-            for t in turns:
-                g = max(t.start - s.end, s.start - t.end, 0.0)
-                if g <= gap:
-                    best, gap = t.speaker, g
-        raw.append(best)
+            if t.start <= mid <= t.end:
+                return t.speaker
+        gap = max_gap
+        for t in turns:
+            g = max(t.start - end, start - t.end, 0.0)
+            if g <= gap:
+                best, gap = t.speaker, g
+    return best
+
+
+def _name_speakers(raw: list[int | None]) -> list[str | None]:
     names: dict[int, str] = {}
     out: list[str | None] = []
     for r in raw:
@@ -634,6 +657,42 @@ def label_speakers(segs: list[Segment], turns: list[Turn], max_gap: float = 2.0)
             names[r] = f"Speaker {len(names) + 1}"
         out.append(names[r])
     return out
+
+
+def split_by_speaker(segs: list[Segment], turns: list[Turn], max_gap: float = 2.0) -> list[Segment]:
+    """New segments split wherever the speaker changes between consecutive words. Each word takes the speaker of
+    its turn (see _turn_speaker); a word without one joins the previous word's speaker (a leading one, the next).
+    A segment without words is labelled as a whole. Speakers are "Speaker N" by first appearance; "" if unknown."""
+    pieces: list[tuple[Segment, int | None]] = []
+    for s in segs:
+        ws = [w for w in s.words if w[2].strip()]
+        if not ws:
+            pieces.append((Segment(s.start, s.end, s.text), _turn_speaker(s.start, s.end, turns, max_gap)))
+            continue
+        raw = [_turn_speaker(a, b, turns, max_gap) for a, b, _ in ws]
+        known = [r for r in raw if r is not None]
+        prev = known[0] if known else None
+        for i, r in enumerate(raw):
+            if r is None:
+                raw[i] = prev
+            else:
+                prev = r
+        group: list[tuple[float, float, str]] = []
+        for w, r in zip(ws, raw):
+            if group and r != gspk:
+                pieces.append((_from_words(group), gspk))
+                group = []
+            group.append(w)
+            gspk = r
+        pieces.append((_from_words(group), gspk))
+    names = _name_speakers([p[1] for p in pieces])
+    for (seg, _), n in zip(pieces, names):
+        seg.speaker = n or ""
+    return [p[0] for p in pieces]
+
+
+def _from_words(ws: list[tuple[float, float, str]]) -> Segment:
+    return Segment(ws[0][0], ws[-1][1], " ".join(w[2].strip() for w in ws).strip(), words=list(ws))
 
 
 def merge_tracks(tracks: Iterable[list[Segment]]) -> list[Segment]:
@@ -706,20 +765,17 @@ def run_transcribe(job: dict, emit: Emitter, workdir: Path, engine_factory=None,
                 s.speaker = "Me"
             labelled.append(segs)
             continue
-        names: list[str | None] = [None] * len(segs)
         if diarizer is not None and segs:
             try:
                 turns = diarizer.diarize(load_wav(path), span(emit, 80, 95, "diarizing"))
-                names = label_speakers(segs, turns)
+                segs = split_by_speaker(segs, turns)
             except Exception as e:  # noqa: BLE001
                 emit.log(f"speaker separation failed: {e}")
-        distinct = {n for n in names if n}
-        for s, n in zip(segs, names):
+        distinct = {s.speaker for s in segs if s.speaker}
+        for s in segs:
             if label == "Others":
                 # one voice on the Others channel stays "Others"
-                s.speaker = n if len(distinct) > 1 and n else "Others"
-            else:
-                s.speaker = n or ""
+                s.speaker = s.speaker if len(distinct) > 1 and s.speaker else "Others"
         labelled.append(segs)
     emit.progress(95, "finishing")
     merged = merge_tracks(labelled)

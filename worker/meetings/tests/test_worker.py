@@ -155,6 +155,7 @@ def test_engine_uses_soft_vad_and_no_previous_text(monkeypatch):
         condition_on_previous_text=False,
         initial_prompt="Vocabulary: zorvanite.",
         hotwords="Vocabulary: zorvanite.",
+        word_timestamps=True,
     )
     eng.transcribe([0.0] * 16000, "en", lambda p: None)
     assert seen["initial_prompt"] is None and seen["hotwords"] is None
@@ -629,3 +630,87 @@ def test_owner_stated_by_whole_words():
     r = w.repair_summary({"actions": [{"text": "a", "owner": "Ana"}, {"text": "b", "owner": "tade runol"}]},
                          "[00:00] mañana lo hace Tadé Rúñol")
     assert [a["owner"] for a in r["actions"]] == ["", "tade runol"]
+
+
+# ---------------------------------------------------------------------------------------------------
+# word-level speaker split
+
+
+def _words(text: str, start: float = 0.0, step: float = 0.8):
+    return [(start + i * step, start + (i + 1) * step - 0.1, x) for i, x in enumerate(text.split())]
+
+
+def test_split_at_speaker_change():
+    ws = _words("hola cómo estás bien gracias", step=0.8)  # words at 0, .8, 1.6 | 2.4, 3.2
+    seg = w.Segment(0.0, 3.9, "hola cómo estás bien gracias", words=ws)
+    out = w.split_by_speaker([seg], [w.Turn(0, 2, 7), w.Turn(2, 4, 3)])
+    assert [s.text for s in out] == ["hola cómo estás", "bien gracias"]
+    assert [s.speaker for s in out] == ["Speaker 1", "Speaker 2"]
+    assert (out[0].start, out[0].end) == (ws[0][0], ws[2][1])
+    assert (out[1].start, out[1].end) == (ws[3][0], ws[4][1])
+
+
+def test_zero_length_word():
+    seg = w.Segment(0.0, 3.0, "a b c", words=[(0.0, 0.5, "a"), (2.5, 2.5, "b"), (2.6, 3.0, "c")])
+    out = w.split_by_speaker([seg], [w.Turn(0, 2, 0), w.Turn(2, 4, 1)])
+    assert [(s.text, s.speaker) for s in out] == [("a", "Speaker 1"), ("b c", "Speaker 2")]
+
+
+def test_word_without_speaker_joins_previous():
+    seg = w.Segment(0.0, 20.0, "a b c", words=[(0.0, 1.0, "a"), (10.0, 11.0, "b"), (19.0, 20.0, "c")])
+    out = w.split_by_speaker([seg], [w.Turn(0, 2, 0)], max_gap=2.0)
+    assert [(s.text, s.speaker) for s in out] == [("a b c", "Speaker 1")]
+
+
+def test_segment_without_words_falls_back():
+    segs = [w.Segment(0.0, 1.0, "uno"), w.Segment(5.0, 6.0, "dos"), w.Segment(50.0, 51.0, "lejos")]
+    out = w.split_by_speaker(segs, [w.Turn(0, 2, 4), w.Turn(5, 7, 9)])
+    assert [(s.text, s.speaker, s.start, s.end) for s in out] == [
+        ("uno", "Speaker 1", 0.0, 1.0), ("dos", "Speaker 2", 5.0, 6.0), ("lejos", "", 50.0, 51.0)]
+
+
+@needs_ffmpeg
+def test_me_others_unchanged(tmp_path, local_http):
+    # Me speaks 0–2 s; Others has two voices (2–2.5 s and 3.25–4 s) and the diarizer switches every second
+    src = tone_file(tmp_path / "rec.wav", "lt(t,2)", "between(t,2,2.5)+between(t,3.25,4)")
+    job = {"step": "transcribe", "audioURL": serve(local_http, src), "settings": {"channels": "me|others"}}
+    work = tmp_path / "w"
+    work.mkdir()
+    res = w.run_transcribe(job, w.Emitter(io.StringIO()), work, w.FakeEngine, lambda: w.FakeDiarizer(speakers=2, every=1))
+    speakers = [s["speaker"] for s in res["segments"]]
+    assert speakers[0] == "Me" and speakers.count("Me") == 1
+    assert set(speakers[1:]) == {"Speaker 1", "Speaker 2"}
+
+
+def test_engine_reads_word_timestamps(monkeypatch):
+    import types
+
+    class StubModel:
+        def __init__(self, *a, **k):
+            pass
+
+        def transcribe(self, audio, **kw):
+            assert kw["word_timestamps"] is True
+            words = [types.SimpleNamespace(start=0.0, end=0.4, word=" hi"), types.SimpleNamespace(start=0.4, end=0.9, word=" you")]
+            return iter([types.SimpleNamespace(start=0.0, end=1.0, text=" hi you", words=words)]), types.SimpleNamespace(language="en")
+
+    monkeypatch.setitem(sys.modules, "faster_whisper", types.SimpleNamespace(WhisperModel=StubModel))
+    segs, _ = w.FasterWhisperEngine("stub").transcribe([0.0] * 16000, "en", lambda p: None)
+    assert segs[0].words == [(0.0, 0.4, "hi"), (0.4, 0.9, "you")]
+
+
+def test_recluster_given_count_skips_the_tiny_cluster_merge():
+    turns, truth = _meeting([0, 1, 0, 1, 0, 1])
+    turns[1:1] = [w.Turn(20, 23, 99)]
+    truth[1:1] = [2]
+    turns.append(w.Turn(200, 203, 99))
+    truth.append(2)
+    spans, X = _embed(turns, truth, _voices())
+    out = w.recluster_turns(turns, spans, X, num_speakers=3)
+    assert sorted({t.speaker for t in out}) == [0, 1, 2]
+
+
+def test_usable_spans_drops_empty_slices_at_the_end():
+    n = 10 * w.SAMPLE_RATE
+    spans = [(0, 0.0, 1.5), (1, 8.0, 9.5), (1, 9.99, 10.4), (2, 10.0, 11.0)]
+    assert w.usable_spans(spans, n) == spans[:2]
