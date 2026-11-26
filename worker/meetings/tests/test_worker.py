@@ -637,7 +637,7 @@ def test_owner_stated_by_whole_words():
 
 
 def _words(text: str, start: float = 0.0, step: float = 0.8):
-    return [(start + i * step, start + (i + 1) * step - 0.1, x) for i, x in enumerate(text.split())]
+    return [(start + i * step, start + (i + 1) * step - 0.1, " " + x) for i, x in enumerate(text.split())]
 
 
 def test_split_at_speaker_change():
@@ -651,13 +651,13 @@ def test_split_at_speaker_change():
 
 
 def test_zero_length_word():
-    seg = w.Segment(0.0, 3.0, "a b c", words=[(0.0, 0.5, "a"), (2.5, 2.5, "b"), (2.6, 3.0, "c")])
+    seg = w.Segment(0.0, 3.0, "a b c", words=[(0.0, 0.5, " a"), (2.5, 2.5, " b"), (2.6, 3.0, " c")])
     out = w.split_by_speaker([seg], [w.Turn(0, 2, 0), w.Turn(2, 4, 1)])
     assert [(s.text, s.speaker) for s in out] == [("a", "Speaker 1"), ("b c", "Speaker 2")]
 
 
 def test_word_without_speaker_joins_previous():
-    seg = w.Segment(0.0, 20.0, "a b c", words=[(0.0, 1.0, "a"), (10.0, 11.0, "b"), (19.0, 20.0, "c")])
+    seg = w.Segment(0.0, 20.0, "a b c", words=[(0.0, 1.0, " a"), (10.0, 11.0, " b"), (19.0, 20.0, " c")])
     out = w.split_by_speaker([seg], [w.Turn(0, 2, 0)], max_gap=2.0)
     assert [(s.text, s.speaker) for s in out] == [("a b c", "Speaker 1")]
 
@@ -696,7 +696,7 @@ def test_engine_reads_word_timestamps(monkeypatch):
 
     monkeypatch.setitem(sys.modules, "faster_whisper", types.SimpleNamespace(WhisperModel=StubModel))
     segs, _ = w.FasterWhisperEngine("stub").transcribe([0.0] * 16000, "en", lambda p: None)
-    assert segs[0].words == [(0.0, 0.4, "hi"), (0.4, 0.9, "you")]
+    assert segs[0].words == [(0.0, 0.4, " hi"), (0.4, 0.9, " you")]
 
 
 def test_recluster_given_count_skips_the_tiny_cluster_merge():
@@ -714,3 +714,20 @@ def test_usable_spans_drops_empty_slices_at_the_end():
     n = 10 * w.SAMPLE_RATE
     spans = [(0, 0.0, 1.5), (1, 8.0, 9.5), (1, 9.99, 10.4), (2, 10.0, 11.0)]
     assert w.usable_spans(spans, n) == spans[:2]
+
+
+def test_short_wrong_speaker_run_is_absorbed():
+    ws = _words("uno dos tres cuatro cinco", step=0.8)  # dos at 0.8-1.6
+    seg = w.Segment(0.0, 4.0, "uno dos tres cuatro cinco", words=ws)
+    turns = [w.Turn(0, 0.8, 0), w.Turn(0.8, 1.6, 1), w.Turn(1.6, 4, 0)]
+    out = w.split_by_speaker([seg], turns)
+    assert [(s.text, s.speaker) for s in out] == [("uno dos tres cuatro cinco", "Speaker 1")]
+
+
+def test_segment_whose_words_have_no_speaker_uses_the_segment_rule():
+    seg = w.Segment(0.0, 10.0, "a b", words=[(0.0, 0.5, " a"), (9.5, 10.0, " b")])
+    out = w.split_by_speaker([seg], [w.Turn(4, 6, 3)], max_gap=2.0)
+    assert out[0].speaker == "Speaker 1" and out[0].text == "a b"
+    seg = w.Segment(10.0, 12.0, "a b", words=[(10.0, 10.5, " a"), (11.5, 12.0, " b")])
+    # words 3 s from the turn (none), segment 3 s too: stays unlabelled
+    assert w.split_by_speaker([seg], [w.Turn(0, 5, 3)], max_gap=2.0)[0].speaker == ""

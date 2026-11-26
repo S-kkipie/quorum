@@ -257,8 +257,8 @@ class FasterWhisperEngine:
             )
             out = []
             for s in segs:
-                ws = [(float(x.start), float(x.end), str(x.word).strip()) for x in (getattr(s, "words", None) or [])]
-                out.append(Segment(float(s.start), float(s.end), s.text.strip(), words=[x for x in ws if x[2]]))
+                ws = [(float(x.start), float(x.end), str(x.word)) for x in (getattr(s, "words", None) or [])]
+                out.append(Segment(float(s.start), float(s.end), s.text.strip(), words=[x for x in ws if x[2].strip()]))
                 on_progress(s.end / duration)
         except Exception as e:  # noqa: BLE001
             raise WorkerError(describe_model_error("", e)) from e
@@ -671,28 +671,54 @@ def split_by_speaker(segs: list[Segment], turns: list[Turn], max_gap: float = 2.
             continue
         raw = [_turn_speaker(a, b, turns, max_gap) for a, b, _ in ws]
         known = [r for r in raw if r is not None]
-        prev = known[0] if known else None
+        if not known:
+            pieces.append((Segment(s.start, s.end, s.text, words=list(ws)), _turn_speaker(s.start, s.end, turns, max_gap)))
+            continue
+        prev = known[0]
         for i, r in enumerate(raw):
             if r is None:
                 raw[i] = prev
             else:
                 prev = r
+        _absorb_short_runs(ws, raw)
         group: list[tuple[float, float, str]] = []
+        gspk = None
+        made: list[tuple[Segment, int | None]] = []
         for w, r in zip(ws, raw):
             if group and r != gspk:
-                pieces.append((_from_words(group), gspk))
+                made.append((_from_words(group), gspk))
                 group = []
             group.append(w)
             gspk = r
-        pieces.append((_from_words(group), gspk))
+        made.append((_from_words(group), gspk))
+        if len(made) == 1:
+            made[0][0].text = s.text
+        pieces.extend(made)
     names = _name_speakers([p[1] for p in pieces])
     for (seg, _), n in zip(pieces, names):
         seg.speaker = n or ""
     return [p[0] for p in pieces]
 
 
+def _absorb_short_runs(ws, raw: list) -> None:
+    """A run of one word, or shorter than 0.5 s, between two runs of the same speaker takes that speaker."""
+    runs: list[list[int]] = []  # [first, last] word index of each run
+    for i, r in enumerate(raw):
+        if runs and raw[runs[-1][0]] == r:
+            runs[-1][1] = i
+        else:
+            runs.append([i, i])
+    for k in range(1, len(runs) - 1):
+        a, b = runs[k]
+        if raw[runs[k - 1][0]] != raw[runs[k + 1][0]]:
+            continue
+        if a == b or ws[b][1] - ws[a][0] < 0.5:
+            for i in range(a, b + 1):
+                raw[i] = raw[runs[k - 1][0]]
+
+
 def _from_words(ws: list[tuple[float, float, str]]) -> Segment:
-    return Segment(ws[0][0], ws[-1][1], " ".join(w[2].strip() for w in ws).strip(), words=list(ws))
+    return Segment(ws[0][0], ws[-1][1], "".join(w[2] for w in ws).strip(), words=list(ws))
 
 
 def merge_tracks(tracks: Iterable[list[Segment]]) -> list[Segment]:
