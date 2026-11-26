@@ -31,6 +31,7 @@ export default function MeetingsSettings({ state, onOpenMeeting }: { state: AppS
   const [baseUrl, setBaseUrl] = useState('')
   const [language, setLanguage] = useState('es')
   const [aliases, setAliases] = useState('')
+  const [correct, setCorrect] = useState(true)
   // the key field is write-only: it starts empty and is cleared after every save
   const [key, setKey] = useState('')
   const [busy, setBusy] = useState(false)
@@ -48,6 +49,7 @@ export default function MeetingsSettings({ state, onOpenMeeting }: { state: AppS
     setBaseUrl(s.baseUrl || '')
     setLanguage(s.language || 'es')
     setAliases((s.aliases ?? []).join(', '))
+    setCorrect(s.correct !== false)
   }
   useEffect(() => {
     getMeetingSettings().then(show).catch((e) => setError(e instanceof Error ? e.message : 'error'))
@@ -71,7 +73,7 @@ export default function MeetingsSettings({ state, onOpenMeeting }: { state: AppS
   }
   const submit = () => save({
     provider: provider as MeetingSettings['provider'], model: model.trim(), baseUrl: baseUrl.trim(), language,
-    aliases: aliases.split(',').map((a) => a.trim()).filter(Boolean),
+    aliases: aliases.split(',').map((a) => a.trim()).filter(Boolean), correct,
     ...(key.trim() ? { key: key.trim() } : {}),
   })
 
@@ -125,6 +127,12 @@ export default function MeetingsSettings({ state, onOpenMeeting }: { state: AppS
             <span className="mt-1 block">Comma-separated. Actions owned by these names are yours.</span>
           </label>
         </div>
+        <label className="mt-2 flex min-h-11 items-start gap-2 text-sm text-ink">
+          <input type="checkbox" role="switch" checked={correct} onChange={(e) => setCorrect(e.target.checked)} className="mt-3 size-4 shrink-0" />
+          <span className="min-w-0 py-2">Correct transcripts with Claude
+            <span className="block text-xs text-muted-foreground">Only when summaries run through ccapi</span>
+          </span>
+        </label>
         {error && <p role="alert" className="mt-2 text-xs text-danger [overflow-wrap:anywhere]">{error}</p>}
         <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
           {ok && <span role="status" className="mr-auto text-xs text-success">Saved</span>}

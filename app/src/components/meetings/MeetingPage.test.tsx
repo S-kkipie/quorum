@@ -346,3 +346,31 @@ describe('MeetingPage add as pending', () => {
     expect(screen.getAllByRole('button', { name: 'Add as pending' })).toHaveLength(1)
   })
 })
+
+describe('MeetingPage: corrected transcript', () => {
+  it('offers Show original only when a segment has one, and swaps the text', async () => {
+    const m = ready()
+    m.segments![1] = { ...m.segments![1], text: 'The zorvanite export ships on Monday.', origText: 'The zor van ite export ships on Monday.' }
+    api.getMeeting.mockResolvedValue(m)
+    render(<MeetingPage state={state()} id="m1" />)
+    await screen.findByText('The zorvanite export ships on Monday.')
+    expect(screen.getAllByTitle('Corrected by Claude')).toHaveLength(1)
+    fireEvent.click(screen.getByRole('switch', { name: 'Show original' }))
+    expect(screen.getByText('The zor van ite export ships on Monday.')).toBeTruthy()
+    expect(screen.queryByText('The zorvanite export ships on Monday.')).toBeNull()
+    expect(screen.getByText('Good morning, shall we start with the export?')).toBeTruthy()
+  })
+  it('has no toggle without originals', async () => {
+    api.getMeeting.mockResolvedValue(ready())
+    render(<MeetingPage state={state()} id="m1" />)
+    await screen.findByText('The export ships on Monday.', { selector: 'p' })
+    expect(screen.queryByRole('switch', { name: 'Show original' })).toBeNull()
+  })
+  it('labels the correcting stage', async () => {
+    api.getMeeting.mockResolvedValue(meeting({ status: 'summarising', progress: 0, summary: undefined, segments: ready().segments }))
+    let s = state()
+    s = reduce(s, { type: 'meeting_changed', payload: { id: 'm1', projectId: 'p1', status: 'summarising', progress: 0, stage: 'correcting' } } as unknown as Envelope)
+    render(<MeetingPage state={s} id="m1" />)
+    expect(await screen.findByText(/Correcting transcript/)).toBeTruthy()
+  })
+})

@@ -56,9 +56,12 @@ export default function Transcript({ segments, onSeek, onRename, onResummarise }
   onResummarise?: () => void
 }) {
   const [q, setQ] = useState('')
+  const [orig, setOrig] = useState(false)
+  const hasOrig = useMemo(() => segments.some((s) => !!s.origText), [segments])
+  const textOf = (s: MeetingSegment) => (orig ? s.origText || s.text : s.text)
   const people = useMemo(() => speakers(segments), [segments])
   const needle = q.trim()
-  const shown = useMemo(() => (needle ? segments.filter((s) => s.text.toLowerCase().includes(needle.toLowerCase())) : segments), [segments, needle])
+  const shown = useMemo(() => (needle ? segments.filter((s) => (orig ? s.origText || s.text : s.text).toLowerCase().includes(needle.toLowerCase())) : segments), [segments, needle, orig])
   return (
     <div className="min-w-0 space-y-3">
       {people.length > 0 && (
@@ -69,6 +72,11 @@ export default function Transcript({ segments, onSeek, onRename, onResummarise }
           {onResummarise && <Button variant="secondary" onClick={onResummarise} className="min-h-11 w-full">Re-summarise with names</Button>}
         </div>
       )}
+      {hasOrig && (
+        <label className="flex min-h-11 items-center gap-2 text-sm text-ink">
+          <input type="checkbox" role="switch" checked={orig} onChange={(e) => setOrig(e.target.checked)} className="size-4 shrink-0" /> Show original
+        </label>
+      )}
       <Input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search the transcript" aria-label="Search the transcript" className="min-h-11" />
       {needle && <p className="text-xs text-muted-foreground" aria-live="polite">{shown.length} {shown.length === 1 ? 'segment matches' : 'segments match'}</p>}
       <ol className="space-y-2">
@@ -78,9 +86,10 @@ export default function Transcript({ segments, onSeek, onRename, onResummarise }
               <button type="button" onClick={() => onSeek(s.startMs)} aria-label={`Play from ${clock(s.startMs)}`}
                 className="inline-flex min-h-11 min-w-11 shrink-0 items-center tabular-nums text-accent hover:underline">{clock(s.startMs)}</button>
               {s.speaker && <span className="min-w-0 truncate font-medium text-ink">{s.speaker}</span>}
+              {s.origText && !orig && <span title="Corrected by Claude" aria-label="Corrected by Claude" className="shrink-0 text-accent">✎</span>}
             </div>
             <p className={`-mt-2 text-sm text-ink ${wrap}`}>
-              {splitMatches(s.text, needle).map((part, j) => (j % 2 ? <mark key={j} className="rounded-sm bg-accent-soft text-ink">{part}</mark> : part))}
+              {splitMatches(textOf(s), needle).map((part, j) => (j % 2 ? <mark key={j} className="rounded-sm bg-accent-soft text-ink">{part}</mark> : part))}
             </p>
           </li>
         ))}

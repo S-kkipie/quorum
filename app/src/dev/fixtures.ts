@@ -576,6 +576,6 @@ export function fixtureMeetings(mode: FixtureMode): { list: (q: MeetingQuery) =>
       if (!m) throw new Error('no such meeting')
       return m
     },
-    settings: async () => ({ provider: 'local', model: '', baseUrl: '', language: 'es', aliases: mode === 'worst' ? ['Ana', 'x'.repeat(64)] : ['Ana'], hasKey: false }),
+    settings: async () => ({ provider: 'local', model: '', baseUrl: '', language: 'es', aliases: mode === 'worst' ? ['Ana', 'x'.repeat(64)] : ['Ana'], correct: true, hasKey: false }),
   }
 }

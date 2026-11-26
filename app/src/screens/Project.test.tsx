@@ -225,3 +225,23 @@ describe('Project: briefing', () => {
     expect(await screen.findByLabelText('New pinned note')).toBeTruthy()
   })
 })
+
+describe('Project: glossary', () => {
+  it('saves through PATCH, shows the counter and blocks Save over 2000 characters', async () => {
+    render(<P onEdit={vi.fn()} />)
+    await waitFor(() => expect(calls('/briefing')).toHaveLength(1))
+    openMenu()
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Glossary' }))
+    const box = await screen.findByLabelText('Glossary terms') as HTMLTextAreaElement
+    fireEvent.change(box, { target: { value: 'zorvanite, Quillon Labs' } })
+    expect(screen.getByText('23 / 2000')).toBeTruthy()
+    fireEvent.change(box, { target: { value: '😀'.repeat(2001) } })
+    expect(screen.getByText('2001 / 2000')).toBeTruthy()
+    expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.change(box, { target: { value: 'zorvanite, Quillon Labs' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(calls('/api/projects/p1').some((c) => c[1]?.method === 'PATCH')).toBe(true))
+    const c = calls('/api/projects/p1').find((x) => x[1]?.method === 'PATCH')!
+    expect(JSON.parse(String(c[1]?.body))).toEqual({ glossary: 'zorvanite, Quillon Labs' })
+  })
+})

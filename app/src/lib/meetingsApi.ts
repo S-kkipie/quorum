@@ -175,7 +175,7 @@ export const createMeetingIssue = (id: string, actionId: string) =>
   apiFetch<{ url: string; created: boolean; action?: MeetingAction }>(`/api/meetings/${enc(id)}/actions/${enc(actionId)}/issue`, json('POST'))
 export type MeetingProvider = 'local' | 'ccapi' | 'openai-compatible'
 /** Settings → Meetings. The API key is write-only: only hasKey comes back. */
-export interface MeetingSettings { provider: MeetingProvider | ''; model: string; baseUrl: string; language: string; aliases: string[]; hasKey: boolean }
+export interface MeetingSettings { provider: MeetingProvider | ''; model: string; baseUrl: string; language: string; aliases: string[]; correct: boolean; hasKey: boolean }
 export const getMeetingSettings = () => getDevApi()?.meetings?.settings() ?? apiFetch<MeetingSettings>('/api/settings/meetings')
 /** Saves the given fields; key "" removes the stored key, a missing key keeps it. */
 export const putMeetingSettings = (b: Partial<Omit<MeetingSettings, 'hasKey'>> & { key?: string }) => apiFetch<MeetingSettings>('/api/settings/meetings', json('PUT', b))

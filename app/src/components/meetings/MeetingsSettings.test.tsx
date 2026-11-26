@@ -123,3 +123,17 @@ describe('Settings → Meetings', () => {
     expect(workerState({ meetingWorker: 'incomplete' }).text).toMatch(/did not finish/)
   })
 })
+
+describe('Settings → Meetings: correction', () => {
+  it('the switch sends correct:false and says when it applies', async () => {
+    api.putMeetingSettings.mockImplementation(async (b) => ({ ...settings, ...b }))
+    render(<MeetingsSettings state={state()} />)
+    const sw = await screen.findByRole('switch', { name: /Correct transcripts with Claude/ }) as HTMLInputElement
+    expect(sw.checked).toBe(true)
+    expect(screen.getByText('Only when summaries run through ccapi')).toBeTruthy()
+    fireEvent.click(sw)
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(api.putMeetingSettings).toHaveBeenCalledTimes(1))
+    expect(api.putMeetingSettings.mock.calls[0][0]).toMatchObject({ correct: false })
+  })
+})

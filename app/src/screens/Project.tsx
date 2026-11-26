@@ -17,6 +17,7 @@ import type { Checkout, Conversation } from '../proto.gen'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import PendingList from '../components/pendings/PendingList'
 import ProjectMeetings from '../components/meetings/ProjectMeetings'
+import GlossaryDialog from '../components/GlossaryDialog'
 
 export default function Project({ state, id, onBack, onOpenTickets, onOpenSession, onEdit, onTickets, onCheckouts, onConversations, checkoutsOpen, onCheckoutsOpenChange, pending = false, onLaunched, onGuard, onTerminal, onOpenMeeting }: {
   state: AppState
@@ -44,6 +45,7 @@ export default function Project({ state, id, onBack, onOpenTickets, onOpenSessio
   const { b, error: briefingError, setB } = useBriefing(id, state.briefingRev?.[id] ?? 0)
   useVisit(id)
   const [pinOpen, setPinOpen] = useState(false)
+  const [glossaryOpen, setGlossaryOpen] = useState(false)
   /** "Continue where I left off": the launch dialog with the briefing as its first prompt. */
   const [resumeAt, setResumeAt] = useState<{ prompt: string; machine: string; dir: string } | null>(null)
 
@@ -99,6 +101,7 @@ export default function Project({ state, id, onBack, onOpenTickets, onOpenSessio
             {p.connector && p.connector.kind !== 'none' && <DropdownMenuItem className="min-h-11" disabled={syncing} onSelect={sync}>{syncing ? 'Syncing…' : 'Sync'}</DropdownMenuItem>}
             {onEdit && <DropdownMenuItem className="min-h-11" onSelect={() => onEdit(id)}>Edit</DropdownMenuItem>}
             <DropdownMenuItem className="min-h-11" onSelect={() => setPinOpen(true)}>Pin a note</DropdownMenuItem>
+            <DropdownMenuItem className="min-h-11" onSelect={() => setGlossaryOpen(true)}>Glossary</DropdownMenuItem>
             <DropdownMenuItem className="min-h-11" onSelect={() => onCheckoutsOpenChange?.(true)}>Checkouts</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -135,6 +138,8 @@ export default function Project({ state, id, onBack, onOpenTickets, onOpenSessio
         <LaunchDialog state={state} projectId={id} initialPrompt={resumeAt.prompt} initialMachine={resumeAt.machine} initialDir={resumeAt.dir}
           onClose={() => setResumeAt(null)} onLaunched={(x) => { setResumeAt(null); onLaunched?.(x) }} />
       )}
+
+      {glossaryOpen && <GlossaryDialog projectId={id} initial={p.glossary ?? ''} onClose={() => setGlossaryOpen(false)} />}
 
       <Sheet open={!!checkoutsOpen} onOpenChange={(o) => onCheckoutsOpenChange?.(o)}>
         <SheetContent side="bottom" className="max-h-[80dvh] overflow-hidden">

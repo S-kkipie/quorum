@@ -201,7 +201,7 @@ export const updateWorkspace = (id: string, b: Partial<Pick<Workspace, 'name' | 
 export const deleteWorkspace = (id: string) => apiFetch(`/api/workspaces/${enc(id)}`, json('DELETE'))
 export const listProjects = () => apiFetch<Project[]>('/api/projects')
 export const createProject = (b: { workspaceId: string; name: string; repoURL: string; connector?: ConnectorInput }) => apiFetch<Project>('/api/projects', json('POST', b))
-export const updateProject = (id: string, b: { name?: string; workspaceId?: string; repoURL?: string; connector?: ConnectorInput }) => apiFetch<Project>(`/api/projects/${enc(id)}`, json('PATCH', b))
+export const updateProject = (id: string, b: { name?: string; workspaceId?: string; repoURL?: string; connector?: ConnectorInput; glossary?: string }) => apiFetch<Project>(`/api/projects/${enc(id)}`, json('PATCH', b))
 export const deleteProject = (id: string) => apiFetch(`/api/projects/${enc(id)}`, json('DELETE'))
 /** The token is write-only: "" deletes it. */
 export const setProjectToken = (id: string, token: string) => apiFetch(`/api/projects/${enc(id)}/token`, json('PUT', { token }))
