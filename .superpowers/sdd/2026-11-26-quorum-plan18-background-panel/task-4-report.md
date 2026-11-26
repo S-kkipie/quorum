@@ -1,0 +1,3 @@
+# Task 4 report
+Artifacts open outside Quorum. native.ts: openExternal / openExternalAsync (desktop binding quorumOpenExternal, Android via window.Capacitor.nativePromise('HubShell','openExternal') like www/index.html, web tab opened synchronously, noopener fallback if blocked, http(s) only). Session.tsx onOpenArtifact mints a fresh link with createView (or uses the original URL if unmappable) and reports failures through the existing `act` error mechanism. Desktop: external.go externalURLOK + test, bind in main_windows.go via rundll32. Android: HubShellPlugin.openExternal (not built here).
+Verification: tsc clean, vitest 2193 pass, build ok (largest chunk index-*.js 314 kB), go test ok, GOOS=windows go vet ok.

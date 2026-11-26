@@ -1,5 +1,9 @@
 package dev.quorum.app;
 
+import android.content.ActivityNotFoundException;
+import android.content.Intent;
+import android.net.Uri;
+
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
@@ -47,5 +51,23 @@ public class HubShellPlugin extends Plugin {
         }
         Hub.storage(getContext()).edit().putString(Hub.KEY_URL, hub).commit();
         call.resolve();
+    }
+
+    /** {url}: opens an http(s) URL in the device's browser (an ACTION_VIEW intent). */
+    @PluginMethod
+    public void openExternal(PluginCall call) {
+        String url = call.getString("url");
+        if (url == null || !(url.startsWith("http://") || url.startsWith("https://"))) {
+            call.reject("The URL must start with http:// or https://");
+            return;
+        }
+        try {
+            Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(intent);
+            call.resolve();
+        } catch (ActivityNotFoundException e) {
+            call.reject("No app can open this link");
+        }
     }
 }

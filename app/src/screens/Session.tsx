@@ -9,7 +9,8 @@ import Inspector from '../components/inspector/Inspector'
 import Transcript from '../components/Transcript'
 import { UsageInline } from '../components/UsageStrip'
 import { artifactPath } from '../lib/artifacts'
-import { abortSession, hubUrl, closeSession, listCommands, setModel } from '../lib/api'
+import { openExternalAsync } from '../lib/native'
+import { abortSession, createView, hubUrl, closeSession, listCommands, setModel } from '../lib/api'
 import { accountUsageOf, contextTone, formatTokens, toneClass } from '../lib/meters'
 import { launchIn, loadPrefs } from '../lib/launch'
 import { shortcutBlocked } from '../lib/shortcuts'
@@ -280,11 +281,11 @@ export default function Session({ state, id, onBack, onEvents, onTrim, onSeen, o
         session={s} usage={usage} events={events} hasMore={hasMore}
         // a floating inspector would cover the subagent's screen: it closes, a docked one stays
         onOpenAgent={(aid) => { setWantAgent((w) => ({ id: aid, n: (w?.n ?? 0) + 1 })); if (layout.inspector !== 'docked' && layout.inspectorOpen) layout.toggleInspector() }}
-        // the old /v/ token may be gone (hub restart, expiry): open the file in the Viewer, which mints a fresh link
+        // the old /v/ token may be gone (hub restart, expiry): mint a fresh link and open it in the device browser
         onOpenArtifact={(l) => {
+          const full = (u: string) => (/^https?:/.test(u) ? u : hubUrl() + u)
           const file = artifactPath(l.url, s.root || s.cwd)
-          if (file && onOpenFile) onOpenFile(s.machine, file)
-          else window.open(/^https?:/.test(l.url) ? l.url : hubUrl() + l.url, '_blank', 'noopener')
+          void act(() => openExternalAsync(async () => (file ? full((await createView(s.machine, s.id, file)).url) : full(l.url))))
         }} />
       </div>
       <BackgroundSheet open={bgSheet} onOpenChange={setBgSheet} background={s.background} />

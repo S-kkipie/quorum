@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const local = { checkPermissions: vi.fn(async () => ({ display: 'granted' })), requestPermissions: vi.fn(async () => ({ display: 'granted' })), schedule: vi.fn(async () => ({})) }
 vi.mock('@capacitor/local-notifications', () => ({ LocalNotifications: local }))
-import { isNative, notify } from './native'
+import { isNative, notify, openExternal, openExternalAsync } from './native'
 
 afterEach(() => { delete (window as any).Capacitor; vi.unstubAllGlobals(); vi.clearAllMocks() })
 
@@ -38,5 +38,59 @@ describe('native', () => {
     await notify('a', 'b')
     expect(ctor).toHaveBeenCalledWith('a', { body: 'b' })
     expect(local.schedule).not.toHaveBeenCalled()
+  })
+})
+
+describe('openExternal', () => {
+  it('opens the tab before the url resolves (web) and points it at the url', async () => {
+    const tab: any = { location: { href: '' }, opener: 'x', close: vi.fn() }
+    const open = vi.fn(() => tab)
+    vi.stubGlobal('open', open)
+    let resolve!: (u: string) => void
+    const p = openExternalAsync(() => new Promise<string>((r) => { resolve = r }))
+    expect(open).toHaveBeenCalledWith('', '_blank')
+    expect(tab.location.href).toBe('')
+    resolve('https://hub.example/v/ab/x.html')
+    await p
+    expect(tab.location.href).toBe('https://hub.example/v/ab/x.html')
+    expect(tab.opener).toBeNull()
+  })
+
+  it('closes the tab and rethrows when the url fails', async () => {
+    const tab: any = { location: { href: '' }, close: vi.fn() }
+    vi.stubGlobal('open', vi.fn(() => tab))
+    await expect(openExternalAsync(async () => { throw new Error('boom') })).rejects.toThrow('boom')
+    expect(tab.close).toHaveBeenCalled()
+  })
+
+  it('falls back to a noopener window when the tab is blocked', async () => {
+    const open = vi.fn(() => null)
+    vi.stubGlobal('open', open)
+    await openExternalAsync(async () => 'https://hub.example/v/ab/x.html')
+    expect(open).toHaveBeenLastCalledWith('https://hub.example/v/ab/x.html', '_blank', 'noopener')
+  })
+
+  it('calls the desktop binding with the full url', async () => {
+    const q = vi.fn(async () => {})
+    ;(window as any).quorumOpenExternal = q
+    try {
+      await openExternalAsync(async () => 'http://hub:7420/v/ab/x.html')
+      expect(q).toHaveBeenCalledWith('http://hub:7420/v/ab/x.html')
+    } finally { delete (window as any).quorumOpenExternal }
+  })
+
+  it('calls the HubShell plugin in the Android shell', async () => {
+    const nativePromise = vi.fn(async () => ({}))
+    ;(window as any).Capacitor = { isNativePlatform: () => true, nativePromise }
+    await openExternalAsync(async () => 'https://hub.example/v/ab/x.html')
+    expect(nativePromise).toHaveBeenCalledWith('HubShell', 'openExternal', { url: 'https://hub.example/v/ab/x.html' })
+  })
+
+  it('refuses a javascript: url without opening anything', async () => {
+    const open = vi.fn(() => ({ location: { href: '' }, close: vi.fn() }))
+    vi.stubGlobal('open', open)
+    await expect(openExternalAsync(async () => 'javascript:alert(1)')).rejects.toThrow()
+    expect(() => openExternal('javascript:alert(1)')).toThrow()
+    expect(open).not.toHaveBeenCalledWith('javascript:alert(1)', expect.anything(), expect.anything())
   })
 })

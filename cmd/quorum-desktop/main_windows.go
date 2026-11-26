@@ -3,8 +3,10 @@
 package main
 
 import (
+	"errors"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"syscall"
 	"time"
@@ -119,6 +121,12 @@ func main() {
 	hwnd := uintptr(w.Window())
 	paintChrome(hwnd, "#0E1311", true) // Terminal green dark until the page reports its theme
 	_ = w.Bind("quorumChrome", func(bg string, dark bool) { w.Dispatch(func() { paintChrome(hwnd, bg, dark) }) })
+	_ = w.Bind("quorumOpenExternal", func(raw string) error {
+		if !externalURLOK(raw) {
+			return errors.New("only http(s) links can be opened")
+		}
+		return exec.Command("rundll32", "url.dll,FileProtocolHandler", raw).Start()
+	})
 	_ = w.Bind("quorumRetry", func() { open(s.Hub) })
 	_ = w.Bind("quorumChangeHub", func() { w.SetHtml(page(firstRunPage, s.Hub)) })
 
