@@ -29,6 +29,7 @@ while read -r line; do
 	id=$(echo "$line" | sed 's/.*"jobId":"\([^"]*\)".*/\1/')
 	at=$(echo "$line" | sed 's/.*"attempt":\([0-9]*\).*/\1/')
 	echo "$line" | sed 's/.*"workDir":"\([^"]*\)".*/\1/' > "$FAKE_DIR/workdir"
+	if [ "$MODE" = stale ]; then echo '{"type":"error","error":"stale","jobId":"'$id'","attempt":99}'; fi
 	if [ "$MODE" = die2 ] && [ $n -eq 2 ]; then exit 4; fi
 	echo '{"type":"progress","pct":50,"stage":"transcribing","jobId":"'$id'","attempt":'$at'}'
 	if [ "$MODE" = hang ]; then sleep 300; fi
@@ -165,4 +166,52 @@ func TestLiveChunkProgressForwarded(t *testing.T) {
 	require.NoError(t, err)
 	p := f.progress(func(p proto.MeetingProgress) bool { return p.Pct == 50 })
 	require.Equal(t, proto.MeetingProgress{JobID: "c1", Attempt: 2, Pct: 50, Stage: "transcribing"}, p)
+}
+
+func TestLiveChunkRightAfterIdleExpiryUsesANewProcess(t *testing.T) {
+	f := newLiveFake(t)
+	liveIdle = 30 * time.Millisecond
+	_, err := f.start(chunk("c1", 1))
+	require.NoError(t, err)
+	f.waitPosts(1)
+	// wait until the idle timer closed stdin, then send at once: the old process may still be exiting
+	time.Sleep(60 * time.Millisecond)
+	liveIdle = time.Hour
+	_, err = f.start(chunk("c2", 1))
+	require.NoError(t, err)
+	f.waitPosts(2)
+	require.Empty(t, f.posts()[1].body.Error)
+	require.Len(t, f.pids(), 2)
+	require.True(t, alive(f.pids()[1]))
+	_, err = os.Stat(filepath.Join(f.mdir, "tmp", "live"))
+	require.NoError(t, err, "the new process keeps its folder")
+}
+
+func TestFullJobWhileChunkInFlightKillsAfterGrace(t *testing.T) {
+	f := newLiveFake(t)
+	f.mode("hang")
+	liveStopGrace = 100 * time.Millisecond
+	t.Cleanup(func() { liveStopGrace = 5 * time.Second })
+	_, err := f.start(chunk("c1", 1))
+	require.NoError(t, err)
+	f.progress(func(p proto.MeetingProgress) bool { return p.JobID == "c1" && p.Pct == 50 })
+	live := f.pids()[0]
+	_, err = f.start(job("full", 1))
+	require.NoError(t, err)
+	require.False(t, alive(live))
+	f.waitPosts(1)
+	require.Equal(t, "/api/meeting-jobs/tok/result", f.posts()[0].path)
+	require.Contains(t, f.posts()[0].body.Error, "the meeting worker")
+	f.pid("pid") // the full worker started
+}
+
+func TestLiveStaleAttemptLineIgnored(t *testing.T) {
+	f := newLiveFake(t)
+	f.mode("stale")
+	_, err := f.start(chunk("c1", 1))
+	require.NoError(t, err)
+	f.waitPosts(1)
+	time.Sleep(100 * time.Millisecond)
+	require.Len(t, f.posts(), 1)
+	require.Empty(t, f.posts()[0].body.Error)
 }

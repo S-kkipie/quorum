@@ -27,6 +27,8 @@ var (
 	// liveCommand builds the resident worker's command (replaced in tests by a fake script).
 	liveCommand = defaultLiveCommand
 	liveWorkers = &liveSupervisor{}
+	// liveStopGrace: how long stop waits for the worker to exit after its stdin is closed.
+	liveStopGrace = 5 * time.Second
 )
 
 func defaultLiveCommand(ctx context.Context, dir string) (*exec.Cmd, error) {
@@ -50,13 +52,14 @@ type liveSupervisor struct {
 }
 
 type liveProc struct {
-	cmd    *exec.Cmd
-	stdin  io.WriteCloser
-	work   string
-	cancel context.CancelFunc
-	done   chan struct{}
-	idle   *time.Timer
-	stderr *tailBuffer
+	cmd     *exec.Cmd
+	stdin   io.WriteCloser
+	work    string
+	cancel  context.CancelFunc
+	done    chan struct{}
+	idle    *time.Timer
+	closing bool // stdin closed: the process is exiting and takes no more jobs
+	stderr  *tailBuffer
 }
 
 type liveJob struct {
@@ -113,6 +116,16 @@ func (s *liveSupervisor) run(hubURL string, reg *Registry, job proto.MeetingJobS
 	dir, err := MeetingsDir()
 	if err != nil {
 		return err
+	}
+	for s.proc != nil && s.proc.closing {
+		// an exiting process takes no job: wait for it, then start a fresh one
+		p := s.proc
+		s.mu.Unlock()
+		<-p.done
+		s.mu.Lock()
+		if s.job != nil {
+			return errMeetingBusy
+		}
 	}
 	if s.proc == nil {
 		if s.proc, err = s.startProc(dir); err != nil {
@@ -242,6 +255,7 @@ func (s *liveSupervisor) idleExpired(p *liveProc) {
 	defer s.mu.Unlock()
 	if s.proc == p && s.job == nil {
 		log.Printf("meetings: resident live worker idle, closing it")
+		p.closing = true
 		p.stdin.Close()
 	}
 }
@@ -262,21 +276,21 @@ func (s *liveSupervisor) supervise(p *liveProc, stdout io.Reader) {
 			break
 		}
 	}
-	io.Copy(io.Discard, stdout)
 	waitErr := p.cmd.Wait()
 	p.cancel()
 	s.mu.Lock()
 	if p.idle != nil {
 		p.idle.Stop()
 	}
+	// the folder goes before the slot is freed: a newer process reuses the same path
+	if err := os.RemoveAll(p.work); err != nil {
+		log.Printf("meetings: remove %s: %v", p.work, err)
+	}
 	if s.proc == p {
 		s.proc = nil
 	}
 	j := s.job
 	s.mu.Unlock()
-	if err := os.RemoveAll(p.work); err != nil {
-		log.Printf("meetings: remove %s: %v", p.work, err)
-	}
 	if j != nil {
 		msg := "the meeting worker stopped without a result"
 		if waitErr != nil {
@@ -351,6 +365,7 @@ func (s *liveSupervisor) stop() {
 	s.mu.Lock()
 	p := s.proc
 	if p != nil {
+		p.closing = true
 		p.stdin.Close()
 	}
 	s.mu.Unlock()
@@ -362,7 +377,7 @@ func (s *liveSupervisor) stop() {
 	}
 	select {
 	case <-p.done:
-	case <-time.After(5 * time.Second):
+	case <-time.After(liveStopGrace):
 		killProcessGroup(p.cmd)
 		<-p.done
 	}
